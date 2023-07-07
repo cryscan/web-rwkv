@@ -1,0 +1,16 @@
+[package]
+name = "rwkv-web"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wgpu = "0.15.1"
+pollster = "0.3.0"
+bytemuck = { version = "1.13", features = ["extern_crate_alloc"] }
+half = { version = "2.2", features = ["bytemuck"] }
+safetensors = "0.3.1"
+memmap2 = "0.5"
+anyhow = "1.0"
+itertools = "0.11"
