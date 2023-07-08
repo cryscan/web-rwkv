@@ -441,43 +441,6 @@ impl Model {
         }
     }
 
-    // pub fn update_buffer(&self, buffer: Arc<ModelBuffer>, tokens: &[u16]) -> Arc<ModelBuffer> {
-    //     let device = &self.env.device;
-    //     let queue = &self.env.queue;
-
-    //     let num_emb = self.info.num_emb;
-    //     let num_tokens = tokens.len();
-
-    //     if num_tokens > buffer.tokens.len() {
-    //         self.create_buffer(tokens)
-    //     } else {
-    //         let inputs = self.embedding(tokens);
-    //         let input_buffer = device.create_buffer_init(&BufferInitDescriptor {
-    //             label: None,
-    //             contents: cast_slice(&inputs),
-    //             usage: BufferUsages::COPY_SRC,
-    //         });
-    //         let num_tokens_buffer = device.create_buffer_init(&BufferInitDescriptor {
-    //             label: None,
-    //             contents: cast_slice(&[num_tokens as u32]),
-    //             usage: BufferUsages::COPY_SRC,
-    //         });
-
-    //         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
-    //         encoder.copy_buffer_to_buffer(
-    //             &input_buffer,
-    //             0,
-    //             &buffer.emb_x,
-    //             0,
-    //             4 * num_tokens as u64 * num_emb as u64,
-    //         );
-    //         encoder.copy_buffer_to_buffer(&num_tokens_buffer, 0, &buffer.num_tokens, 0, 4);
-    //         queue.submit(Some(encoder.finish()));
-
-    //         buffer
-    //     }
-    // }
-
     pub fn create_state(&self) -> ModelState {
         let device = &self.env.device;
 
@@ -1116,7 +1079,11 @@ impl Model {
         }
     }
 
-    pub fn queue(&self, buffer: &ModelBuffer, state: &ModelState) {
+    pub fn poll(&self) {
+        self.env.device.poll(wgpu::MaintainBase::Wait);
+    }
+
+    fn run_internal(&self, buffer: &ModelBuffer, state: &ModelState) {
         let device = &self.env.device;
         let queue = &self.env.queue;
 
@@ -1247,24 +1214,52 @@ impl Model {
         }
 
         encoder.copy_buffer_to_buffer(&buffer.head_o, 0, &buffer.map, 0, 4 * num_vocab as u64);
-        // encoder.copy_buffer_to_buffer(&buffer.ffn_o, 0, &buffer.map, 0, 4 * num_emb as u64);
 
         queue.submit(Some(encoder.finish()));
     }
 
-    pub fn read_back(&self, buffer: &ModelBuffer) -> Vec<f32> {
+    pub async fn run_async(&self, buffer: &ModelBuffer, state: &ModelState) -> Result<Vec<f32>> {
+        self.run_internal(buffer, state);
+
+        let (sender, receiver) = async_channel::bounded(1);
         let slice = buffer.map.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send_blocking(v).unwrap();
+        });
 
-        self.env.device.poll(wgpu::MaintainBase::Wait);
+        match receiver.recv().await {
+            Ok(_) => {
+                let data = {
+                    let data = slice.get_mapped_range();
+                    cast_slice(&data).to_vec()
+                };
+                buffer.map.unmap();
+                Ok(data)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
 
-        let data = {
-            let data = slice.get_mapped_range();
-            cast_slice(&data).to_vec()
-        };
+    pub fn run(&self, buffer: &ModelBuffer, state: &ModelState) -> Result<Vec<f32>> {
+        self.run_internal(buffer, state);
 
-        buffer.map.unmap();
+        let (sender, receiver) = async_channel::bounded(1);
+        let slice = buffer.map.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            sender.send_blocking(v).unwrap();
+        });
 
-        data
+        self.poll();
+        match receiver.recv_blocking() {
+            Ok(_) => {
+                let data = {
+                    let data = slice.get_mapped_range();
+                    cast_slice(&data).to_vec()
+                };
+                buffer.map.unmap();
+                Ok(data)
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 }

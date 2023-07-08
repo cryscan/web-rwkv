@@ -6,12 +6,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-
-use crate::{environment::Environment, model::Model, tokenizer::Tokenizer};
-
-mod environment;
-mod model;
-mod tokenizer;
+use web_rwkv::{Environment, Model, Tokenizer};
 
 fn softmax(data: &[f32]) -> Vec<f32> {
     let exp = data.iter().copied().map(f32::exp).collect_vec();
@@ -33,16 +28,16 @@ fn sample(probs: &[f32], top_p: f32) -> u16 {
         })
         .collect_vec();
 
-    let rand = fastrand::f32() * top_p;
+    let rand = fastrand::f32() * sorted.last().unwrap().1;
     let (token, _) = sorted
         .iter()
-        .find_or_first(|&&(_, cum)| rand < cum)
+        .find_or_first(|&&(_, cum)| rand <= cum)
         .unwrap();
 
     *token as u16
 }
 
-async fn run() -> Result<()> {
+async fn init() -> Result<(Tokenizer, Model)> {
     let tokenizer = {
         let file = File::open("assets/rwkv_vocab_v20230424.json")?;
         let mut reader = BufReader::new(file);
@@ -56,8 +51,11 @@ async fn run() -> Result<()> {
         "assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into(),
         env,
     )?;
-    println!("{:#?}", model.info);
 
+    Ok((tokenizer, model))
+}
+
+async fn run(tokenizer: &Tokenizer, model: &Model) -> Result<()> {
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
     println!("{:?}", tokens);
@@ -65,14 +63,12 @@ async fn run() -> Result<()> {
 
     let state = model.create_state();
 
-    let start = Instant::now();
+    let mut start = Instant::now();
     let num_tokens = 100;
-    for _ in 0..num_tokens {
+    for index in 0..=num_tokens {
         let buffer = model.create_buffer(&tokens);
 
-        model.queue(&buffer, &state);
-
-        let logits = model.read_back(&buffer);
+        let logits = model.run(&buffer, &state)?;
         let probs = softmax(&logits);
 
         let token = sample(&probs, 0.5);
@@ -80,6 +76,10 @@ async fn run() -> Result<()> {
         print!("{}", word);
 
         tokens = vec![token];
+
+        if index == 0 {
+            start = Instant::now();
+        }
     }
 
     println!(
@@ -92,5 +92,6 @@ async fn run() -> Result<()> {
 }
 
 fn main() {
-    pollster::block_on(run()).unwrap();
+    let (tokenizer, model) = pollster::block_on(init()).unwrap();
+    pollster::block_on(run(&tokenizer, &model)).unwrap();
 }
