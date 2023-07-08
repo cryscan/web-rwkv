@@ -1,6 +1,6 @@
 use anyhow::Result;
 use wgpu::{
-    Adapter, Backends, Device, Dx12Compiler, Instance, InstanceDescriptor, Queue,
+    Adapter, Backends, Device, DeviceDescriptor, Dx12Compiler, Instance, InstanceDescriptor, Queue,
     RequestAdapterOptions,
 };
 
@@ -43,13 +43,10 @@ impl Environment {
             .ok_or(CreateEnvironmentError::RequestAdapterFailed)?;
         let (device, queue) = adapter
             .request_device(
-                &wgpu::DeviceDescriptor {
+                &DeviceDescriptor {
                     label: None,
                     features: wgpu::Features::empty(),
-                    limits: wgpu::Limits {
-                        max_storage_buffers_per_shader_stage: 12,
-                        ..Default::default()
-                    },
+                    limits: wgpu::Limits::default(),
                 },
                 None,
             )

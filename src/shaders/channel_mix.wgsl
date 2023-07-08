@@ -1,10 +1,9 @@
 @group(0) @binding(0) var<uniform> num_emb: u32;
-
-@group(1) @binding(0) var<storage, read> x: array<vec4<f32>>;               // (T, C)
-@group(1) @binding(1) var<storage, read> r: array<vec4<f32>>;               // (T, C)
-@group(1) @binding(2) var<storage, read> v: array<vec4<f32>>;               // (T, C)
-@group(1) @binding(3) var<storage, read_write> sx: array<vec4<f32>>;        // (C)
-@group(1) @binding(4) var<storage, read_write> output: array<vec4<f32>>;    // (T, C)
+@group(0) @binding(1) var<storage, read> x: array<vec4<f32>>;               // (T, C)
+@group(0) @binding(2) var<storage, read> r: array<vec4<f32>>;               // (T, C)
+@group(0) @binding(3) var<storage, read> v: array<vec4<f32>>;               // (T, C)
+@group(0) @binding(4) var<storage, read_write> state: array<vec4<f32>>;     // (C)
+@group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (T, C)
 
 const BLOCK_SIZE: u32 = 256u;
 
@@ -21,7 +20,7 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
         output[ti] = rr * v[ti];
 
         if token == num_tokens - 1u {
-            sx[index] = x[ti];
+            state[index] = x[ti];
         }
     }
 }
