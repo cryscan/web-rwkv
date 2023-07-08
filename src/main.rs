@@ -27,7 +27,7 @@ async fn run() -> Result<()> {
     )?;
     println!("{:#?}", model.info);
 
-    let prompt = "Hello";
+    let prompt = "The Eiffel Tower is located in the city of";
     let tokens = tokenizer.encode(prompt.as_bytes())?;
     println!("{:?}", tokens);
 
@@ -37,6 +37,16 @@ async fn run() -> Result<()> {
 
     let logits = model.read_back(&buffer);
     println!("{:?}", &logits[0..32]);
+    println!("{:?}", &logits[992..1024]);
+
+    let token = logits
+        .into_iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
+        .unwrap() as u16;
+    let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+    println!("{word}");
 
     Ok(())
 }
