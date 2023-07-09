@@ -7,6 +7,10 @@ const BLOCK_SIZE: u32 = 256u;
 
 var<workgroup> local_sum: array<vec4<f32>, BLOCK_SIZE>;
 
+fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
+    return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
+}
+
 fn reduce_step_barrier(index: u32, stride: u32) {
     if index < stride {
         local_sum[index] += local_sum[index + stride];
@@ -30,13 +34,12 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let x = input[ti];
 
         // read 4 rows from the matrix, each with 4 unpacked floats, forming a 4x4 sub-block
-        var data: vec2<u32>;
         var m: mat4x4<f32>;
 
-        data = matrix[ci]; m[0] = vec4<f32>(unpack2x16float(data.x), unpack2x16float(data.y)); ci += stride.x;
-        data = matrix[ci]; m[1] = vec4<f32>(unpack2x16float(data.x), unpack2x16float(data.y)); ci += stride.x;
-        data = matrix[ci]; m[2] = vec4<f32>(unpack2x16float(data.x), unpack2x16float(data.y)); ci += stride.x;
-        data = matrix[ci]; m[3] = vec4<f32>(unpack2x16float(data.x), unpack2x16float(data.y));
+        m[0] = unpack4x16float(matrix[ci]); ci += stride.x;
+        m[1] = unpack4x16float(matrix[ci]); ci += stride.x;
+        m[2] = unpack4x16float(matrix[ci]); ci += stride.x;
+        m[3] = unpack4x16float(matrix[ci]);
         local_sum[index] += transpose(m) * x;
     }
     workgroupBarrier();

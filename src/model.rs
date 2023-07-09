@@ -2,7 +2,7 @@ use anyhow::Result;
 use bytemuck::{cast_slice, pod_collect_to_vec};
 use half::prelude::*;
 use safetensors::SafeTensors;
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, num::NonZeroU64, sync::Arc};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferBinding, BufferDescriptor,
@@ -28,7 +28,7 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
-    pub const HEAD_CHUNK_SIZE: usize = 16384;
+    pub const HEAD_CHUNK_SIZE: usize = 8192;
 }
 
 pub struct ModelTensor {
@@ -254,8 +254,8 @@ impl Model {
 
         let embed = Embed {
             layer_norm: LayerNorm {
-                w: load_tensor_f32("blocks.0.ln0.weight".into())?,
-                b: load_tensor_f32("blocks.0.ln0.bias".into())?,
+                w: load_tensor_f16("blocks.0.ln0.weight".into())?,
+                b: load_tensor_f16("blocks.0.ln0.bias".into())?,
             },
             w: pod_collect_to_vec(model.tensor("emb.weight")?.data()),
         };
@@ -276,8 +276,8 @@ impl Model {
 
             Head {
                 layer_norm: LayerNorm {
-                    w: load_tensor_f32("ln_out.weight".into())?,
-                    b: load_tensor_f32("ln_out.bias".into())?,
+                    w: load_tensor_f16("ln_out.weight".into())?,
+                    b: load_tensor_f16("ln_out.bias".into())?,
                 },
                 dims: create_uniform_u32(&[num_emb as u32, num_vocab as u32]),
                 w,
@@ -287,17 +287,17 @@ impl Model {
         let mut layers = vec![];
         for layer in 0..num_layers {
             let att_layer_norm = LayerNorm {
-                w: load_tensor_f32(format!("blocks.{layer}.ln1.weight"))?,
-                b: load_tensor_f32(format!("blocks.{layer}.ln1.bias"))?,
+                w: load_tensor_f16(format!("blocks.{layer}.ln1.weight"))?,
+                b: load_tensor_f16(format!("blocks.{layer}.ln1.bias"))?,
             };
 
             let att = format!("blocks.{layer}.att");
             let att = Att {
                 time_decay: load_tensor_exp_f32(format!("{att}.time_decay"))?,
                 time_first: load_tensor_f32(format!("{att}.time_first"))?,
-                time_mix_k: load_tensor_f32(format!("{att}.time_mix_k"))?,
-                time_mix_v: load_tensor_f32(format!("{att}.time_mix_v"))?,
-                time_mix_r: load_tensor_f32(format!("{att}.time_mix_r"))?,
+                time_mix_k: load_tensor_f16(format!("{att}.time_mix_k"))?,
+                time_mix_v: load_tensor_f16(format!("{att}.time_mix_v"))?,
+                time_mix_r: load_tensor_f16(format!("{att}.time_mix_r"))?,
                 dims: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
                 w_k: load_tensor_f16(format!("{att}.key.weight"))?,
                 w_v: load_tensor_f16(format!("{att}.value.weight"))?,
@@ -306,14 +306,14 @@ impl Model {
             };
 
             let ffn_layer_norm = LayerNorm {
-                w: load_tensor_f32(format!("blocks.{layer}.ln2.weight"))?,
-                b: load_tensor_f32(format!("blocks.{layer}.ln2.bias"))?,
+                w: load_tensor_f16(format!("blocks.{layer}.ln2.weight"))?,
+                b: load_tensor_f16(format!("blocks.{layer}.ln2.bias"))?,
             };
 
             let ffn = format!("blocks.{layer}.ffn");
             let ffn = Ffn {
-                time_mix_k: load_tensor_f32(format!("{ffn}.time_mix_k"))?,
-                time_mix_r: load_tensor_f32(format!("{ffn}.time_mix_r"))?,
+                time_mix_k: load_tensor_f16(format!("{ffn}.time_mix_k"))?,
+                time_mix_r: load_tensor_f16(format!("{ffn}.time_mix_r"))?,
                 dims_k: create_uniform_u32(&[num_emb as u32, 4 * num_emb as u32]),
                 dims_v: create_uniform_u32(&[4 * num_emb as u32, num_emb as u32]),
                 dims_r: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
@@ -575,7 +575,6 @@ impl Model {
                 .map(|(chunk, w)| {
                     let chunk_size = ModelInfo::HEAD_CHUNK_SIZE as u64;
                     let offset = 4 * chunk as u64 * chunk_size;
-
                     device.create_bind_group(&BindGroupDescriptor {
                         label: None,
                         layout: &matmul_layout,
@@ -597,7 +596,7 @@ impl Model {
                                 resource: wgpu::BindingResource::Buffer(BufferBinding {
                                     buffer: &buffer.head_o,
                                     offset,
-                                    size: None,
+                                    size: NonZeroU64::new(4 * chunk_size),
                                 }),
                             },
                         ],
