@@ -1,4 +1,7 @@
 # Web-RWKV
+[![crates.io](https://img.shields.io/crates/v/web-rwkv)](https://crates.io/crates/web-rwkv)
+[![docs.rs](https://docs.rs/web-rwkv/badge.svg)](https://docs.rs/web-rwkv)
+
 This is an implementation of the [language model of RWKV](https://github.com/BlinkDL/RWKV-LM) in pure WebGPU.
 
 ## Compile and Run
