@@ -126,13 +126,12 @@ impl Tokenizer {
         output: &mut Vec<u16>,
     ) -> Result<(), TokenizerError> {
         'next_token: while !input.is_empty() {
-            let lengths;
-            if input.len() >= 2 {
+            let lengths = if input.len() >= 2 {
                 let key = u16::from_ne_bytes([input[0], input[1]]) as usize;
-                lengths = &self.first_bytes_to_lengths[key][..];
+                &self.first_bytes_to_lengths[key][..]
             } else {
-                lengths = &[1][..];
-            }
+                &[1][..]
+            };
 
             for &length in lengths {
                 let length = length as usize;

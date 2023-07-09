@@ -456,7 +456,7 @@ impl Model {
         let create_buffer_f32 = |data: &[f32]| -> Buffer {
             device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
-                contents: cast_slice(&data),
+                contents: cast_slice(data),
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             })
         };
