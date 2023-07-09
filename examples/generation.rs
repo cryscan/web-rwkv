@@ -37,7 +37,7 @@ fn sample(probs: &[f32], top_p: f32) -> u16 {
     *token as u16
 }
 
-async fn init() -> Result<(Tokenizer, Model)> {
+async fn run() -> Result<()> {
     let tokenizer = {
         let file = File::open("assets/rwkv_vocab_v20230424.json")?;
         let mut reader = BufReader::new(file);
@@ -51,14 +51,10 @@ async fn init() -> Result<(Tokenizer, Model)> {
         "assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into(),
         env,
     )?;
+    println!("{:#?}", model.info);
 
-    Ok((tokenizer, model))
-}
-
-async fn run(tokenizer: &Tokenizer, model: &Model) -> Result<()> {
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
-    println!("{:?}", tokens);
     print!("{}", prompt);
 
     let state = model.create_state();
@@ -92,6 +88,13 @@ async fn run(tokenizer: &Tokenizer, model: &Model) -> Result<()> {
 }
 
 fn main() {
-    let (tokenizer, model) = pollster::block_on(init()).unwrap();
-    pollster::block_on(run(&tokenizer, &model)).unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
+    pollster::block_on(run()).unwrap();
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+        console_log::init().expect("could not initialize logger");
+        wasm_bindgen_futures::spawn_local(async { run().await.unwrap() });
+    }
 }
