@@ -177,12 +177,9 @@ pub struct LayerBindGroup {
 }
 
 impl Model {
-    pub fn from_file<'a>(path: PathBuf, env: Arc<Environment>) -> Result<Self> {
+    fn from_bytes(data: &[u8], env: Arc<Environment>) -> Result<Self> {
         let device = &env.device;
-
-        let file = File::open(path)?;
-        let map = unsafe { Mmap::map(&file)? };
-        let model = SafeTensors::deserialize(&map)?;
+        let model = SafeTensors::deserialize(data)?;
 
         let num_layers = {
             let mut r: usize = 0;
@@ -351,6 +348,12 @@ impl Model {
             tensor,
             pipeline,
         })
+    }
+
+    pub fn from_file(path: PathBuf, env: Arc<Environment>) -> Result<Self> {
+        let file = File::open(path)?;
+        let map = unsafe { Mmap::map(&file)? };
+        Self::from_bytes(&map, env)
     }
 
     pub fn embedding(&self, tokens: &[u16]) -> Vec<f32> {
