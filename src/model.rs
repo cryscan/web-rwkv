@@ -1,8 +1,14 @@
 use anyhow::Result;
 use bytemuck::{cast_slice, pod_collect_to_vec};
+use derive_getters::Getters;
 use half::prelude::*;
 use safetensors::SafeTensors;
-use std::{borrow::Cow, num::NonZeroU64, sync::Arc};
+use std::{
+    borrow::{Borrow, Cow},
+    cell::RefCell,
+    num::NonZeroU64,
+    sync::Arc,
+};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferBinding, BufferDescriptor,
@@ -12,12 +18,16 @@ use wgpu::{
 
 use crate::Environment;
 
-#[derive(Clone)]
+#[derive(Getters)]
 pub struct Model {
-    pub env: Arc<Environment>,
-    pub info: ModelInfo,
-    pub tensor: Arc<ModelTensor>,
-    pub pipeline: Arc<ModelPipeline>,
+    info: ModelInfo,
+    env: Arc<Environment>,
+    #[getter(skip)]
+    tensor: ModelTensor,
+    #[getter(skip)]
+    pipeline: ModelPipeline,
+    #[getter(skip)]
+    buffer: RefCell<ModelBuffer>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -31,152 +41,292 @@ impl ModelInfo {
     pub const HEAD_CHUNK_SIZE: usize = 8192;
 }
 
-pub struct ModelTensor {
-    pub dim: Buffer,
-    pub embed: Embed,
-    pub head: Head,
-    pub layers: Vec<Layer>,
+struct ModelTensor {
+    dim: Buffer,
+    embed: Embed,
+    head: Head,
+    layers: Vec<Layer>,
 }
 
-pub struct LayerNorm {
-    pub w: Buffer,
-    pub b: Buffer,
+struct LayerNorm {
+    w: Buffer,
+    b: Buffer,
 }
 
-pub struct Att {
-    pub time_decay: Buffer,
-    pub time_first: Buffer,
+struct Att {
+    time_decay: Buffer,
+    time_first: Buffer,
 
-    pub dims: Buffer,
+    dims: Buffer,
 
-    pub time_mix_k: Buffer,
-    pub time_mix_v: Buffer,
-    pub time_mix_r: Buffer,
+    time_mix_k: Buffer,
+    time_mix_v: Buffer,
+    time_mix_r: Buffer,
 
-    pub w_k: Buffer,
-    pub w_v: Buffer,
-    pub w_r: Buffer,
-    pub w_o: Buffer,
+    w_k: Buffer,
+    w_v: Buffer,
+    w_r: Buffer,
+    w_o: Buffer,
 }
 
-pub struct Ffn {
-    pub time_mix_k: Buffer,
-    pub time_mix_r: Buffer,
+struct Ffn {
+    time_mix_k: Buffer,
+    time_mix_r: Buffer,
 
-    pub dims_k: Buffer,
-    pub dims_v: Buffer,
-    pub dims_r: Buffer,
+    dims_k: Buffer,
+    dims_v: Buffer,
+    dims_r: Buffer,
 
-    pub w_k: Buffer,
-    pub w_v: Buffer,
-    pub w_r: Buffer,
+    w_k: Buffer,
+    w_v: Buffer,
+    w_r: Buffer,
 }
 
-pub struct Layer {
-    pub att_layer_norm: LayerNorm,
-    pub ffn_layer_norm: LayerNorm,
-    pub att: Att,
-    pub ffn: Ffn,
+struct Layer {
+    att_layer_norm: LayerNorm,
+    ffn_layer_norm: LayerNorm,
+    att: Att,
+    ffn: Ffn,
 }
 
-pub struct Embed {
-    pub layer_norm: LayerNorm,
-    pub w: Vec<f16>,
+struct Embed {
+    layer_norm: LayerNorm,
+    w: Vec<f16>,
 }
 
-pub struct Head {
-    pub layer_norm: LayerNorm,
+struct Head {
+    layer_norm: LayerNorm,
 
-    pub dims: Buffer,
-    pub w: Vec<Buffer>,
+    dims: Buffer,
+    w: Vec<Buffer>,
 }
 
-pub struct ModelPipeline {
-    pub layer_norm: ComputePipeline,
-    pub token_shift: ComputePipeline,
-    pub matmul: ComputePipeline,
-    pub token_mix: ComputePipeline,
-    pub activation: ComputePipeline,
-    pub channel_mix: ComputePipeline,
-    pub add: ComputePipeline,
+struct ModelPipeline {
+    layer_norm: ComputePipeline,
+    token_shift: ComputePipeline,
+    matmul: ComputePipeline,
+    token_mix: ComputePipeline,
+    activation: ComputePipeline,
+    channel_mix: ComputePipeline,
+    add: ComputePipeline,
 }
 
 pub struct ModelBuffer {
-    pub tokens: Vec<u16>,
-    pub num_tokens: Buffer,
+    num_tokens_host: usize,
+    num_tokens: Buffer,
 
-    pub emb_x: Buffer,
-    pub emb_o: Buffer,
+    emb_x: Buffer,
+    emb_o: Buffer,
 
-    pub att_x: Buffer,
-    pub att_kx: Buffer,
-    pub att_vx: Buffer,
-    pub att_rx: Buffer,
-    pub att_k: Buffer,
-    pub att_v: Buffer,
-    pub att_r: Buffer,
-    pub att_w: Buffer,
-    pub att_o: Buffer,
+    att_x: Buffer,
+    att_kx: Buffer,
+    att_vx: Buffer,
+    att_rx: Buffer,
+    att_k: Buffer,
+    att_v: Buffer,
+    att_r: Buffer,
+    att_w: Buffer,
+    att_o: Buffer,
 
-    pub ffn_x: Buffer,
-    pub ffn_kx: Buffer,
-    pub ffn_vx: Buffer,
-    pub ffn_rx: Buffer,
-    pub ffn_k: Buffer,
-    pub ffn_v: Buffer,
-    pub ffn_r: Buffer,
-    pub ffn_o: Buffer,
+    ffn_x: Buffer,
+    ffn_kx: Buffer,
+    ffn_vx: Buffer,
+    ffn_rx: Buffer,
+    ffn_k: Buffer,
+    ffn_v: Buffer,
+    ffn_r: Buffer,
+    ffn_o: Buffer,
 
-    pub head_x: Buffer,
-    pub head_r: Buffer,
-    pub head_o: Buffer,
+    head_x: Buffer,
+    head_r: Buffer,
+    head_o: Buffer,
 
-    pub map: Buffer,
+    map: Buffer,
 }
 
-pub struct ModelState(pub Vec<LayerState>);
+impl ModelBuffer {
+    fn new(env: Arc<Environment>, info: ModelInfo, input: &[f32]) -> Self {
+        let device = &env.device;
 
-pub struct LayerState {
-    pub att: Buffer,
-    pub ffn: Buffer,
+        let create_buffer_f32 = |capacity: usize| -> Buffer {
+            let data = vec![0.0f32; capacity];
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: cast_slice(&data),
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            })
+        };
+        let load_buffer_f32 = |data: &[f32]| -> Buffer {
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: cast_slice(data),
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            })
+        };
+        let create_uniform_u32 = |values: &[u32]| -> Buffer {
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: cast_slice(values),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            })
+        };
+
+        let num_emb = info.num_emb;
+        let num_vocab = info.num_vocab;
+        let num_tokens = input.len() / num_emb;
+        let capacity = num_tokens * num_emb;
+
+        let map = device.create_buffer(&BufferDescriptor {
+            label: None,
+            size: 4 * num_vocab as u64,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        ModelBuffer {
+            num_tokens_host: num_tokens,
+            num_tokens: create_uniform_u32(&[num_tokens as u32]),
+            emb_x: load_buffer_f32(&input),
+            emb_o: create_buffer_f32(capacity),
+            att_x: create_buffer_f32(capacity),
+            att_kx: create_buffer_f32(capacity),
+            att_vx: create_buffer_f32(capacity),
+            att_rx: create_buffer_f32(capacity),
+            att_k: create_buffer_f32(capacity),
+            att_v: create_buffer_f32(capacity),
+            att_r: create_buffer_f32(capacity),
+            att_w: create_buffer_f32(capacity),
+            att_o: create_buffer_f32(capacity),
+            ffn_x: create_buffer_f32(capacity),
+            ffn_kx: create_buffer_f32(capacity),
+            ffn_vx: create_buffer_f32(4 * capacity),
+            ffn_rx: create_buffer_f32(capacity),
+            ffn_k: create_buffer_f32(4 * capacity),
+            ffn_v: create_buffer_f32(capacity),
+            ffn_r: create_buffer_f32(capacity),
+            ffn_o: create_buffer_f32(capacity),
+            head_x: create_buffer_f32(num_emb),
+            head_r: create_buffer_f32(num_emb),
+            head_o: create_buffer_f32(num_vocab),
+            map,
+        }
+    }
+
+    fn reload(&mut self, env: &Environment, info: ModelInfo, input: &[f32]) {
+        assert_eq!(self.num_tokens_host, input.len() / info.num_emb);
+        self.emb_x = env.device.create_buffer_init(&BufferInitDescriptor {
+            label: None,
+            contents: cast_slice(input),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        });
+    }
 }
 
-pub struct ModelBindGroup {
-    pub embed: EmbedBindGroup,
-    pub head: HeadBindGroup,
-    pub layers: Vec<LayerBindGroup>,
+pub struct ModelState {
+    env: Arc<Environment>,
+    info: ModelInfo,
+    layers: Vec<LayerState>,
 }
 
-pub struct EmbedBindGroup {
-    pub layer_norm: BindGroup,
+impl ModelState {
+    fn new(env: Arc<Environment>, info: ModelInfo) -> Self {
+        let device = &env.device;
+
+        let ModelInfo {
+            num_layers,
+            num_emb,
+            ..
+        } = info;
+
+        let create_buffer_f32 = |data: &[f32]| -> Buffer {
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: cast_slice(data),
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            })
+        };
+
+        let mut layers = vec![];
+        for _ in 0..num_layers {
+            let mut att = vec![0.0f32; 4 * num_emb];
+            att[3 * num_emb..4 * num_emb]
+                .iter_mut()
+                .for_each(|x| *x = -1.0e30);
+
+            let ffn = vec![0.0f32; num_emb];
+
+            let layer = LayerState {
+                att: create_buffer_f32(&att),
+                ffn: create_buffer_f32(&ffn),
+            };
+            layers.push(layer);
+        }
+
+        Self { env, info, layers }
+    }
 }
 
-pub struct HeadBindGroup {
-    pub layer_norm: BindGroup,
-    pub matmul: Vec<BindGroup>,
+impl Clone for ModelState {
+    fn clone(&self) -> Self {
+        let cloned = Self::new(self.env.clone(), self.info);
+        let device = &self.env.device;
+        let queue = &self.env.queue;
+        let num_emb = self.info.num_emb;
+
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+        for (src, dest) in self.layers.iter().zip(cloned.layers.iter()) {
+            let att_size = 4 * 4 * num_emb as u64;
+            let ffn_size = 4 * num_emb as u64;
+            encoder.copy_buffer_to_buffer(&src.att, 0, &dest.att, 0, att_size);
+            encoder.copy_buffer_to_buffer(&src.ffn, 0, &dest.ffn, 0, ffn_size);
+        }
+        queue.submit(Some(encoder.finish()));
+
+        cloned
+    }
 }
 
-pub struct LayerBindGroup {
-    pub att_layer_norm: BindGroup,
-    pub att_token_shift_k: BindGroup,
-    pub att_token_shift_v: BindGroup,
-    pub att_token_shift_r: BindGroup,
-    pub att_matmul_k: BindGroup,
-    pub att_matmul_v: BindGroup,
-    pub att_matmul_r: BindGroup,
-    pub att_token_mix: BindGroup,
-    pub att_matmul_o: BindGroup,
-    pub att_add: BindGroup,
+struct LayerState {
+    att: Buffer,
+    ffn: Buffer,
+}
 
-    pub ffn_layer_norm: BindGroup,
-    pub ffn_token_shift_k: BindGroup,
-    pub ffn_token_shift_r: BindGroup,
-    pub ffn_matmul_k: BindGroup,
-    pub ffn_activation: BindGroup,
-    pub ffn_matmul_v: BindGroup,
-    pub ffn_matmul_r: BindGroup,
-    pub ffn_channel_mix: BindGroup,
-    pub ffn_add: BindGroup,
+struct ModelBindGroup {
+    embed: EmbedBindGroup,
+    head: HeadBindGroup,
+    layers: Vec<LayerBindGroup>,
+}
+
+struct EmbedBindGroup {
+    layer_norm: BindGroup,
+}
+
+struct HeadBindGroup {
+    layer_norm: BindGroup,
+    matmul: Vec<BindGroup>,
+}
+
+struct LayerBindGroup {
+    att_layer_norm: BindGroup,
+    att_token_shift_k: BindGroup,
+    att_token_shift_v: BindGroup,
+    att_token_shift_r: BindGroup,
+    att_matmul_k: BindGroup,
+    att_matmul_v: BindGroup,
+    att_matmul_r: BindGroup,
+    att_token_mix: BindGroup,
+    att_matmul_o: BindGroup,
+    att_add: BindGroup,
+
+    ffn_layer_norm: BindGroup,
+    ffn_token_shift_k: BindGroup,
+    ffn_token_shift_r: BindGroup,
+    ffn_matmul_k: BindGroup,
+    ffn_activation: BindGroup,
+    ffn_matmul_v: BindGroup,
+    ffn_matmul_r: BindGroup,
+    ffn_channel_mix: BindGroup,
+    ffn_add: BindGroup,
 }
 
 impl Model {
@@ -331,12 +481,12 @@ impl Model {
         }
 
         let dim = create_uniform_u32(&[num_emb as u32]);
-        let tensor = Arc::new(ModelTensor {
+        let tensor = ModelTensor {
             dim,
             embed,
             head,
             layers,
-        });
+        };
 
         let create_pipeline = |shader: &str, entry_point: &str| -> ComputePipeline {
             let module = &device.create_shader_module(ShaderModuleDescriptor {
@@ -351,7 +501,7 @@ impl Model {
             })
         };
 
-        let pipeline = Arc::new(ModelPipeline {
+        let pipeline = ModelPipeline {
             layer_norm: create_pipeline(include_str!("shaders/layer_norm.wgsl"), "layer_norm"),
             token_shift: create_pipeline(include_str!("shaders/token_shift.wgsl"), "token_shift"),
             matmul: create_pipeline(include_str!("shaders/matmul.wgsl"), "matmul"),
@@ -359,13 +509,17 @@ impl Model {
             activation: create_pipeline(include_str!("shaders/activation.wgsl"), "activation"),
             channel_mix: create_pipeline(include_str!("shaders/channel_mix.wgsl"), "channel_mix"),
             add: create_pipeline(include_str!("shaders/add.wgsl"), "add"),
-        });
+        };
+
+        let input = vec![0.0; num_emb];
+        let buffer = RefCell::new(ModelBuffer::new(env.clone(), info, &input));
 
         Ok(Self {
             env,
             info,
             tensor,
             pipeline,
+            buffer,
         })
     }
 
@@ -388,109 +542,8 @@ impl Model {
         input
     }
 
-    pub fn create_buffer(&self, tokens: &[u16]) -> ModelBuffer {
-        let device = &self.env.device;
-
-        let create_buffer_f32 = |capacity: usize| -> Buffer {
-            let data = vec![0.0f32; capacity];
-            device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: cast_slice(&data),
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-            })
-        };
-        let load_buffer_f32 = |data: &[f32]| -> Buffer {
-            device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: cast_slice(data),
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            })
-        };
-        let create_uniform_u32 = |values: &[u32]| -> Buffer {
-            device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: cast_slice(values),
-                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            })
-        };
-
-        let num_tokens = tokens.len();
-        let num_emb = self.info.num_emb;
-        let num_vocab = self.info.num_vocab;
-        let capacity = num_tokens * num_emb;
-
-        let input = self.embedding(tokens);
-
-        let map = device.create_buffer(&BufferDescriptor {
-            label: None,
-            size: 4 * num_vocab as u64,
-            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        ModelBuffer {
-            tokens: tokens.to_vec(),
-            num_tokens: create_uniform_u32(&[num_tokens as u32]),
-            emb_x: load_buffer_f32(&input),
-            emb_o: create_buffer_f32(capacity),
-            att_x: create_buffer_f32(capacity),
-            att_kx: create_buffer_f32(capacity),
-            att_vx: create_buffer_f32(capacity),
-            att_rx: create_buffer_f32(capacity),
-            att_k: create_buffer_f32(capacity),
-            att_v: create_buffer_f32(capacity),
-            att_r: create_buffer_f32(capacity),
-            att_w: create_buffer_f32(capacity),
-            att_o: create_buffer_f32(capacity),
-            ffn_x: create_buffer_f32(capacity),
-            ffn_kx: create_buffer_f32(capacity),
-            ffn_vx: create_buffer_f32(4 * capacity),
-            ffn_rx: create_buffer_f32(capacity),
-            ffn_k: create_buffer_f32(4 * capacity),
-            ffn_v: create_buffer_f32(capacity),
-            ffn_r: create_buffer_f32(capacity),
-            ffn_o: create_buffer_f32(capacity),
-            head_x: create_buffer_f32(num_emb),
-            head_r: create_buffer_f32(num_emb),
-            head_o: create_buffer_f32(num_vocab),
-            map,
-        }
-    }
-
     pub fn create_state(&self) -> ModelState {
-        let device = &self.env.device;
-
-        let ModelInfo {
-            num_layers,
-            num_emb,
-            ..
-        } = self.info;
-
-        let create_buffer_f32 = |data: &[f32]| -> Buffer {
-            device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: cast_slice(data),
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-            })
-        };
-
-        let mut layers = vec![];
-        for _ in 0..num_layers {
-            let mut att = vec![0.0f32; 4 * num_emb];
-            att[3 * num_emb..4 * num_emb]
-                .iter_mut()
-                .for_each(|x| *x = -1.0e30);
-
-            let ffn = vec![0.0f32; num_emb];
-
-            let layer = LayerState {
-                att: create_buffer_f32(&att),
-                ffn: create_buffer_f32(&ffn),
-            };
-            layers.push(layer);
-        }
-
-        ModelState(layers)
+        ModelState::new(self.env.clone(), self.info)
     }
 
     fn create_bind_group(&self, buffer: &ModelBuffer, state: &ModelState) -> ModelBindGroup {
@@ -608,7 +661,7 @@ impl Model {
 
         let layers = (0..self.info.num_layers)
             .map(|layer| {
-                let state = &state.0[layer];
+                let state = &state.layers[layer];
                 let layer = &self.tensor.layers[layer];
 
                 let att_layer_norm = device.create_bind_group(&BindGroupDescriptor {
@@ -1114,9 +1167,18 @@ impl Model {
         self.env.device.poll(wgpu::MaintainBase::Wait);
     }
 
-    fn run_internal(&self, buffer: &ModelBuffer, state: &ModelState) {
+    fn run_internal(&self, tokens: &[u16], state: &ModelState) {
         let device = &self.env.device;
         let queue = &self.env.queue;
+
+        let mut buffer = self.buffer.borrow_mut();
+        let input = self.embedding(tokens);
+        if buffer.num_tokens_host != tokens.len() {
+            *buffer = ModelBuffer::new(self.env.clone(), self.info, &input);
+        } else {
+            buffer.reload(&self.env, self.info, &input);
+        }
+        let buffer = buffer.borrow();
 
         let bind_group = self.create_bind_group(buffer, state);
         let pipeline = &self.pipeline;
@@ -1125,7 +1187,7 @@ impl Model {
             num_emb, num_vocab, ..
         } = self.info;
 
-        let num_tokens = buffer.tokens.len() as u32;
+        let num_tokens = buffer.num_tokens_host as u32;
         let num_emb_vec4 = num_emb as u32 / 4;
         let num_emb_blocks = (num_emb_vec4 + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let chunk_size_vec4 = ModelInfo::HEAD_CHUNK_SIZE as u32 / 4;
@@ -1252,8 +1314,9 @@ impl Model {
         queue.submit(Some(encoder.finish()));
     }
 
-    pub async fn run_async(&self, buffer: &ModelBuffer, state: &ModelState) -> Result<Vec<f32>> {
-        self.run_internal(buffer, state);
+    pub async fn run_async(&self, tokens: &[u16], state: &ModelState) -> Result<Vec<f32>> {
+        self.run_internal(tokens, state);
+        let buffer = self.buffer.borrow();
 
         let (sender, receiver) = async_channel::bounded(1);
         let slice = buffer.map.slice(..);
@@ -1274,8 +1337,13 @@ impl Model {
         }
     }
 
-    pub fn run(&self, buffer: &ModelBuffer, state: &ModelState) -> Result<Vec<f32>> {
-        self.run_internal(buffer, state);
+    pub fn run(&self, tokens: &[u16], state: &ModelState) -> Result<Vec<f32>> {
+        if tokens.len() == 0 {
+            return Ok(vec![0.0; self.info.num_vocab]);
+        }
+
+        self.run_internal(tokens, state);
+        let buffer = self.buffer.borrow();
 
         let (sender, receiver) = async_channel::bounded(1);
         let slice = buffer.map.slice(..);

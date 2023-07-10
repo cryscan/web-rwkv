@@ -58,9 +58,9 @@ async fn load_model(env: Arc<Environment>) -> Result<Model> {
     let file = File::open("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st")?;
     let map = unsafe { Mmap::map(&file)? };
     let model = Model::from_bytes(&map, env)?;
-    println!("{:#?}", model.info);
+    println!("{:#?}", model.info());
     #[cfg(target_arch = "wasm32")]
-    log::info!("{:#?}", model.info);
+    log::info!("{:#?}", model.info());
     Ok(model)
 }
 
@@ -79,13 +79,11 @@ async fn run() -> Result<()> {
     let mut start = Instant::now();
     let num_tokens = 100;
     for index in 0..=num_tokens {
-        let buffer = model.create_buffer(&tokens);
-
         #[cfg(not(target_arch = "wasm32"))]
-        let logits = model.run(&buffer, &state)?;
+        let logits = model.run(&tokens, &state)?;
 
         #[cfg(target_arch = "wasm32")]
-        let logits = model.run_async(&buffer, &state).await?;
+        let logits = model.run_async(&tokens, &state).await?;
 
         let probs = softmax(&logits);
 
