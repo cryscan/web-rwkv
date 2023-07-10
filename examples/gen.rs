@@ -55,7 +55,7 @@ async fn load_tokenizer() -> Result<Tokenizer> {
 }
 
 async fn load_model(env: Arc<Environment>) -> Result<Model> {
-    let file = File::open("assets/models/RWKV-4-World-3B-v1-20230619-ctx4096.st")?;
+    let file = File::open("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st")?;
     let map = unsafe { Mmap::map(&file)? };
     let model = Model::from_bytes(&map, env)?;
     println!("{:#?}", model.info);
