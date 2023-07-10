@@ -7,7 +7,6 @@ use std::{
     borrow::{Borrow, Cow},
     cell::RefCell,
     num::NonZeroU64,
-    sync::Arc,
 };
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -21,7 +20,7 @@ use crate::Environment;
 #[derive(Getters)]
 pub struct Model {
     info: ModelInfo,
-    env: Arc<Environment>,
+    env: Environment,
     #[getter(skip)]
     tensor: ModelTensor,
     #[getter(skip)]
@@ -145,7 +144,7 @@ pub struct ModelBuffer {
 }
 
 impl ModelBuffer {
-    fn new(env: Arc<Environment>, info: ModelInfo, input: &[f32]) -> Self {
+    fn new(env: &Environment, info: ModelInfo, input: &[f32]) -> Self {
         let device = &env.device;
 
         let create_buffer_f32 = |capacity: usize| -> Buffer {
@@ -223,13 +222,13 @@ impl ModelBuffer {
 }
 
 pub struct ModelState {
-    env: Arc<Environment>,
+    env: Environment,
     info: ModelInfo,
     layers: Vec<LayerState>,
 }
 
 impl ModelState {
-    fn new(env: Arc<Environment>, info: ModelInfo) -> Self {
+    fn new(env: Environment, info: ModelInfo) -> Self {
         let device = &env.device;
 
         let ModelInfo {
@@ -329,9 +328,9 @@ struct LayerBindGroup {
     ffn_add: BindGroup,
 }
 
-impl Model {
-    pub fn from_bytes(data: &[u8], env: Arc<Environment>) -> Result<Self> {
-        let device = &env.device;
+impl Environment {
+    pub fn create_model_from_bytes(&self, data: &[u8]) -> Result<Model> {
+        let device = &self.device;
         let model = SafeTensors::deserialize(data)?;
 
         let num_layers = {
@@ -512,17 +511,19 @@ impl Model {
         };
 
         let input = vec![0.0; num_emb];
-        let buffer = RefCell::new(ModelBuffer::new(env.clone(), info, &input));
+        let buffer = RefCell::new(ModelBuffer::new(&self, info, &input));
 
-        Ok(Self {
-            env,
+        Ok(Model {
+            env: self.clone(),
             info,
             tensor,
             pipeline,
             buffer,
         })
     }
+}
 
+impl Model {
     pub fn embedding(&self, tokens: &[u16]) -> Vec<f32> {
         let num_tokens = tokens.len();
         let num_emb = self.info.num_emb;
@@ -1174,7 +1175,7 @@ impl Model {
         let mut buffer = self.buffer.borrow_mut();
         let input = self.embedding(tokens);
         if buffer.num_tokens_host != tokens.len() {
-            *buffer = ModelBuffer::new(self.env.clone(), self.info, &input);
+            *buffer = ModelBuffer::new(&self.env, self.info, &input);
         } else {
             buffer.reload(&self.env, self.info, &input);
         }
