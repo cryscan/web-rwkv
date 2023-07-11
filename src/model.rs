@@ -281,6 +281,7 @@ impl Clone for ModelState {
             encoder.copy_buffer_to_buffer(&src.ffn, 0, &dest.ffn, 0, ffn_size);
         }
         queue.submit(Some(encoder.finish()));
+        device.poll(wgpu::MaintainBase::Wait);
 
         cloned
     }
@@ -513,6 +514,8 @@ impl Environment {
 
         let input = vec![0.0; num_emb];
         let buffer = RefCell::new(ModelBuffer::new(self, info, &input));
+
+        device.poll(wgpu::MaintainBase::Wait);
 
         Ok(Model {
             env: self.clone(),
