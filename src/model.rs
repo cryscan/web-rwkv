@@ -38,6 +38,7 @@ pub struct ModelInfo {
 
 impl ModelInfo {
     pub const HEAD_CHUNK_SIZE: usize = 8192;
+    pub const TOKEN_CHUNK_SIZE: usize = 16;
 }
 
 struct ModelTensor {
@@ -148,11 +149,11 @@ impl ModelBuffer {
         let device = &env.device;
 
         let create_buffer_f32 = |capacity: usize| -> Buffer {
-            let data = vec![0.0f32; capacity];
-            device.create_buffer_init(&BufferInitDescriptor {
+            device.create_buffer(&BufferDescriptor {
                 label: None,
-                contents: cast_slice(&data),
+                size: 4 * capacity as u64,
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
             })
         };
         let load_buffer_f32 = |data: &[f32]| -> Buffer {
@@ -1168,7 +1169,7 @@ impl Model {
         self.env.device.poll(wgpu::MaintainBase::Wait);
     }
 
-    fn run_internal(&self, tokens: &[u16], state: &ModelState) {
+    fn run_internal(&self, tokens: &[u16], state: &ModelState, output: bool) {
         let device = &self.env.device;
         let queue = &self.env.queue;
 
@@ -1288,30 +1289,31 @@ impl Model {
             );
         }
 
-        encoder.copy_buffer_to_buffer(
-            &buffer.ffn_o,
-            4 * (num_tokens - 1) as u64 * num_emb as u64,
-            &buffer.head_x,
-            0,
-            4 * num_emb as u64,
-        );
+        if output {
+            encoder.copy_buffer_to_buffer(
+                &buffer.ffn_o,
+                4 * (num_tokens - 1) as u64 * num_emb as u64,
+                &buffer.head_x,
+                0,
+                4 * num_emb as u64,
+            );
 
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            {
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
 
-            pass.set_pipeline(&pipeline.layer_norm);
-            pass.set_bind_group(0, &bind_group.head.layer_norm, &[]);
-            pass.dispatch_workgroups(1, 1, 1);
+                pass.set_pipeline(&pipeline.layer_norm);
+                pass.set_bind_group(0, &bind_group.head.layer_norm, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
 
-            pass.set_pipeline(&pipeline.matmul);
-            for matmul in &bind_group.head.matmul {
-                pass.set_bind_group(0, matmul, &[]);
-                pass.dispatch_workgroups(1, chunk_size_vec4, 1);
+                pass.set_pipeline(&pipeline.matmul);
+                for matmul in &bind_group.head.matmul {
+                    pass.set_bind_group(0, matmul, &[]);
+                    pass.dispatch_workgroups(1, chunk_size_vec4, 1);
+                }
             }
+
+            encoder.copy_buffer_to_buffer(&buffer.head_o, 0, &buffer.map, 0, 4 * num_vocab as u64);
         }
-
-        encoder.copy_buffer_to_buffer(&buffer.head_o, 0, &buffer.map, 0, 4 * num_vocab as u64);
-
         queue.submit(Some(encoder.finish()));
     }
 
@@ -1320,9 +1322,16 @@ impl Model {
             return Ok(vec![0.0; self.info.num_vocab]);
         }
 
-        self.run_internal(tokens, state);
-        let buffer = self.buffer.borrow();
+        let mut tokens = tokens.to_vec();
+        let token_chunk_size = ModelInfo::TOKEN_CHUNK_SIZE;
+        for _ in 0..(tokens.len() - 1) / token_chunk_size {
+            let token_chunk = &tokens[..token_chunk_size];
+            self.run_internal(token_chunk, state, false);
+            tokens = tokens[token_chunk_size..].to_vec();
+        }
+        self.run_internal(&tokens, state, true);
 
+        let buffer = self.buffer.borrow();
         let (sender, receiver) = async_channel::bounded(1);
         let slice = buffer.map.slice(..);
         slice.map_async(wgpu::MapMode::Read, move |v| {
