@@ -434,6 +434,7 @@ impl Environment {
                 w,
             }
         };
+        device.poll(wgpu::MaintainBase::Wait);
 
         let mut layers = vec![];
         for layer in 0..num_layers {
@@ -473,6 +474,7 @@ impl Environment {
                 w_r: load_tensor_f16(format!("{ffn}.receptance.weight"))?,
             };
 
+            device.poll(wgpu::MaintainBase::Wait);
             layers.push(Layer {
                 att_layer_norm,
                 ffn_layer_norm,
@@ -516,7 +518,6 @@ impl Environment {
         let buffer = RefCell::new(ModelBuffer::new(self, info, &input));
 
         device.poll(wgpu::MaintainBase::Wait);
-
         Ok(Model {
             env: self.clone(),
             info,
@@ -1323,13 +1324,13 @@ impl Model {
 
         let device = &self.env.device;
 
-        let token_chunk_size = ModelInfo::TOKEN_CHUNK_SIZE;
+        let chunk_size = ModelInfo::TOKEN_CHUNK_SIZE;
         let mut tokens = tokens.to_vec();
 
-        for _ in 0..(tokens.len() - 1) / token_chunk_size {
-            self.run_internal(&tokens[..token_chunk_size], state, false);
+        for _ in 0..(tokens.len() - 1) / chunk_size {
+            self.run_internal(&tokens[..chunk_size], state, false);
             device.poll(wgpu::MaintainBase::Wait);
-            tokens = tokens[token_chunk_size..].to_vec();
+            tokens = tokens[chunk_size..].to_vec();
         }
         self.run_internal(&tokens, state, true);
 

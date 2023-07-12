@@ -100,7 +100,8 @@ async fn run(model: PathBuf) -> Result<()> {
         tokens = tokenizer.encode(prompt.as_bytes())?;
 
         while !model_text.contains("\n\n") {
-            let logits = model.run(&tokens, &state)?;
+            let mut logits = model.run(&tokens, &state)?;
+            logits[0] = f32::NEG_INFINITY;
 
             let probs = softmax(&logits);
 
