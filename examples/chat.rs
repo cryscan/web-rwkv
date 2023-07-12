@@ -68,7 +68,7 @@ async fn run(model: PathBuf) -> Result<()> {
 
     let user = "User";
     let bot = "Assistant";
-    let prompt = format!("{user}: Hi!\n\n{bot}: Hello! I'm an AI assistant trained by Peng Bo! I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\n");
+    let prompt = format!("\n\n{user}: Hi!\n\n{bot}: Hello! I'm an AI assistant trained by Peng Bo! I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\n");
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
 
     print!("{}", prompt);
@@ -76,6 +76,7 @@ async fn run(model: PathBuf) -> Result<()> {
 
     let state = model.create_state();
     let _ = model.run(&tokens, &state);
+    tokens.clear();
 
     loop {
         let mut model_text = String::new();
@@ -97,7 +98,7 @@ async fn run(model: PathBuf) -> Result<()> {
         std::io::stdout().flush()?;
 
         let prompt = format!("{user}: {user_text}\n\n{bot}:");
-        tokens = tokenizer.encode(prompt.as_bytes())?;
+        tokens.append(&mut tokenizer.encode(prompt.as_bytes())?);
 
         while !model_text.contains("\n\n") {
             let mut logits = model.run(&tokens, &state)?;
