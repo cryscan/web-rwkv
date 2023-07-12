@@ -20,11 +20,7 @@ struct Sampler {
 impl Sampler {
     pub fn sample(&self, mut logits: Vec<f32>, occurrences: &HashMap<u16, usize>) -> u16 {
         for (&token, &count) in occurrences.iter() {
-            let presence_penalty = match count > 0 {
-                true => self.presence_penalty,
-                false => 0.0,
-            };
-            logits[token as usize] -= presence_penalty + count as f32 * self.frequency_penalty;
+            logits[token as usize] -= self.presence_penalty + count as f32 * self.frequency_penalty;
         }
 
         let probs = softmax(logits);
@@ -39,12 +35,12 @@ impl Sampler {
             .scan((0, 0.0), |(_, acc), (id, x)| Some((id, *acc + x)))
             .collect();
 
-        let rand = fastrand::f32() * sorted.last().unwrap().1;
+        let rand = fastrand::f32() * sorted.last().unwrap_or(&(0, 0.0)).1;
         let (token, _) = sorted
-            .iter()
-            .find_or_first(|&&(_, cum)| rand <= cum)
-            .unwrap();
-        *token as u16
+            .into_iter()
+            .find_or_first(|&(_, cum)| rand <= cum)
+            .unwrap_or((0, 0.0));
+        token as u16
     }
 }
 
@@ -80,9 +76,7 @@ async fn run(args: Args) -> Result<()> {
     let env = create_environment().await?;
     let tokenizer = load_tokenizer().await?;
 
-    let model = args
-        .model
-        .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
+    let model = args.model;
     let model = load_model(&env, model).await?;
 
     let sampler = Sampler {
@@ -121,7 +115,7 @@ async fn run(args: Args) -> Result<()> {
             break;
         }
 
-        print!("{}:", bot);
+        print!("\n{}:", bot);
         std::io::stdout().flush()?;
 
         let prompt = format!("{user}: {user_text}\n\n{bot}:");
@@ -139,11 +133,8 @@ async fn run(args: Args) -> Result<()> {
             std::io::stdout().flush()?;
 
             tokens = vec![token];
-            if !occurrences.contains_key(&token) {
-                occurrences.insert(token, 1);
-            } else {
-                *occurrences.get_mut(&token).unwrap() += 1;
-            }
+            let count = occurrences.get(&token).unwrap_or(&1);
+            occurrences.insert(token, *count);
         }
     }
 
@@ -154,7 +145,7 @@ async fn run(args: Args) -> Result<()> {
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short, long, value_name = "FILE")]
-    model: Option<PathBuf>,
+    model: PathBuf,
     #[arg(long, default_value_t = 0.5)]
     top_p: f32,
     #[arg(long, default_value_t = 1.0)]
