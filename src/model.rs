@@ -212,13 +212,9 @@ impl ModelBuffer {
         }
     }
 
-    fn reload(&mut self, env: &Environment, info: ModelInfo, input: &[f32]) {
+    fn reload(&self, env: &Environment, info: ModelInfo, input: &[f32]) {
         assert_eq!(self.num_tokens_host, input.len() / info.num_emb);
-        self.emb_x = env.device.create_buffer_init(&BufferInitDescriptor {
-            label: None,
-            contents: cast_slice(input),
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-        });
+        env.queue.write_buffer(&self.emb_x, 0, cast_slice(input));
     }
 }
 
@@ -343,7 +339,6 @@ impl ModelState {
     }
 
     pub fn load(&self, backed: &BackedModelState) -> std::result::Result<(), ModelStateError> {
-        let device = &self.env.device;
         let queue = &self.env.queue;
 
         let ModelInfo {
@@ -357,24 +352,10 @@ impl ModelState {
         }
 
         for (backed_layer, layer) in backed.0.iter().zip(self.layers.iter()) {
-            let buffer = device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: cast_slice(backed_layer),
-                usage: BufferUsages::COPY_SRC,
-            });
-            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
-            encoder.copy_buffer_to_buffer(&buffer, 0, &layer.att, 0, 16 * num_emb as u64);
-            encoder.copy_buffer_to_buffer(
-                &buffer,
-                16 * num_emb as u64,
-                &layer.ffn,
-                0,
-                4 * num_emb as u64,
-            );
-            queue.submit(Some(encoder.finish()));
+            queue.write_buffer(&layer.att, 0, cast_slice(&backed_layer[..4 * num_emb]));
+            queue.write_buffer(&layer.ffn, 0, cast_slice(&backed_layer[4 * num_emb..]));
         }
 
-        device.poll(wgpu::MaintainBase::Wait);
         Ok(())
     }
 }
