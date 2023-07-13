@@ -10,6 +10,7 @@ use std::{
 };
 use web_rwkv::{Environment, Model, Tokenizer};
 
+#[derive(Debug, Clone)]
 struct Sampler {
     pub top_p: f32,
     pub temp: f32,
@@ -76,7 +77,9 @@ async fn run(args: Args) -> Result<()> {
     let env = create_environment().await?;
     let tokenizer = load_tokenizer().await?;
 
-    let model = args.model;
+    let model = args
+        .model
+        .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
     let model = load_model(&env, model).await?;
 
     let sampler = Sampler {
@@ -91,12 +94,17 @@ async fn run(args: Args) -> Result<()> {
     let prompt = format!("\n\n{user}: Hi!\n\n{bot}: Hello! I'm an AI assistant trained by Peng Bo! I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\n");
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
 
+    print!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting");
     print!("{}", prompt);
     std::io::stdout().flush()?;
 
     let state = model.create_state();
     let _ = model.run(&tokens, &state);
     tokens.clear();
+
+    let mut backed_state = state.back()?;
+    let mut last_user_text = String::from("Hi!");
+    let mut last_tokens = vec![];
 
     loop {
         let mut model_text = String::new();
@@ -111,8 +119,16 @@ async fn run(args: Args) -> Result<()> {
             user_text = user_text.trim().into();
         }
 
-        if &user_text.to_lowercase() == "exit" {
+        if &user_text == "-" {
             break;
+        } else if &user_text == "+" {
+            state.load(&backed_state)?;
+            user_text = last_user_text.clone();
+            tokens = last_tokens.clone();
+        } else {
+            backed_state = state.back()?;
+            last_user_text = user_text.clone();
+            last_tokens = tokens.clone();
         }
 
         print!("\n{}:", bot);
@@ -145,7 +161,7 @@ async fn run(args: Args) -> Result<()> {
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short, long, value_name = "FILE")]
-    model: PathBuf,
+    model: Option<PathBuf>,
     #[arg(long, default_value_t = 0.5)]
     top_p: f32,
     #[arg(long, default_value_t = 1.0)]

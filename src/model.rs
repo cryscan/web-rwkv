@@ -228,6 +228,31 @@ pub struct ModelState {
     layers: Vec<LayerState>,
 }
 
+struct LayerState {
+    att: Buffer,
+    ffn: Buffer,
+}
+
+#[derive(Clone)]
+pub struct BackedModelState(Vec<Vec<f32>>);
+
+#[derive(Debug)]
+pub enum ModelStateError {
+    LayerCountNotMatch,
+    EmbedSizeNotMatch,
+}
+
+impl std::fmt::Display for ModelStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            ModelStateError::LayerCountNotMatch => write!(f, "layer count not match"),
+            ModelStateError::EmbedSizeNotMatch => write!(f, "embed size not match"),
+        }
+    }
+}
+
+impl std::error::Error for ModelStateError {}
+
 impl ModelState {
     fn new(env: Environment, info: ModelInfo) -> Self {
         let device = &env.device;
@@ -246,50 +271,112 @@ impl ModelState {
             })
         };
 
-        let mut layers = vec![];
-        for _ in 0..num_layers {
-            let mut att = vec![0.0f32; 4 * num_emb];
-            att[3 * num_emb..4 * num_emb]
-                .iter_mut()
-                .for_each(|x| *x = -1.0e30);
+        let layers = (0..num_layers)
+            .map(|_| {
+                let mut att = vec![0.0f32; 4 * num_emb];
+                att[3 * num_emb..4 * num_emb]
+                    .iter_mut()
+                    .for_each(|x| *x = -1.0e30);
 
-            let ffn = vec![0.0f32; num_emb];
+                let ffn = vec![0.0f32; num_emb];
 
-            let layer = LayerState {
-                att: create_buffer_f32(&att),
-                ffn: create_buffer_f32(&ffn),
-            };
-            layers.push(layer);
-        }
+                LayerState {
+                    att: create_buffer_f32(&att),
+                    ffn: create_buffer_f32(&ffn),
+                }
+            })
+            .collect();
 
         Self { env, info, layers }
     }
-}
 
-impl Clone for ModelState {
-    fn clone(&self) -> Self {
-        let cloned = Self::new(self.env.clone(), self.info);
+    pub fn back(&self) -> Result<BackedModelState> {
         let device = &self.env.device;
         let queue = &self.env.queue;
+
         let num_emb = self.info.num_emb;
 
-        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
-        for (src, dest) in self.layers.iter().zip(cloned.layers.iter()) {
-            let att_size = 4 * 4 * num_emb as u64;
-            let ffn_size = 4 * num_emb as u64;
-            encoder.copy_buffer_to_buffer(&src.att, 0, &dest.att, 0, att_size);
-            encoder.copy_buffer_to_buffer(&src.ffn, 0, &dest.ffn, 0, ffn_size);
-        }
-        queue.submit(Some(encoder.finish()));
-        device.poll(wgpu::MaintainBase::Wait);
+        let layers = self
+            .layers
+            .iter()
+            .map(|layer| {
+                let map = device.create_buffer(&BufferDescriptor {
+                    label: None,
+                    size: 20 * num_emb as u64,
+                    usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let mut encoder =
+                    device.create_command_encoder(&CommandEncoderDescriptor::default());
+                encoder.copy_buffer_to_buffer(&layer.att, 0, &map, 0, 16 * num_emb as u64);
+                encoder.copy_buffer_to_buffer(
+                    &layer.ffn,
+                    0,
+                    &map,
+                    16 * num_emb as u64,
+                    4 * num_emb as u64,
+                );
+                queue.submit(Some(encoder.finish()));
 
-        cloned
+                let (sender, receiver) = async_channel::bounded(1);
+                let slice = map.slice(..);
+                slice.map_async(wgpu::MapMode::Read, move |v| {
+                    sender.send_blocking(v).unwrap();
+                });
+
+                device.poll(wgpu::MaintainBase::Wait);
+                match receiver.recv_blocking().unwrap() {
+                    Ok(_) => {
+                        let data = {
+                            let data = slice.get_mapped_range();
+                            cast_slice(&data).to_vec()
+                        };
+                        map.unmap();
+                        Ok(data)
+                    }
+                    Err(err) => Err(err.into()),
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(BackedModelState(layers))
     }
-}
 
-struct LayerState {
-    att: Buffer,
-    ffn: Buffer,
+    pub fn load(&self, backed: &BackedModelState) -> std::result::Result<(), ModelStateError> {
+        let device = &self.env.device;
+        let queue = &self.env.queue;
+
+        let ModelInfo {
+            num_layers,
+            num_emb,
+            ..
+        } = self.info;
+
+        if backed.0.len() != num_layers {
+            return Err(ModelStateError::LayerCountNotMatch);
+        }
+
+        for (backed_layer, layer) in backed.0.iter().zip(self.layers.iter()) {
+            let buffer = device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: cast_slice(backed_layer),
+                usage: BufferUsages::COPY_SRC,
+            });
+            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+            encoder.copy_buffer_to_buffer(&buffer, 0, &layer.att, 0, 16 * num_emb as u64);
+            encoder.copy_buffer_to_buffer(
+                &buffer,
+                16 * num_emb as u64,
+                &layer.ffn,
+                0,
+                4 * num_emb as u64,
+            );
+            queue.submit(Some(encoder.finish()));
+        }
+
+        device.poll(wgpu::MaintainBase::Wait);
+        Ok(())
+    }
 }
 
 struct ModelBindGroup {
@@ -333,6 +420,7 @@ struct LayerBindGroup {
 impl Environment {
     pub fn create_model_from_bytes(&self, data: &[u8]) -> Result<Model> {
         let device = &self.device;
+        let queue = &self.queue;
         let model = SafeTensors::deserialize(data)?;
 
         let num_layers = {
@@ -434,6 +522,7 @@ impl Environment {
                 w,
             }
         };
+        queue.submit(None);
         device.poll(wgpu::MaintainBase::Wait);
 
         let mut layers = vec![];
@@ -474,6 +563,7 @@ impl Environment {
                 w_r: load_tensor_f16(format!("{ffn}.receptance.weight"))?,
             };
 
+            queue.submit(None);
             device.poll(wgpu::MaintainBase::Wait);
             layers.push(Layer {
                 att_layer_norm,
@@ -517,6 +607,7 @@ impl Environment {
         let input = vec![0.0; num_emb];
         let buffer = RefCell::new(ModelBuffer::new(self, info, &input));
 
+        queue.submit(None);
         device.poll(wgpu::MaintainBase::Wait);
         Ok(Model {
             env: self.clone(),
@@ -1342,7 +1433,7 @@ impl Model {
         });
 
         device.poll(wgpu::MaintainBase::Wait);
-        match receiver.recv_blocking() {
+        match receiver.recv_blocking().unwrap() {
             Ok(_) => {
                 let data = {
                     let data = slice.get_mapped_range();
