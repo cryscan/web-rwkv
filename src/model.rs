@@ -3,11 +3,7 @@ use bytemuck::{cast_slice, pod_collect_to_vec};
 use derive_getters::Getters;
 use half::prelude::*;
 use safetensors::SafeTensors;
-use std::{
-    borrow::{Borrow, Cow},
-    cell::RefCell,
-    num::NonZeroU64,
-};
+use std::{borrow::Cow, cell::RefCell, num::NonZeroU64};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferBinding, BufferDescriptor,
@@ -1241,10 +1237,7 @@ impl Model {
         }
     }
 
-    fn run_internal(&self, tokens: &[u16], state: &ModelState, output: bool) {
-        let device = &self.env.device;
-        let queue = &self.env.queue;
-
+    fn reload_buffer(&self, tokens: &[u16]) {
         let mut buffer = self.buffer.borrow_mut();
         let input = self.embedding(tokens);
         if buffer.num_tokens_host != tokens.len() {
@@ -1252,9 +1245,16 @@ impl Model {
         } else {
             buffer.reload(&self.env, self.info, &input);
         }
-        let buffer = buffer.borrow();
+    }
 
-        let bind_group = self.create_bind_group(buffer, state);
+    fn run_internal(&self, tokens: &[u16], state: &ModelState, output: bool) {
+        let device = &self.env.device;
+        let queue = &self.env.queue;
+
+        self.reload_buffer(tokens);
+        let buffer = self.buffer.borrow();
+
+        let bind_group = self.create_bind_group(&buffer, state);
         let pipeline = &self.pipeline;
 
         let ModelInfo {
