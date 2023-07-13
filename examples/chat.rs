@@ -39,16 +39,21 @@ impl Sampler {
                 if *cum > self.top_p {
                     None
                 } else {
-                    Some((id, *cum + x, x))
+                    *cum += x;
+                    Some((id, *cum, x))
                 }
             })
             .map(|(id, _, x)| (id, x.powf(1.0 / self.temp)))
             .collect();
+
         let sum: f32 = sorted.iter().map(|(_, x)| x).sum();
         let sorted: Vec<_> = sorted
             .into_iter()
             .map(|(id, x)| (id, x / sum))
-            .scan((0, 0.0), |(_, cum), (id, x)| Some((id, *cum + x)))
+            .scan((0, 0.0), |(_, cum), (id, x)| {
+                *cum += x;
+                Some((id, *cum))
+            })
             .collect();
 
         let rand = fastrand::f32();
