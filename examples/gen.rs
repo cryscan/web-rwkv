@@ -34,11 +34,11 @@ fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
     let sorted = sorted.into_iter().map(|(id, x)| (id, x / sum));
 
     let rand = fastrand::f32();
-    let (token, _) = sorted
+    let token = sorted
         .into_iter()
         .find_or_first(|&(_, cum)| rand <= cum)
-        .unwrap_or((0, 0.0));
-
+        .map(|(id, _)| id)
+        .unwrap_or_default();
     token as u16
 }
 
