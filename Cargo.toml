@@ -15,7 +15,6 @@ exclude = ["assets"]
 
 [dependencies]
 wgpu = "0.16.2"
-async-channel = "1.8.0"
 bytemuck = { version = "1.13", features = ["extern_crate_alloc"] }
 half = { version = "2.2", features = ["bytemuck"] }
 safetensors = "0.3.1"
