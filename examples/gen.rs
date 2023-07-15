@@ -20,7 +20,7 @@ fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
     let sorted = probs
         .into_iter()
         .enumerate()
-        .sorted_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
+        .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
         .scan((0, 0.0), |(_, cum), (id, x)| {
             if *cum > top_p {
                 None
