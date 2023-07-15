@@ -1,6 +1,6 @@
 [package]
 name = "web-rwkv"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 authors = ["Zhenyuan Zhang <cryscan@umich.edu>"]
 license = "MIT OR Apache-2.0"
@@ -45,4 +45,3 @@ fastrand = { version = "2.0", features = ['js'] }
 
 [profile.release]
 lto = true
-codegen-units = 1
