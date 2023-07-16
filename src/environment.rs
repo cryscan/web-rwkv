@@ -31,7 +31,7 @@ impl std::fmt::Display for CreateEnvironmentError {
 impl std::error::Error for CreateEnvironmentError {}
 
 impl Environment {
-    pub async fn create(power_preference: PowerPreference) -> Result<Self> {
+    pub async fn create() -> Result<Self> {
         let instance = Instance::new(InstanceDescriptor {
             backends: Backends::PRIMARY,
             dx12_shader_compiler: Dx12Compiler::Dxc {
@@ -41,7 +41,7 @@ impl Environment {
         });
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
-                power_preference,
+                power_preference: PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
                 compatible_surface: None,
             })
