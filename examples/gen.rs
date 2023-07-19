@@ -1,5 +1,6 @@
 use anyhow::Result;
 use itertools::Itertools;
+use memmap2::Mmap;
 use std::{
     fs::File,
     io::{BufReader, Read},
@@ -54,10 +55,9 @@ async fn load_tokenizer() -> Result<Tokenizer> {
 }
 
 async fn load_model(env: Arc<Environment>) -> Result<Model> {
-    let model = Model::from_file(
-        "assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into(),
-        env,
-    )?;
+    let file = File::open("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st")?;
+    let map = unsafe { Mmap::map(&file)? };
+    let model = Model::from_bytes(&map, env)?;
     println!("{:#?}", model.info);
     #[cfg(target_arch = "wasm32")]
     log::info!("{:#?}", model.info);

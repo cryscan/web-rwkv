@@ -1,9 +1,8 @@
 use anyhow::Result;
 use bytemuck::{cast_slice, pod_collect_to_vec};
 use half::prelude::*;
-use memmap2::Mmap;
 use safetensors::SafeTensors;
-use std::{borrow::Cow, fs::File, path::PathBuf, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferDescriptor, BufferUsages,
@@ -177,7 +176,7 @@ pub struct LayerBindGroup {
 }
 
 impl Model {
-    fn from_bytes(data: &[u8], env: Arc<Environment>) -> Result<Self> {
+    pub fn from_bytes(data: &[u8], env: Arc<Environment>) -> Result<Self> {
         let device = &env.device;
         let model = SafeTensors::deserialize(data)?;
 
@@ -348,12 +347,6 @@ impl Model {
             tensor,
             pipeline,
         })
-    }
-
-    pub fn from_file(path: PathBuf, env: Arc<Environment>) -> Result<Self> {
-        let file = File::open(path)?;
-        let map = unsafe { Mmap::map(&file)? };
-        Self::from_bytes(&map, env)
     }
 
     pub fn embedding(&self, tokens: &[u16]) -> Vec<f32> {
