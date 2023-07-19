@@ -3,7 +3,7 @@ use bytemuck::{cast_slice, pod_collect_to_vec};
 use derive_getters::Getters;
 use half::prelude::*;
 use safetensors::SafeTensors;
-use std::{borrow::Cow, cell::RefCell, num::NonZeroU64, sync::mpsc::channel};
+use std::{borrow::Cow, cell::RefCell, num::NonZeroU64};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferBinding, BufferDescriptor,
@@ -310,7 +310,7 @@ impl ModelState {
                 );
                 queue.submit(Some(encoder.finish()));
 
-                let (sender, receiver) = channel();
+                let (sender, receiver) = flume::unbounded();
                 let slice = map.slice(..);
                 slice.map_async(wgpu::MapMode::Read, move |v| {
                     sender.send(v).unwrap();
@@ -1407,7 +1407,7 @@ impl Model {
         self.run_internal(&tokens, state, true);
 
         let buffer = self.buffer.borrow();
-        let (sender, receiver) = channel();
+        let (sender, receiver) = flume::unbounded();
         let slice = buffer.map.slice(..);
         slice.map_async(wgpu::MapMode::Read, move |v| {
             sender.send(v).unwrap();
