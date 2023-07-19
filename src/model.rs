@@ -1127,6 +1127,7 @@ impl Model {
 
         let num_tokens = buffer.tokens.len() as u32;
         let num_emb_vec4 = num_emb as u32 / 4;
+        let num_emb_blocks = (num_emb_vec4 + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let chunk_size_vec4 = ModelInfo::HEAD_CHUNK_SIZE as u32 / 4;
         const BLOCK_SIZE: u32 = 256;
 
@@ -1150,13 +1151,13 @@ impl Model {
 
                 pass.set_pipeline(&pipeline.token_shift);
                 pass.set_bind_group(0, &layer.att_token_shift_k, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
                 pass.set_bind_group(0, &layer.att_token_shift_v, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
                 pass.set_bind_group(0, &layer.att_token_shift_r, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
                 pass.set_pipeline(&pipeline.matmul);
                 pass.set_bind_group(0, &layer.att_matmul_k, &[]);
@@ -1170,7 +1171,7 @@ impl Model {
 
                 pass.set_pipeline(&pipeline.token_mix);
                 pass.set_bind_group(0, &layer.att_token_mix, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, 1, 1);
+                pass.dispatch_workgroups(num_emb_blocks, 1, 1);
 
                 pass.set_pipeline(&pipeline.matmul);
                 pass.set_bind_group(0, &layer.att_matmul_o, &[]);
@@ -1178,7 +1179,7 @@ impl Model {
 
                 pass.set_pipeline(&pipeline.add);
                 pass.set_bind_group(0, &layer.att_add, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
                 pass.set_pipeline(&pipeline.layer_norm);
                 pass.set_bind_group(0, &layer.ffn_layer_norm, &[]);
@@ -1186,10 +1187,10 @@ impl Model {
 
                 pass.set_pipeline(&pipeline.token_shift);
                 pass.set_bind_group(0, &layer.ffn_token_shift_k, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
                 pass.set_bind_group(0, &layer.ffn_token_shift_r, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
                 pass.set_pipeline(&pipeline.matmul);
                 pass.set_bind_group(0, &layer.ffn_matmul_k, &[]);
@@ -1200,7 +1201,7 @@ impl Model {
 
                 pass.set_pipeline(&pipeline.activation);
                 pass.set_bind_group(0, &layer.ffn_activation, &[]);
-                pass.dispatch_workgroups(4 * num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(4 * num_emb_blocks, num_tokens, 1);
 
                 pass.set_pipeline(&pipeline.matmul);
                 pass.set_bind_group(0, &layer.ffn_matmul_v, &[]);
@@ -1208,11 +1209,11 @@ impl Model {
 
                 pass.set_pipeline(&pipeline.channel_mix);
                 pass.set_bind_group(0, &layer.ffn_channel_mix, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
                 pass.set_pipeline(&pipeline.add);
                 pass.set_bind_group(0, &layer.ffn_add, &[]);
-                pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
+                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
             }
 
             encoder.copy_buffer_to_buffer(
@@ -1239,8 +1240,8 @@ impl Model {
             pass.set_bind_group(0, &bind_group.head.layer_norm, &[]);
             pass.dispatch_workgroups(1, 1, 1);
 
+            pass.set_pipeline(&pipeline.matmul);
             for matmul in &bind_group.head.matmul {
-                pass.set_pipeline(&pipeline.matmul);
                 pass.set_bind_group(0, matmul, &[]);
                 pass.dispatch_workgroups(1, chunk_size_vec4, 1);
             }
