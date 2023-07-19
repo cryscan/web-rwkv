@@ -3,13 +3,12 @@ use bytemuck::{cast_slice, pod_collect_to_vec};
 use half::prelude::*;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
-use std::{borrow::Cow, fs::File, num::NonZeroU64, path::PathBuf, sync::Arc};
+use std::{borrow::Cow, fs::File, path::PathBuf, sync::Arc};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor,
-    ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferDescriptor, BufferUsages,
+    CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
+    ShaderModuleDescriptor, ShaderSource,
 };
 
 use crate::Environment;
@@ -354,6 +353,25 @@ impl Model {
         })
     }
 
+    pub fn embedding(&self, tokens: &[u16]) -> Vec<f32> {
+        let num_tokens = tokens.len();
+        let num_emb = self.info.num_emb;
+        let capacity = num_tokens * num_emb;
+
+        let mut input = vec![];
+        input.reserve(capacity);
+        for token in tokens {
+            let index = *token as usize;
+            let mut embed: Vec<_> = self.tensor.embed.w[index * num_emb..(index + 1) * num_emb]
+                .iter()
+                .copied()
+                .map(f16::to_f32)
+                .collect();
+            input.append(&mut embed);
+        }
+        input
+    }
+
     pub fn create_buffer(&self, tokens: &[u16]) -> ModelBuffer {
         let device = &self.env.device;
 
@@ -369,14 +387,14 @@ impl Model {
             device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: cast_slice(data),
-                usage: BufferUsages::STORAGE,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             })
         };
         let create_uniform_u32 = |values: &[u32]| -> Buffer {
             device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: cast_slice(values),
-                usage: BufferUsages::UNIFORM,
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             })
         };
 
@@ -385,20 +403,7 @@ impl Model {
         let num_vocab = self.info.num_vocab;
         let capacity = num_tokens * num_emb;
 
-        let input = {
-            let mut input = vec![];
-            input.reserve(capacity);
-            for token in tokens {
-                let index = *token as usize;
-                let mut embed: Vec<_> = self.tensor.embed.w[index * num_emb..(index + 1) * num_emb]
-                    .iter()
-                    .copied()
-                    .map(f16::to_f32)
-                    .collect();
-                input.append(&mut embed);
-            }
-            input
-        };
+        let input = self.embedding(tokens);
 
         let map = device.create_buffer(&BufferDescriptor {
             label: None,
@@ -435,6 +440,43 @@ impl Model {
             map,
         }
     }
+
+    // pub fn update_buffer(&self, buffer: Arc<ModelBuffer>, tokens: &[u16]) -> Arc<ModelBuffer> {
+    //     let device = &self.env.device;
+    //     let queue = &self.env.queue;
+
+    //     let num_emb = self.info.num_emb;
+    //     let num_tokens = tokens.len();
+
+    //     if num_tokens > buffer.tokens.len() {
+    //         self.create_buffer(tokens)
+    //     } else {
+    //         let inputs = self.embedding(tokens);
+    //         let input_buffer = device.create_buffer_init(&BufferInitDescriptor {
+    //             label: None,
+    //             contents: cast_slice(&inputs),
+    //             usage: BufferUsages::COPY_SRC,
+    //         });
+    //         let num_tokens_buffer = device.create_buffer_init(&BufferInitDescriptor {
+    //             label: None,
+    //             contents: cast_slice(&[num_tokens as u32]),
+    //             usage: BufferUsages::COPY_SRC,
+    //         });
+
+    //         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+    //         encoder.copy_buffer_to_buffer(
+    //             &input_buffer,
+    //             0,
+    //             &buffer.emb_x,
+    //             0,
+    //             4 * num_tokens as u64 * num_emb as u64,
+    //         );
+    //         encoder.copy_buffer_to_buffer(&num_tokens_buffer, 0, &buffer.num_tokens, 0, 4);
+    //         queue.submit(Some(encoder.finish()));
+
+    //         buffer
+    //     }
+    // }
 
     pub fn create_state(&self) -> ModelState {
         let device = &self.env.device;
@@ -1082,9 +1124,7 @@ impl Model {
         let pipeline = &self.pipeline;
 
         let ModelInfo {
-            num_layers,
-            num_emb,
-            num_vocab,
+            num_emb, num_vocab, ..
         } = self.info;
 
         let num_tokens = buffer.tokens.len() as u32;
