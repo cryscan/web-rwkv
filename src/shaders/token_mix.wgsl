@@ -13,7 +13,7 @@
 // @group(1) @binding(8) var<storage, read_write> b: array<vec4<f32>>;         // (C)
 // @group(1) @binding(9) var<storage, read_write> p: array<vec4<f32>>;         // (C)
 
-@group(0) @binding(8) var<storage, read_write> state: array<vec4<f32>>;     // (5, C)
+@group(0) @binding(8) var<storage, read_write> state: array<vec4<f32>>;     // (4, C)
 @group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (T, C)
 
 const BLOCK_SIZE: u32 = 256u;
