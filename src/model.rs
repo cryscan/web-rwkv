@@ -313,12 +313,12 @@ impl ModelState {
                 let (sender, receiver) = flume::unbounded();
                 let slice = map.slice(..);
                 slice.map_async(wgpu::MapMode::Read, move |v| {
-                    sender.send(v).unwrap();
+                    let _ = sender.send(v);
                 });
 
                 device.poll(wgpu::MaintainBase::Wait);
-                match receiver.recv().unwrap() {
-                    Ok(_) => {
+                match receiver.recv() {
+                    Ok(Ok(_)) => {
                         let data = {
                             let data = slice.get_mapped_range();
                             cast_slice(&data).to_vec()
@@ -326,6 +326,7 @@ impl ModelState {
                         map.unmap();
                         Ok(data)
                     }
+                    Ok(Err(err)) => Err(err.into()),
                     Err(err) => Err(err.into()),
                 }
             })
@@ -1410,12 +1411,12 @@ impl Model {
         let (sender, receiver) = flume::unbounded();
         let slice = buffer.map.slice(..);
         slice.map_async(wgpu::MapMode::Read, move |v| {
-            sender.send(v).unwrap();
+            let _ = sender.send(v);
         });
 
         device.poll(wgpu::MaintainBase::Wait);
-        match receiver.recv().unwrap() {
-            Ok(_) => {
+        match receiver.recv() {
+            Ok(Ok(_)) => {
                 let data = {
                     let data = slice.get_mapped_range();
                     cast_slice(&data).to_vec()
@@ -1423,6 +1424,7 @@ impl Model {
                 buffer.map.unmap();
                 Ok(data)
             }
+            Ok(Err(err)) => Err(err.into()),
             Err(err) => Err(err.into()),
         }
     }
