@@ -1165,10 +1165,6 @@ impl Model {
         }
     }
 
-    pub fn poll(&self) {
-        self.env.device.poll(wgpu::MaintainBase::Wait);
-    }
-
     fn run_internal(&self, tokens: &[u16], state: &ModelState, output: bool) {
         let device = &self.env.device;
         let queue = &self.env.queue;
@@ -1322,11 +1318,14 @@ impl Model {
             return Ok(vec![0.0; self.info.num_vocab]);
         }
 
-        let mut tokens = tokens.to_vec();
+        let device = &self.env.device;
+
         let token_chunk_size = ModelInfo::TOKEN_CHUNK_SIZE;
+        let mut tokens = tokens.to_vec();
+
         for _ in 0..(tokens.len() - 1) / token_chunk_size {
-            let token_chunk = &tokens[..token_chunk_size];
-            self.run_internal(token_chunk, state, false);
+            self.run_internal(&tokens[..token_chunk_size], state, false);
+            device.poll(wgpu::MaintainBase::Wait);
             tokens = tokens[token_chunk_size..].to_vec();
         }
         self.run_internal(&tokens, state, true);
@@ -1338,7 +1337,7 @@ impl Model {
             sender.send_blocking(v).unwrap();
         });
 
-        self.poll();
+        device.poll(wgpu::MaintainBase::Wait);
         match receiver.recv_blocking() {
             Ok(_) => {
                 let data = {
