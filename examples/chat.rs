@@ -72,7 +72,7 @@ async fn create_environment() -> Result<Environment> {
     Ok(env)
 }
 
-async fn load_tokenizer() -> Result<Tokenizer> {
+fn load_tokenizer() -> Result<Tokenizer> {
     let file = File::open("assets/rwkv_vocab_v20230424.json")?;
     let mut reader = BufReader::new(file);
     let mut contents = String::new();
@@ -80,7 +80,7 @@ async fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-async fn load_model(env: &Environment, model: PathBuf) -> Result<Model> {
+fn load_model(env: &Environment, model: PathBuf) -> Result<Model> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
     let model = env.create_model_from_bytes(&map)?;
@@ -90,12 +90,12 @@ async fn load_model(env: &Environment, model: PathBuf) -> Result<Model> {
 
 async fn run(cli: Cli) -> Result<()> {
     let env = create_environment().await?;
-    let tokenizer = load_tokenizer().await?;
+    let tokenizer = load_tokenizer()?;
 
     let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-    let model = load_model(&env, model).await?;
+    let model = load_model(&env, model)?;
     let sampler = cli.sampler;
 
     let user = "User";
