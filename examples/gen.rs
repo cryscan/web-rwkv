@@ -1,9 +1,11 @@
 use anyhow::Result;
+use clap::Parser;
 use itertools::Itertools;
 use memmap2::Mmap;
 use std::{
     fs::File,
     io::{BufReader, Read},
+    path::PathBuf,
     time::Instant,
 };
 use web_rwkv::{Environment, Model, Tokenizer};
@@ -51,19 +53,19 @@ async fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-async fn load_model(env: &Environment) -> Result<Model> {
-    let file = File::open("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st")?;
+async fn load_model(env: &Environment, model: PathBuf) -> Result<Model> {
+    let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
     let model = env.create_model_from_bytes(&map)?;
     println!("{:#?}", model.info());
     Ok(model)
 }
 
-async fn run() -> Result<()> {
+async fn run(model: PathBuf) -> Result<()> {
     let env = create_environment().await?;
 
     let tokenizer = load_tokenizer().await?;
-    let model = load_model(&env).await?;
+    let model = load_model(&env, model).await?;
 
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
@@ -98,6 +100,18 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(short, long, value_name = "FILE")]
+    model: Option<PathBuf>,
+}
+
 fn main() {
-    pollster::block_on(run()).unwrap();
+    let args = Args::parse();
+    let model = args
+        .model
+        .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
+
+    pollster::block_on(run(model)).unwrap();
 }
