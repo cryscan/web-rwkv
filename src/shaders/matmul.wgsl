@@ -1,9 +1,7 @@
-@group(0) @binding(0) var<uniform> num_emb: u32;
-
-@group(1) @binding(0) var<uniform> dims: vec2<u32>;                         // [C, R]
-@group(1) @binding(1) var<storage, read> matrix: array<vec2<u32>>;          // (R, C)
-@group(1) @binding(2) var<storage, read> input: array<vec4<f32>>;           // (T, C)
-@group(1) @binding(3) var<storage, read_write> output: array<vec4<f32>>;    // (T, R)
+@group(0) @binding(0) var<uniform> dims: vec2<u32>;                         // [C, R]
+@group(0) @binding(1) var<storage, read> matrix: array<vec2<u32>>;          // (R, C)
+@group(0) @binding(2) var<storage, read> input: array<vec4<f32>>;           // (T, C)
+@group(0) @binding(3) var<storage, read_write> output: array<vec4<f32>>;    // (T, R)
 
 const BLOCK_SIZE: u32 = 256u;
 

@@ -27,13 +27,16 @@ async fn run() -> Result<()> {
     )?;
     println!("{:#?}", model.info);
 
-    let prompt = "Hello, my name is";
+    let prompt = "Hello";
     let tokens = tokenizer.encode(prompt.as_bytes())?;
     println!("{:?}", tokens);
 
     let buffer = model.create_buffer(&tokens);
     let state = model.create_state();
-    let bind_group = model.create_bind_group(&buffer, &state);
+    model.queue(&buffer, &state);
+
+    let logits = model.read_back(&buffer);
+    println!("{:?}", &logits[0..32]);
 
     Ok(())
 }

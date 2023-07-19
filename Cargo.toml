@@ -1,5 +1,5 @@
 [package]
-name = "rwkv-web"
+name = "web-rwkv"
 version = "0.1.0"
 edition = "2021"
 
