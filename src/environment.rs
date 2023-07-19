@@ -1,14 +1,16 @@
 use anyhow::Result;
+use std::sync::Arc;
 use wgpu::{
     Adapter, Backends, Device, DeviceDescriptor, Dx12Compiler, Instance, InstanceDescriptor, Queue,
     RequestAdapterOptions,
 };
 
+#[derive(Clone)]
 pub struct Environment {
-    pub instance: Instance,
-    pub adapter: Adapter,
-    pub device: Device,
-    pub queue: Queue,
+    pub instance: Arc<Instance>,
+    pub adapter: Arc<Adapter>,
+    pub device: Arc<Device>,
+    pub queue: Arc<Queue>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +32,7 @@ impl std::error::Error for CreateEnvironmentError {}
 
 impl Environment {
     pub async fn create() -> Result<Self> {
-        let instance = wgpu::Instance::new(InstanceDescriptor {
+        let instance = Instance::new(InstanceDescriptor {
             backends: Backends::PRIMARY,
             dx12_shader_compiler: Dx12Compiler::Dxc {
                 dxil_path: None,
@@ -52,11 +54,12 @@ impl Environment {
             )
             .await
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
+
         Ok(Self {
-            instance,
-            adapter,
-            device,
-            queue,
+            instance: Arc::new(instance),
+            adapter: Arc::new(adapter),
+            device: Arc::new(device),
+            queue: Arc::new(queue),
         })
     }
 }

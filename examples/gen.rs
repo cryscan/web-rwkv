@@ -4,7 +4,6 @@ use memmap2::Mmap;
 use std::{
     fs::File,
     io::{BufReader, Read},
-    sync::Arc,
     time::Instant,
 };
 use web_rwkv::{Environment, Model, Tokenizer};
@@ -41,8 +40,6 @@ fn sample(probs: &[f32], top_p: f32) -> u16 {
 async fn create_environment() -> Result<Environment> {
     let env = Environment::create().await?;
     println!("{:#?}", env.adapter.get_info());
-    #[cfg(target_arch = "wasm32")]
-    log::info!("{:#?}", env.adapter.get_info());
     Ok(env)
 }
 
@@ -54,21 +51,19 @@ async fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-async fn load_model(env: Arc<Environment>) -> Result<Model> {
+async fn load_model(env: &Environment) -> Result<Model> {
     let file = File::open("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st")?;
     let map = unsafe { Mmap::map(&file)? };
-    let model = Model::from_bytes(&map, env)?;
+    let model = env.create_model_from_bytes(&map)?;
     println!("{:#?}", model.info());
-    #[cfg(target_arch = "wasm32")]
-    log::info!("{:#?}", model.info());
     Ok(model)
 }
 
 async fn run() -> Result<()> {
-    let env = Arc::new(create_environment().await?);
+    let env = create_environment().await?;
 
     let tokenizer = load_tokenizer().await?;
-    let model = load_model(env.clone()).await?;
+    let model = load_model(&env).await?;
 
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
@@ -79,11 +74,7 @@ async fn run() -> Result<()> {
     let mut start = Instant::now();
     let num_tokens = 100;
     for index in 0..=num_tokens {
-        #[cfg(not(target_arch = "wasm32"))]
         let logits = model.run(&tokens, &state)?;
-
-        #[cfg(target_arch = "wasm32")]
-        let logits = model.run_async(&tokens, &state).await?;
 
         let probs = softmax(&logits);
 
@@ -108,13 +99,5 @@ async fn run() -> Result<()> {
 }
 
 fn main() {
-    #[cfg(not(target_arch = "wasm32"))]
     pollster::block_on(run()).unwrap();
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-        console_log::init().expect("could not initialize logger");
-        wasm_bindgen_futures::spawn_local(async { run().await.unwrap() });
-    }
 }
