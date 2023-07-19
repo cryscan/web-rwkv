@@ -19,36 +19,45 @@ struct Sampler {
 }
 
 impl Sampler {
+    fn softmax(data: Vec<f32>) -> Vec<f32> {
+        let exp: Vec<_> = data.into_iter().map(f32::exp).collect();
+        let sum: f32 = exp.iter().sum();
+        exp.into_iter().map(|x| x / sum).collect()
+    }
+
     pub fn sample(&self, mut logits: Vec<f32>, occurrences: &HashMap<u16, usize>) -> u16 {
         for (&token, &count) in occurrences.iter() {
             logits[token as usize] -= self.presence_penalty + count as f32 * self.frequency_penalty;
         }
 
-        let probs = softmax(logits);
+        let probs = Self::softmax(logits);
         let sorted: Vec<_> = probs
             .into_iter()
             .enumerate()
             .sorted_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
-            .scan((0, 0.0, 0.0), |(_, acc, _), (id, x)| {
-                (*acc <= self.top_p).then(|| (id, *acc + x, x))
+            .scan((0, 0.0, 0.0), |(_, cum, _), (id, x)| {
+                if *cum > self.top_p {
+                    None
+                } else {
+                    Some((id, *cum + x, x))
+                }
             })
-            .map(|(id, _, p)| (id, p.powf(1.0 / self.temp)))
-            .scan((0, 0.0), |(_, acc), (id, x)| Some((id, *acc + x)))
+            .map(|(id, _, x)| (id, x.powf(1.0 / self.temp)))
+            .collect();
+        let sum: f32 = sorted.iter().map(|(_, x)| x).sum();
+        let sorted: Vec<_> = sorted
+            .into_iter()
+            .map(|(id, x)| (id, x / sum))
+            .scan((0, 0.0), |(_, cum), (id, x)| Some((id, *cum + x)))
             .collect();
 
-        let rand = fastrand::f32() * sorted.last().unwrap_or(&(0, 0.0)).1;
+        let rand = fastrand::f32();
         let (token, _) = sorted
             .into_iter()
             .find_or_first(|&(_, cum)| rand <= cum)
             .unwrap_or((0, 0.0));
         token as u16
     }
-}
-
-fn softmax(data: Vec<f32>) -> Vec<f32> {
-    let exp: Vec<_> = data.into_iter().map(f32::exp).collect();
-    let sum: f32 = exp.iter().sum();
-    exp.into_iter().map(|x| x / sum).collect()
 }
 
 async fn create_environment() -> Result<Environment> {
