@@ -1,8 +1,8 @@
 use anyhow::Result;
 use std::sync::Arc;
 use wgpu::{
-    Adapter, Backends, Device, DeviceDescriptor, Dx12Compiler, Instance, InstanceDescriptor, Queue,
-    RequestAdapterOptions,
+    Adapter, Backends, Device, DeviceDescriptor, Dx12Compiler, Instance, InstanceDescriptor,
+    PowerPreference, Queue, RequestAdapterOptions,
 };
 
 #[derive(Clone)]
@@ -31,7 +31,7 @@ impl std::fmt::Display for CreateEnvironmentError {
 impl std::error::Error for CreateEnvironmentError {}
 
 impl Environment {
-    pub async fn create() -> Result<Self> {
+    pub async fn create(power_preference: PowerPreference) -> Result<Self> {
         let instance = Instance::new(InstanceDescriptor {
             backends: Backends::PRIMARY,
             dx12_shader_compiler: Dx12Compiler::Dxc {
@@ -40,7 +40,11 @@ impl Environment {
             },
         });
         let adapter = instance
-            .request_adapter(&RequestAdapterOptions::default())
+            .request_adapter(&RequestAdapterOptions {
+                power_preference,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
             .await
             .ok_or(CreateEnvironmentError::RequestAdapterFailed)?;
         let (device, queue) = adapter
