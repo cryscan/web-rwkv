@@ -10,33 +10,36 @@ use std::{
 };
 use web_rwkv::{Environment, Model, Tokenizer};
 
-fn softmax(data: &[f32]) -> Vec<f32> {
+fn softmax(data: Vec<f32>) -> Vec<f32> {
     let exp = data.iter().copied().map(f32::exp).collect_vec();
     let sum: f32 = exp.iter().sum();
-    exp.into_iter().map(|x| x / sum).collect_vec()
+    exp.into_iter().map(|x| x / sum).collect()
 }
 
-fn sample(probs: &[f32], top_p: f32) -> u16 {
+fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
     let sorted = probs
-        .iter()
-        .copied()
+        .into_iter()
         .enumerate()
-        .sorted_by(|a, b| a.1.total_cmp(&b.1).reverse())
-        .scan((0usize, 0.0f32), |state, x| {
-            if state.1 > top_p {
-                return None;
+        .sorted_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
+        .scan((0, 0.0), |(_, cum), (id, x)| {
+            if *cum > top_p {
+                None
+            } else {
+                *cum += x;
+                Some((id, *cum))
             }
-            Some((x.0, state.1 + x.1))
         })
         .collect_vec();
+    let sum: f32 = sorted.iter().map(|(_, x)| x).sum();
+    let sorted = sorted.into_iter().map(|(id, x)| (id, x / sum));
 
-    let rand = fastrand::f32() * sorted.last().unwrap().1;
+    let rand = fastrand::f32();
     let (token, _) = sorted
-        .iter()
-        .find_or_first(|&&(_, cum)| rand <= cum)
-        .unwrap();
+        .into_iter()
+        .find_or_first(|&(_, cum)| rand <= cum)
+        .unwrap_or((0, 0.0));
 
-    *token as u16
+    token as u16
 }
 
 async fn create_environment() -> Result<Environment> {
@@ -77,10 +80,8 @@ async fn run(model: PathBuf) -> Result<()> {
     let num_tokens = 100;
     for index in 0..=num_tokens {
         let logits = model.run(&tokens, &state)?;
-
-        let probs = softmax(&logits);
-
-        let token = sample(&probs, 0.5);
+        let probs = softmax(logits);
+        let token = sample(probs, 0.5);
         let word = String::from_utf8(tokenizer.decode(&[token])?)?;
         print!("{}", word);
 
