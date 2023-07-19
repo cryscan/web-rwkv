@@ -20,6 +20,8 @@ To use in your own rust project, simply add `web-rwkv = "0.1"` as a dependency i
 Check examples on how to create the environment, the tokenizer and how to run the model.
 
 ## Convert Models
+You can now download the coverted models [here](https://huggingface.co/cgisky/RWKV-safetensors-fp16).
+
 You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-4-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
 
 An already-converted 0.4B model can be found under [`assets/models`](assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st).
