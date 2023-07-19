@@ -185,7 +185,7 @@ impl ModelBuffer {
         ModelBuffer {
             num_tokens_host: num_tokens,
             num_tokens: create_uniform_u32(&[num_tokens as u32]),
-            emb_x: load_buffer_f32(&input),
+            emb_x: load_buffer_f32(input),
             emb_o: create_buffer_f32(capacity),
             att_x: create_buffer_f32(capacity),
             att_kx: create_buffer_f32(capacity),
@@ -511,7 +511,7 @@ impl Environment {
         };
 
         let input = vec![0.0; num_emb];
-        let buffer = RefCell::new(ModelBuffer::new(&self, info, &input));
+        let buffer = RefCell::new(ModelBuffer::new(self, info, &input));
 
         Ok(Model {
             env: self.clone(),
@@ -1315,31 +1315,8 @@ impl Model {
         queue.submit(Some(encoder.finish()));
     }
 
-    pub async fn run_async(&self, tokens: &[u16], state: &ModelState) -> Result<Vec<f32>> {
-        self.run_internal(tokens, state);
-        let buffer = self.buffer.borrow();
-
-        let (sender, receiver) = async_channel::bounded(1);
-        let slice = buffer.map.slice(..);
-        slice.map_async(wgpu::MapMode::Read, move |v| {
-            sender.send_blocking(v).unwrap();
-        });
-
-        match receiver.recv().await {
-            Ok(_) => {
-                let data = {
-                    let data = slice.get_mapped_range();
-                    cast_slice(&data).to_vec()
-                };
-                buffer.map.unmap();
-                Ok(data)
-            }
-            Err(err) => Err(err.into()),
-        }
-    }
-
     pub fn run(&self, tokens: &[u16], state: &ModelState) -> Result<Vec<f32>> {
-        if tokens.len() == 0 {
+        if tokens.is_empty() {
             return Ok(vec![0.0; self.info.num_vocab]);
         }
 
