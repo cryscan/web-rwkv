@@ -971,7 +971,6 @@ dependencies = [
  "fastrand",
  "half",
  "itertools",
- "js-sys",
  "lazy_static",
  "log",
  "memmap2",
@@ -981,7 +980,6 @@ dependencies = [
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "web-sys",
  "wgpu",
 ]
 
