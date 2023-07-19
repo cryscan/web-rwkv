@@ -1134,6 +1134,10 @@ impl Model {
                 pass.set_bind_group(0, &layer.att_token_mix, &[]);
                 pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, 1, 1);
 
+                pass.set_pipeline(&pipeline.matmul);
+                pass.set_bind_group(0, &layer.att_matmul_o, &[]);
+                pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+
                 pass.set_pipeline(&pipeline.add);
                 pass.set_bind_group(0, &layer.att_add, &[]);
                 pass.dispatch_workgroups(num_emb_vec4 / BLOCK_SIZE, num_tokens, 1);
@@ -1203,6 +1207,7 @@ impl Model {
         }
 
         encoder.copy_buffer_to_buffer(&buffer.head_o, 0, &buffer.map, 0, 4 * num_vocab as u64);
+        // encoder.copy_buffer_to_buffer(&buffer.ffn_o, 0, &buffer.map, 0, 4 * num_emb as u64);
 
         queue.submit(Some(encoder.finish()));
     }
