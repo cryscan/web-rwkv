@@ -2,37 +2,27 @@ use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use std::collections::BTreeMap;
 
 #[derive(Debug)]
-pub enum TokenizerErrorKind {
+pub enum TokenizerError {
     FailedToParseVocabulary(serde_json::Error),
     NoMatchingTokenFound,
     OutOfRangeToken(u16),
 }
 
-impl std::fmt::Display for TokenizerErrorKind {
+impl std::fmt::Display for TokenizerError {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            TokenizerErrorKind::FailedToParseVocabulary(error) => {
+            TokenizerError::FailedToParseVocabulary(error) => {
                 write!(fmt, "failed to parse vocabulary: {error}")?;
             }
-            TokenizerErrorKind::NoMatchingTokenFound => {
+            TokenizerError::NoMatchingTokenFound => {
                 write!(fmt, "no matching token found")?;
             }
-            TokenizerErrorKind::OutOfRangeToken(token) => {
+            TokenizerError::OutOfRangeToken(token) => {
                 write!(fmt, "out of range token: {token}")?;
             }
         }
 
         Ok(())
-    }
-}
-
-#[derive(Debug)]
-#[repr(transparent)]
-pub struct TokenizerError(TokenizerErrorKind);
-
-impl std::fmt::Display for TokenizerError {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        self.0.fmt(fmt)
     }
 }
 
@@ -54,9 +44,8 @@ enum StrOrBytes {
 
 impl Tokenizer {
     pub fn new(vocab: &str) -> Result<Self, TokenizerError> {
-        let map: BTreeMap<u16, StrOrBytes> = serde_json::from_str(vocab)
-            .map_err(TokenizerErrorKind::FailedToParseVocabulary)
-            .map_err(TokenizerError)?;
+        let map: BTreeMap<u16, StrOrBytes> =
+            serde_json::from_str(vocab).map_err(TokenizerError::FailedToParseVocabulary)?;
 
         let list: Vec<(Vec<u8>, u16)> = map
             .into_iter()
@@ -146,7 +135,7 @@ impl Tokenizer {
                 }
             }
 
-            return Err(TokenizerError(TokenizerErrorKind::NoMatchingTokenFound));
+            return Err(TokenizerError::NoMatchingTokenFound);
         }
 
         Ok(())
@@ -164,7 +153,7 @@ impl Tokenizer {
             let bytes = self
                 .token_index_to_bytes
                 .get(token as usize)
-                .ok_or(TokenizerError(TokenizerErrorKind::OutOfRangeToken(token)))?;
+                .ok_or(TokenizerError::OutOfRangeToken(token))?;
 
             output.extend_from_slice(bytes);
         }
