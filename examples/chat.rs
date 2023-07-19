@@ -1,6 +1,6 @@
 use ahash::{HashMap, HashMapExt};
 use anyhow::Result;
-use clap::Parser;
+use clap::{Args, Parser};
 use itertools::Itertools;
 use memmap2::Mmap;
 use std::{
@@ -10,12 +10,16 @@ use std::{
 };
 use web_rwkv::{Environment, Model, Tokenizer};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Args)]
 struct Sampler {
-    pub top_p: f32,
-    pub temp: f32,
-    pub presence_penalty: f32,
-    pub frequency_penalty: f32,
+    #[arg(long, default_value_t = 0.5)]
+    top_p: f32,
+    #[arg(long, default_value_t = 1.0)]
+    temp: f32,
+    #[arg(long, default_value_t = 0.3)]
+    presence_penalty: f32,
+    #[arg(long, default_value_t = 0.3)]
+    frequency_penalty: f32,
 }
 
 impl Sampler {
@@ -25,11 +29,7 @@ impl Sampler {
         exp.into_iter().map(|x| x / sum).collect()
     }
 
-    pub fn sample(&self, mut logits: Vec<f32>, occurrences: &HashMap<u16, usize>) -> u16 {
-        for (&token, &count) in occurrences.iter() {
-            logits[token as usize] -= self.presence_penalty + count as f32 * self.frequency_penalty;
-        }
-
+    pub fn sample(&self, logits: Vec<f32>) -> u16 {
         let probs = Self::softmax(logits);
         let sorted: Vec<_> = probs
             .into_iter()
@@ -88,21 +88,15 @@ async fn load_model(env: &Environment, model: PathBuf) -> Result<Model> {
     Ok(model)
 }
 
-async fn run(args: Args) -> Result<()> {
+async fn run(cli: Cli) -> Result<()> {
     let env = create_environment().await?;
     let tokenizer = load_tokenizer().await?;
 
-    let model = args
+    let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
     let model = load_model(&env, model).await?;
-
-    let sampler = Sampler {
-        top_p: args.top_p,
-        temp: args.temp,
-        presence_penalty: args.presence_penalty,
-        frequency_penalty: args.frequency_penalty,
-    };
+    let sampler = cli.sampler;
 
     let user = "User";
     let bot = "Assistant";
@@ -155,8 +149,12 @@ async fn run(args: Args) -> Result<()> {
         while !model_text.contains("\n\n") {
             let mut logits = model.run(&tokens, &state)?;
             logits[0] = f32::NEG_INFINITY;
+            for (&token, &count) in occurrences.iter() {
+                let penalty = sampler.presence_penalty + count as f32 * sampler.frequency_penalty;
+                logits[token as usize] -= penalty;
+            }
 
-            let token = sampler.sample(logits, &occurrences);
+            let token = sampler.sample(logits);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;
 
             model_text += &word;
@@ -174,20 +172,14 @@ async fn run(args: Args) -> Result<()> {
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args {
+struct Cli {
     #[arg(short, long, value_name = "FILE")]
     model: Option<PathBuf>,
-    #[arg(long, default_value_t = 0.5)]
-    top_p: f32,
-    #[arg(long, default_value_t = 1.0)]
-    temp: f32,
-    #[arg(long, default_value_t = 0.3)]
-    presence_penalty: f32,
-    #[arg(long, default_value_t = 0.3)]
-    frequency_penalty: f32,
+    #[command(flatten)]
+    sampler: Sampler,
 }
 
 fn main() {
-    let args = Args::parse();
-    pollster::block_on(run(args)).unwrap();
+    let cli = Cli::parse();
+    pollster::block_on(run(cli)).unwrap();
 }

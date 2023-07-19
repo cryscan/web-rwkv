@@ -64,10 +64,13 @@ async fn load_model(env: &Environment, model: PathBuf) -> Result<Model> {
     Ok(model)
 }
 
-async fn run(model: PathBuf) -> Result<()> {
+async fn run(cli: Cli) -> Result<()> {
     let env = create_environment().await?;
 
     let tokenizer = load_tokenizer().await?;
+    let model = cli
+        .model
+        .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
     let model = load_model(&env, model).await?;
 
     let prompt = "The Eiffel Tower is located in the city of";
@@ -103,16 +106,12 @@ async fn run(model: PathBuf) -> Result<()> {
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args {
+struct Cli {
     #[arg(short, long, value_name = "FILE")]
     model: Option<PathBuf>,
 }
 
 fn main() {
-    let args = Args::parse();
-    let model = args
-        .model
-        .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-
-    pollster::block_on(run(model)).unwrap();
+    let cli = Cli::parse();
+    pollster::block_on(run(cli)).unwrap();
 }
