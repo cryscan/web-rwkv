@@ -3,7 +3,7 @@ use bytemuck::{cast_slice, pod_collect_to_vec};
 use derive_getters::Getters;
 use half::prelude::*;
 use safetensors::SafeTensors;
-use std::{borrow::Cow, cell::RefCell, num::NonZeroU64};
+use std::{borrow::Cow, cell::RefCell, num::NonZeroU64, sync::mpsc::channel};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferBinding, BufferDescriptor,
@@ -310,14 +310,14 @@ impl ModelState {
                 );
                 queue.submit(Some(encoder.finish()));
 
-                let (sender, receiver) = async_channel::bounded(1);
+                let (sender, receiver) = channel();
                 let slice = map.slice(..);
                 slice.map_async(wgpu::MapMode::Read, move |v| {
-                    sender.send_blocking(v).unwrap();
+                    sender.send(v).unwrap();
                 });
 
                 device.poll(wgpu::MaintainBase::Wait);
-                match receiver.recv_blocking().unwrap() {
+                match receiver.recv().unwrap() {
                     Ok(_) => {
                         let data = {
                             let data = slice.get_mapped_range();
@@ -1407,14 +1407,14 @@ impl Model {
         self.run_internal(&tokens, state, true);
 
         let buffer = self.buffer.borrow();
-        let (sender, receiver) = async_channel::bounded(1);
+        let (sender, receiver) = channel();
         let slice = buffer.map.slice(..);
         slice.map_async(wgpu::MapMode::Read, move |v| {
-            sender.send_blocking(v).unwrap();
+            sender.send(v).unwrap();
         });
 
         device.poll(wgpu::MaintainBase::Wait);
-        match receiver.recv_blocking().unwrap() {
+        match receiver.recv().unwrap() {
             Ok(_) => {
                 let data = {
                     let data = slice.get_mapped_range();
