@@ -37,21 +37,38 @@ fn sample(probs: &[f32], top_p: f32) -> u16 {
     *token as u16
 }
 
-async fn run() -> Result<()> {
-    let tokenizer = {
-        let file = File::open("assets/rwkv_vocab_v20230424.json")?;
-        let mut reader = BufReader::new(file);
-        let mut contents = String::new();
-        reader.read_to_string(&mut contents)?;
-        Tokenizer::new(&contents)
-    }?;
+async fn create_environment() -> Result<Environment> {
+    let env = Environment::create().await?;
+    println!("{:#?}", env.adapter.get_info());
+    #[cfg(target_arch = "wasm32")]
+    log::info!("{:#?}", env.adapter.get_info());
+    Ok(env)
+}
 
-    let env = Arc::new(Environment::create().await?);
+async fn load_tokenizer() -> Result<Tokenizer> {
+    let file = File::open("assets/rwkv_vocab_v20230424.json")?;
+    let mut reader = BufReader::new(file);
+    let mut contents = String::new();
+    reader.read_to_string(&mut contents)?;
+    Ok(Tokenizer::new(&contents)?)
+}
+
+async fn load_model(env: Arc<Environment>) -> Result<Model> {
     let model = Model::from_file(
         "assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into(),
         env,
     )?;
     println!("{:#?}", model.info);
+    #[cfg(target_arch = "wasm32")]
+    log::info!("{:#?}", model.info);
+    Ok(model)
+}
+
+async fn run() -> Result<()> {
+    let env = Arc::new(create_environment().await?);
+
+    let tokenizer = load_tokenizer().await?;
+    let model = load_model(env.clone()).await?;
 
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
@@ -64,7 +81,12 @@ async fn run() -> Result<()> {
     for index in 0..=num_tokens {
         let buffer = model.create_buffer(&tokens);
 
+        #[cfg(not(target_arch = "wasm32"))]
         let logits = model.run(&buffer, &state)?;
+
+        #[cfg(target_arch = "wasm32")]
+        let logits = model.run_async(&buffer, &state).await?;
+
         let probs = softmax(&logits);
 
         let token = sample(&probs, 0.5);
