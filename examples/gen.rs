@@ -43,7 +43,7 @@ fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
 }
 
 async fn create_environment() -> Result<Environment> {
-    let env = Environment::create(wgpu::PowerPreference::HighPerformance).await?;
+    let env = Environment::create().await?;
     println!("{:#?}", env.adapter.get_info());
     Ok(env)
 }
