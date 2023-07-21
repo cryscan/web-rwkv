@@ -226,7 +226,7 @@ struct LayerState {
 }
 
 #[derive(Clone)]
-pub struct BackedModelState(Vec<Vec<f32>>);
+pub struct BackedModelState(pub Vec<Vec<f32>>);
 
 #[derive(Debug)]
 pub enum ModelStateError {
@@ -1270,88 +1270,88 @@ impl Model {
 
         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
 
-        {
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+
+        pass.set_pipeline(&pipeline.layer_norm);
+        pass.set_bind_group(0, &bind_group.embed.layer_norm, &[]);
+        pass.dispatch_workgroups(1, num_tokens, 1);
+
+        drop(pass);
+
+        for layer in &bind_group.layers {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
 
             pass.set_pipeline(&pipeline.layer_norm);
-            pass.set_bind_group(0, &bind_group.embed.layer_norm, &[]);
+            pass.set_bind_group(0, &layer.att_layer_norm, &[]);
             pass.dispatch_workgroups(1, num_tokens, 1);
-        }
 
-        for layer in &bind_group.layers {
-            {
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_pipeline(&pipeline.token_shift);
+            pass.set_bind_group(0, &layer.att_token_shift_k, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-                pass.set_pipeline(&pipeline.layer_norm);
-                pass.set_bind_group(0, &layer.att_layer_norm, &[]);
-                pass.dispatch_workgroups(1, num_tokens, 1);
+            pass.set_bind_group(0, &layer.att_token_shift_v, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-                pass.set_pipeline(&pipeline.token_shift);
-                pass.set_bind_group(0, &layer.att_token_shift_k, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.set_bind_group(0, &layer.att_token_shift_r, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-                pass.set_bind_group(0, &layer.att_token_shift_v, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.set_pipeline(&pipeline.matmul);
+            pass.set_bind_group(0, &layer.att_matmul_k, &[]);
+            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 
-                pass.set_bind_group(0, &layer.att_token_shift_r, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.set_bind_group(0, &layer.att_matmul_v, &[]);
+            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 
-                pass.set_pipeline(&pipeline.matmul);
-                pass.set_bind_group(0, &layer.att_matmul_k, &[]);
-                pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.set_bind_group(0, &layer.att_matmul_r, &[]);
+            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 
-                pass.set_bind_group(0, &layer.att_matmul_v, &[]);
-                pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.set_pipeline(&pipeline.token_mix);
+            pass.set_bind_group(0, &layer.att_token_mix, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, 1, 1);
 
-                pass.set_bind_group(0, &layer.att_matmul_r, &[]);
-                pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.set_pipeline(&pipeline.matmul);
+            pass.set_bind_group(0, &layer.att_matmul_o, &[]);
+            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 
-                pass.set_pipeline(&pipeline.token_mix);
-                pass.set_bind_group(0, &layer.att_token_mix, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, 1, 1);
+            pass.set_pipeline(&pipeline.add);
+            pass.set_bind_group(0, &layer.att_add, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-                pass.set_pipeline(&pipeline.matmul);
-                pass.set_bind_group(0, &layer.att_matmul_o, &[]);
-                pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.set_pipeline(&pipeline.layer_norm);
+            pass.set_bind_group(0, &layer.ffn_layer_norm, &[]);
+            pass.dispatch_workgroups(1, num_tokens, 1);
 
-                pass.set_pipeline(&pipeline.add);
-                pass.set_bind_group(0, &layer.att_add, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.set_pipeline(&pipeline.token_shift);
+            pass.set_bind_group(0, &layer.ffn_token_shift_k, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-                pass.set_pipeline(&pipeline.layer_norm);
-                pass.set_bind_group(0, &layer.ffn_layer_norm, &[]);
-                pass.dispatch_workgroups(1, num_tokens, 1);
+            pass.set_bind_group(0, &layer.ffn_token_shift_r, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-                pass.set_pipeline(&pipeline.token_shift);
-                pass.set_bind_group(0, &layer.ffn_token_shift_k, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.set_pipeline(&pipeline.matmul);
+            pass.set_bind_group(0, &layer.ffn_matmul_k, &[]);
+            pass.dispatch_workgroups(1, 4 * num_emb_vec4, num_tokens);
 
-                pass.set_bind_group(0, &layer.ffn_token_shift_r, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.set_bind_group(0, &layer.ffn_matmul_r, &[]);
+            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 
-                pass.set_pipeline(&pipeline.matmul);
-                pass.set_bind_group(0, &layer.ffn_matmul_k, &[]);
-                pass.dispatch_workgroups(1, 4 * num_emb_vec4, num_tokens);
+            pass.set_pipeline(&pipeline.activation);
+            pass.set_bind_group(0, &layer.ffn_activation, &[]);
+            pass.dispatch_workgroups(4 * num_emb_blocks, num_tokens, 1);
 
-                pass.set_bind_group(0, &layer.ffn_matmul_r, &[]);
-                pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.set_pipeline(&pipeline.matmul);
+            pass.set_bind_group(0, &layer.ffn_matmul_v, &[]);
+            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 
-                pass.set_pipeline(&pipeline.activation);
-                pass.set_bind_group(0, &layer.ffn_activation, &[]);
-                pass.dispatch_workgroups(4 * num_emb_blocks, num_tokens, 1);
+            pass.set_pipeline(&pipeline.channel_mix);
+            pass.set_bind_group(0, &layer.ffn_channel_mix, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-                pass.set_pipeline(&pipeline.matmul);
-                pass.set_bind_group(0, &layer.ffn_matmul_v, &[]);
-                pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.set_pipeline(&pipeline.add);
+            pass.set_bind_group(0, &layer.ffn_add, &[]);
+            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-                pass.set_pipeline(&pipeline.channel_mix);
-                pass.set_bind_group(0, &layer.ffn_channel_mix, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
-
-                pass.set_pipeline(&pipeline.add);
-                pass.set_bind_group(0, &layer.ffn_add, &[]);
-                pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
-            }
+            drop(pass);
 
             encoder.copy_buffer_to_buffer(
                 &buffer.ffn_o,
@@ -1371,19 +1371,19 @@ impl Model {
                 4 * num_emb as u64,
             );
 
-            {
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
 
-                pass.set_pipeline(&pipeline.layer_norm);
-                pass.set_bind_group(0, &bind_group.head.layer_norm, &[]);
-                pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&pipeline.layer_norm);
+            pass.set_bind_group(0, &bind_group.head.layer_norm, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
 
-                pass.set_pipeline(&pipeline.matmul);
-                for matmul in &bind_group.head.matmul {
-                    pass.set_bind_group(0, matmul, &[]);
-                    pass.dispatch_workgroups(1, chunk_size_vec4, 1);
-                }
+            pass.set_pipeline(&pipeline.matmul);
+            for matmul in &bind_group.head.matmul {
+                pass.set_bind_group(0, matmul, &[]);
+                pass.dispatch_workgroups(1, chunk_size_vec4, 1);
             }
+
+            drop(pass);
 
             encoder.copy_buffer_to_buffer(&buffer.head_o, 0, &buffer.map, 0, 4 * num_vocab as u64);
         }
