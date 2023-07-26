@@ -4,7 +4,7 @@ use itertools::Itertools;
 use memmap2::Mmap;
 use std::{
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, Read, Write},
     path::PathBuf,
     time::Instant,
 };
@@ -100,6 +100,7 @@ async fn run(cli: Cli) -> Result<()> {
         num_tokens,
         start.elapsed().as_millis()
     );
+    std::io::stdout().flush()?;
 
     Ok(())
 }

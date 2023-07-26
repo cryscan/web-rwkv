@@ -16,9 +16,9 @@
 @group(0) @binding(8) var<storage, read_write> state: array<vec4<f32>>;     // (4, C)
 @group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (T, C)
 
-const BLOCK_SIZE: u32 = 256u;
+const BLOCK_SIZE: u32 = 128u;
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn token_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let stride = num_emb / 4u;

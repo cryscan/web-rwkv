@@ -1266,7 +1266,7 @@ impl Model {
         let num_emb_vec4 = num_emb as u32 / 4;
         let num_emb_blocks = (num_emb_vec4 + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let chunk_size_vec4 = ModelInfo::HEAD_CHUNK_SIZE as u32 / 4;
-        const BLOCK_SIZE: u32 = 256;
+        const BLOCK_SIZE: u32 = 128;
 
         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
 

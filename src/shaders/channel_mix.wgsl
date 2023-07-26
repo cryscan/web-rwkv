@@ -5,9 +5,9 @@
 @group(0) @binding(4) var<storage, read_write> state: array<vec4<f32>>;     // (C)
 @group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (T, C)
 
-const BLOCK_SIZE: u32 = 256u;
+const BLOCK_SIZE: u32 = 128u;
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
     let index = invocation_id.x;
     let token = invocation_id.y;

@@ -2,9 +2,9 @@
 @group(0) @binding(1) var<storage, read> x: array<vec4<f32>>;             // (T, C)
 @group(0) @binding(2) var<storage, read_write> output: array<vec4<f32>>;  // (T, C)
 
-const BLOCK_SIZE: u32 = 256u;
+const BLOCK_SIZE: u32 = 128u;
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn activation(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let token = invocation_id.y;
