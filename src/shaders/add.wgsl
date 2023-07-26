@@ -1,6 +1,8 @@
 @group(0) @binding(0) var<uniform> num_emb: u32;
-@group(0) @binding(1) var<storage, read> x: array<vec4<f32>>;               // (T, C)
-@group(0) @binding(2) var<storage, read_write> output: array<vec4<f32>>;    // (T, C)
+@group(0) @binding(1) var<uniform> num_tokens: u32;
+
+@group(0) @binding(2) var<storage, read> x: array<vec4<f32>>;               // (T, C)
+@group(0) @binding(3) var<storage, read_write> output: array<vec4<f32>>;    // (T, C)
 
 const BLOCK_SIZE: u32 = 128u;
 

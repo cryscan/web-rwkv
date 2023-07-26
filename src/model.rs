@@ -108,7 +108,8 @@ struct ModelPipeline {
 }
 
 pub struct ModelBuffer {
-    num_tokens_host: usize,
+    info: ModelInfo,
+
     num_tokens: Buffer,
 
     emb_x: Buffer,
@@ -180,7 +181,7 @@ impl ModelBuffer {
         });
 
         ModelBuffer {
-            num_tokens_host: num_tokens,
+            info,
             num_tokens: create_uniform_u32(&[num_tokens as u32]),
             emb_x: load_buffer_f32(input),
             emb_o: create_buffer_f32(capacity),
@@ -209,8 +210,17 @@ impl ModelBuffer {
     }
 
     fn reload(&self, env: &Environment, info: ModelInfo, input: &[f32]) {
-        assert_eq!(self.num_tokens_host, input.len() / info.num_emb);
+        assert_eq!(self.num_tokens(), input.len() / info.num_emb);
         env.queue.write_buffer(&self.emb_x, 0, cast_slice(input));
+    }
+
+    pub fn info(&self) -> ModelInfo {
+        self.info
+    }
+
+    pub fn num_tokens(&self) -> usize {
+        let capacity = self.emb_x.size() as usize / 4;
+        capacity / self.info.num_emb
     }
 }
 
@@ -565,7 +575,7 @@ impl Environment {
                 source: ShaderSource::Wgsl(Cow::Borrowed(shader)),
             });
             device.create_compute_pipeline(&ComputePipelineDescriptor {
-                label: None,
+                label: Some(entry_point),
                 layout: None,
                 module,
                 entry_point,
@@ -646,20 +656,24 @@ impl Model {
                         binding: 0,
                         resource: self.tensor.dim.as_entire_binding(),
                     },
+                    // BindGroupEntry {
+                    //     binding: 1,
+                    //     resource: buffer.num_tokens.as_entire_binding(),
+                    // },
                     BindGroupEntry {
-                        binding: 1,
+                        binding: 2,
                         resource: buffer.emb_x.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 2,
+                        binding: 3,
                         resource: self.tensor.embed.layer_norm.w.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 3,
+                        binding: 4,
                         resource: self.tensor.embed.layer_norm.b.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 4,
+                        binding: 5,
                         resource: buffer.emb_o.as_entire_binding(),
                     },
                 ],
@@ -676,20 +690,24 @@ impl Model {
                         binding: 0,
                         resource: self.tensor.dim.as_entire_binding(),
                     },
+                    // BindGroupEntry {
+                    //     binding: 1,
+                    //     resource: buffer.num_tokens.as_entire_binding(),
+                    // },
                     BindGroupEntry {
-                        binding: 1,
+                        binding: 2,
                         resource: buffer.head_x.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 2,
+                        binding: 3,
                         resource: self.tensor.head.layer_norm.w.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 3,
+                        binding: 4,
                         resource: self.tensor.head.layer_norm.b.as_entire_binding(),
                     },
                     BindGroupEntry {
-                        binding: 4,
+                        binding: 5,
                         resource: buffer.head_r.as_entire_binding(),
                     },
                 ],
@@ -747,20 +765,24 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: buffer.emb_o.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: layer.att_layer_norm.w.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 3,
+                            binding: 4,
                             resource: layer.att_layer_norm.b.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 4,
+                            binding: 5,
                             resource: buffer.att_x.as_entire_binding(),
                         },
                     ],
@@ -773,20 +795,24 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: layer.att.time_mix_k.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: buffer.att_x.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 3,
+                            binding: 4,
                             resource: state.att.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 4,
+                            binding: 5,
                             resource: buffer.att_kx.as_entire_binding(),
                         },
                     ],
@@ -799,20 +825,24 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: layer.att.time_mix_v.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: buffer.att_x.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 3,
+                            binding: 4,
                             resource: state.att.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 4,
+                            binding: 5,
                             resource: buffer.att_vx.as_entire_binding(),
                         },
                     ],
@@ -825,20 +855,24 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: layer.att.time_mix_r.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: buffer.att_x.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 3,
+                            binding: 4,
                             resource: state.att.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 4,
+                            binding: 5,
                             resource: buffer.att_rx.as_entire_binding(),
                         },
                     ],
@@ -985,12 +1019,16 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: buffer.emb_o.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: buffer.att_o.as_entire_binding(),
                         },
                     ],
@@ -1004,20 +1042,24 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: buffer.att_o.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: layer.ffn_layer_norm.w.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 3,
+                            binding: 4,
                             resource: layer.ffn_layer_norm.b.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 4,
+                            binding: 5,
                             resource: buffer.ffn_x.as_entire_binding(),
                         },
                     ],
@@ -1030,20 +1072,24 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: layer.ffn.time_mix_k.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: buffer.ffn_x.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 3,
+                            binding: 4,
                             resource: state.ffn.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 4,
+                            binding: 5,
                             resource: buffer.ffn_kx.as_entire_binding(),
                         },
                     ],
@@ -1056,20 +1102,24 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: layer.ffn.time_mix_r.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: buffer.ffn_x.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 3,
+                            binding: 4,
                             resource: state.ffn.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 4,
+                            binding: 5,
                             resource: buffer.ffn_rx.as_entire_binding(),
                         },
                     ],
@@ -1104,12 +1154,16 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: buffer.ffn_k.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: buffer.ffn_vx.as_entire_binding(),
                         },
                     ],
@@ -1168,22 +1222,26 @@ impl Model {
                         },
                         BindGroupEntry {
                             binding: 1,
-                            resource: buffer.ffn_x.as_entire_binding(),
+                            resource: buffer.num_tokens.as_entire_binding(),
                         },
                         BindGroupEntry {
                             binding: 2,
-                            resource: buffer.ffn_r.as_entire_binding(),
+                            resource: buffer.ffn_x.as_entire_binding(),
                         },
                         BindGroupEntry {
                             binding: 3,
-                            resource: buffer.ffn_v.as_entire_binding(),
+                            resource: buffer.ffn_r.as_entire_binding(),
                         },
                         BindGroupEntry {
                             binding: 4,
-                            resource: state.ffn.as_entire_binding(),
+                            resource: buffer.ffn_v.as_entire_binding(),
                         },
                         BindGroupEntry {
                             binding: 5,
+                            resource: state.ffn.as_entire_binding(),
+                        },
+                        BindGroupEntry {
+                            binding: 6,
                             resource: buffer.ffn_o.as_entire_binding(),
                         },
                     ],
@@ -1196,12 +1254,16 @@ impl Model {
                             binding: 0,
                             resource: self.tensor.dim.as_entire_binding(),
                         },
+                        // BindGroupEntry {
+                        //     binding: 1,
+                        //     resource: buffer.num_tokens.as_entire_binding(),
+                        // },
                         BindGroupEntry {
-                            binding: 1,
+                            binding: 2,
                             resource: buffer.att_o.as_entire_binding(),
                         },
                         BindGroupEntry {
-                            binding: 2,
+                            binding: 3,
                             resource: buffer.ffn_o.as_entire_binding(),
                         },
                     ],
@@ -1241,7 +1303,7 @@ impl Model {
     fn reload_buffer(&self, tokens: &[u16]) {
         let mut buffer = self.buffer.borrow_mut();
         let input = self.embedding(tokens);
-        if buffer.num_tokens_host != tokens.len() {
+        if buffer.num_tokens() != tokens.len() {
             *buffer = ModelBuffer::new(&self.env, self.info, &input);
         } else {
             buffer.reload(&self.env, self.info, &input);
@@ -1262,7 +1324,7 @@ impl Model {
             num_emb, num_vocab, ..
         } = self.info;
 
-        let num_tokens = buffer.num_tokens_host as u32;
+        let num_tokens = buffer.num_tokens() as u32;
         let num_emb_vec4 = num_emb as u32 / 4;
         let num_emb_blocks = (num_emb_vec4 + BLOCK_SIZE - 1) / BLOCK_SIZE;
         let chunk_size_vec4 = ModelInfo::HEAD_CHUNK_SIZE as u32 / 4;
