@@ -8,7 +8,7 @@ use std::{
     path::PathBuf,
     time::Instant,
 };
-use web_rwkv::{Environment, Model, Tokenizer};
+use web_rwkv::{Environment, Model, Quantization, Tokenizer};
 
 fn softmax(data: Vec<f32>) -> Vec<f32> {
     let exp = data.iter().copied().map(f32::exp).collect_vec();
@@ -56,10 +56,13 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(env: &Environment, model: PathBuf) -> Result<Model> {
+fn load_model(env: &Environment, model: PathBuf, quant: Option<usize>) -> Result<Model> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
-    let model = env.create_model_from_bytes(&map)?;
+    let quantization = quant
+        .map(|layer| Quantization::Int8((0..layer).collect()))
+        .unwrap_or_default();
+    let model = env.create_model_from_bytes(&map, &quantization)?;
     println!("{:#?}", model.info());
     Ok(model)
 }
@@ -71,7 +74,7 @@ async fn run(cli: Cli) -> Result<()> {
     let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-    let model = load_model(&env, model)?;
+    let model = load_model(&env, model, cli.quant)?;
 
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
@@ -110,6 +113,8 @@ async fn run(cli: Cli) -> Result<()> {
 struct Cli {
     #[arg(short, long, value_name = "FILE")]
     model: Option<PathBuf>,
+    #[arg(short, long, value_name = "LAYER")]
+    quant: Option<usize>,
 }
 
 fn main() {

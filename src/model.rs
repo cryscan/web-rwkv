@@ -17,6 +17,7 @@ use crate::Environment;
 pub struct Model {
     info: ModelInfo,
     env: Environment,
+    quantization: Quantization,
     #[getter(skip)]
     tensor: ModelTensor,
     #[getter(skip)]
@@ -37,6 +38,15 @@ impl ModelInfo {
     pub const TOKEN_CHUNK_SIZE: usize = 16;
 }
 
+#[derive(Debug, Default, Clone)]
+pub enum Quantization {
+    /// No quantization.
+    #[default]
+    None,
+    /// Use int8 quantization, given layers to be quantized.
+    Int8(Vec<usize>),
+}
+
 struct ModelTensor {
     dim: Buffer,
     embed: Embed,
@@ -49,6 +59,17 @@ struct LayerNorm {
     b: Buffer,
 }
 
+enum Tensor {
+    Fp16(Buffer),
+    Int8 {
+        w: Buffer,
+        mx: Buffer,
+        my: Buffer,
+        rx: Buffer,
+        ry: Buffer,
+    },
+}
+
 struct Att {
     time_decay: Buffer,
     time_first: Buffer,
@@ -59,10 +80,10 @@ struct Att {
     time_mix_v: Buffer,
     time_mix_r: Buffer,
 
-    w_k: Buffer,
-    w_v: Buffer,
-    w_r: Buffer,
-    w_o: Buffer,
+    w_k: Tensor,
+    w_v: Tensor,
+    w_r: Tensor,
+    w_o: Tensor,
 }
 
 struct Ffn {
@@ -73,9 +94,9 @@ struct Ffn {
     dims_v: Buffer,
     dims_r: Buffer,
 
-    w_k: Buffer,
-    w_v: Buffer,
-    w_r: Buffer,
+    w_k: Tensor,
+    w_v: Tensor,
+    w_r: Tensor,
 }
 
 struct Layer {
@@ -101,6 +122,7 @@ struct ModelPipeline {
     layer_norm: ComputePipeline,
     token_shift: ComputePipeline,
     matmul: ComputePipeline,
+    matmul_int8: ComputePipeline,
     token_mix: ComputePipeline,
     activation: ComputePipeline,
     channel_mix: ComputePipeline,
@@ -406,7 +428,11 @@ struct LayerBindGroup {
 }
 
 impl Environment {
-    pub fn create_model_from_bytes(&self, data: &[u8]) -> Result<Model> {
+    pub fn create_model_from_bytes(
+        &self,
+        data: &[u8],
+        quantization: &Quantization,
+    ) -> Result<Model> {
         let device = &self.device;
         let queue = &self.queue;
         let model = SafeTensors::deserialize(data)?;
@@ -471,6 +497,68 @@ impl Environment {
             });
             Ok(buffer)
         };
+        let load_tensor_int8 = |name: String, num_rows: usize, num_cols: usize| -> Result<Tensor> {
+            let tensor = model.tensor(&name)?.data();
+            let mut tensor: Vec<_> = pod_collect_to_vec::<_, f16>(tensor)
+                .into_iter()
+                .map(f16::to_f32)
+                .collect();
+
+            let mut mx = vec![f32::MAX; num_cols];
+            let mut my = vec![f32::MAX; num_rows];
+            let mut rx = vec![f32::MIN; num_cols];
+            let mut ry = vec![f32::MIN; num_rows];
+
+            for j in 0..num_cols {
+                (0..num_rows).for_each(|i| mx[j] = mx[j].min(tensor[num_cols * i + j]));
+                (0..num_rows).for_each(|i| tensor[num_cols * i + j] -= mx[j]);
+            }
+            for i in 0..num_rows {
+                (0..num_cols).for_each(|j| my[i] = my[i].min(tensor[num_cols * i + j]));
+                (0..num_cols).for_each(|j| tensor[num_cols * i + j] -= my[i]);
+            }
+            for j in 0..num_cols {
+                (0..num_rows).for_each(|i| rx[j] = rx[j].max(tensor[num_cols * i + j]));
+                (0..num_rows).for_each(|i| tensor[num_cols * i + j] /= rx[j]);
+            }
+            for i in 0..num_rows {
+                (0..num_cols).for_each(|j| ry[i] = ry[i].max(tensor[num_cols * i + j]));
+                (0..num_cols).for_each(|j| tensor[num_cols * i + j] /= ry[i]);
+            }
+
+            let tensor: Vec<_> = tensor
+                .into_iter()
+                .map(|x| (0.5 + 255.0 * x.clamp(0.0, 1.0)) as u8)
+                .collect();
+
+            Ok(Tensor::Int8 {
+                w: device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: tensor.as_slice(),
+                    usage: BufferUsages::STORAGE,
+                }),
+                mx: device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: cast_slice(&mx),
+                    usage: BufferUsages::STORAGE,
+                }),
+                my: device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: cast_slice(&my),
+                    usage: BufferUsages::STORAGE,
+                }),
+                rx: device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: cast_slice(&rx),
+                    usage: BufferUsages::STORAGE,
+                }),
+                ry: device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: cast_slice(&ry),
+                    usage: BufferUsages::STORAGE,
+                }),
+            })
+        };
         let create_uniform_u32 = |values: &[u32]| -> Buffer {
             device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
@@ -521,17 +609,31 @@ impl Environment {
             };
 
             let att = format!("blocks.{layer}.att");
-            let att = Att {
-                time_decay: load_tensor_exp_f32(format!("{att}.time_decay"))?,
-                time_first: load_tensor_f32(format!("{att}.time_first"))?,
-                time_mix_k: load_tensor_f16(format!("{att}.time_mix_k"))?,
-                time_mix_v: load_tensor_f16(format!("{att}.time_mix_v"))?,
-                time_mix_r: load_tensor_f16(format!("{att}.time_mix_r"))?,
-                dims: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
-                w_k: load_tensor_f16(format!("{att}.key.weight"))?,
-                w_v: load_tensor_f16(format!("{att}.value.weight"))?,
-                w_r: load_tensor_f16(format!("{att}.receptance.weight"))?,
-                w_o: load_tensor_f16(format!("{att}.output.weight"))?,
+            let att = match quantization {
+                Quantization::Int8(x) if x.contains(&layer) => Att {
+                    time_decay: load_tensor_exp_f32(format!("{att}.time_decay"))?,
+                    time_first: load_tensor_f32(format!("{att}.time_first"))?,
+                    time_mix_k: load_tensor_f16(format!("{att}.time_mix_k"))?,
+                    time_mix_v: load_tensor_f16(format!("{att}.time_mix_v"))?,
+                    time_mix_r: load_tensor_f16(format!("{att}.time_mix_r"))?,
+                    dims: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
+                    w_k: load_tensor_int8(format!("{att}.key.weight"), num_emb, num_emb)?,
+                    w_v: load_tensor_int8(format!("{att}.value.weight"), num_emb, num_emb)?,
+                    w_r: load_tensor_int8(format!("{att}.receptance.weight"), num_emb, num_emb)?,
+                    w_o: load_tensor_int8(format!("{att}.output.weight"), num_emb, num_emb)?,
+                },
+                _ => Att {
+                    time_decay: load_tensor_exp_f32(format!("{att}.time_decay"))?,
+                    time_first: load_tensor_f32(format!("{att}.time_first"))?,
+                    time_mix_k: load_tensor_f16(format!("{att}.time_mix_k"))?,
+                    time_mix_v: load_tensor_f16(format!("{att}.time_mix_v"))?,
+                    time_mix_r: load_tensor_f16(format!("{att}.time_mix_r"))?,
+                    dims: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
+                    w_k: Tensor::Fp16(load_tensor_f16(format!("{att}.key.weight"))?),
+                    w_v: Tensor::Fp16(load_tensor_f16(format!("{att}.value.weight"))?),
+                    w_r: Tensor::Fp16(load_tensor_f16(format!("{att}.receptance.weight"))?),
+                    w_o: Tensor::Fp16(load_tensor_f16(format!("{att}.output.weight"))?),
+                },
             };
 
             let ffn_layer_norm = LayerNorm {
@@ -540,15 +642,27 @@ impl Environment {
             };
 
             let ffn = format!("blocks.{layer}.ffn");
-            let ffn = Ffn {
-                time_mix_k: load_tensor_f16(format!("{ffn}.time_mix_k"))?,
-                time_mix_r: load_tensor_f16(format!("{ffn}.time_mix_r"))?,
-                dims_k: create_uniform_u32(&[num_emb as u32, 4 * num_emb as u32]),
-                dims_v: create_uniform_u32(&[4 * num_emb as u32, num_emb as u32]),
-                dims_r: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
-                w_k: load_tensor_f16(format!("{ffn}.key.weight"))?,
-                w_v: load_tensor_f16(format!("{ffn}.value.weight"))?,
-                w_r: load_tensor_f16(format!("{ffn}.receptance.weight"))?,
+            let ffn = match quantization {
+                Quantization::Int8(x) if x.contains(&layer) => Ffn {
+                    time_mix_k: load_tensor_f16(format!("{ffn}.time_mix_k"))?,
+                    time_mix_r: load_tensor_f16(format!("{ffn}.time_mix_r"))?,
+                    dims_k: create_uniform_u32(&[num_emb as u32, 4 * num_emb as u32]),
+                    dims_v: create_uniform_u32(&[4 * num_emb as u32, num_emb as u32]),
+                    dims_r: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
+                    w_k: load_tensor_int8(format!("{ffn}.key.weight"), 4 * num_emb, num_emb)?,
+                    w_v: load_tensor_int8(format!("{ffn}.value.weight"), num_emb, 4 * num_emb)?,
+                    w_r: load_tensor_int8(format!("{ffn}.receptance.weight"), num_emb, num_emb)?,
+                },
+                _ => Ffn {
+                    time_mix_k: load_tensor_f16(format!("{ffn}.time_mix_k"))?,
+                    time_mix_r: load_tensor_f16(format!("{ffn}.time_mix_r"))?,
+                    dims_k: create_uniform_u32(&[num_emb as u32, 4 * num_emb as u32]),
+                    dims_v: create_uniform_u32(&[4 * num_emb as u32, num_emb as u32]),
+                    dims_r: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
+                    w_k: Tensor::Fp16(load_tensor_f16(format!("{ffn}.key.weight"))?),
+                    w_v: Tensor::Fp16(load_tensor_f16(format!("{ffn}.value.weight"))?),
+                    w_r: Tensor::Fp16(load_tensor_f16(format!("{ffn}.receptance.weight"))?),
+                },
             };
 
             queue.submit(None);
@@ -586,6 +700,7 @@ impl Environment {
             layer_norm: create_pipeline(include_str!("shaders/layer_norm.wgsl"), "layer_norm"),
             token_shift: create_pipeline(include_str!("shaders/token_shift.wgsl"), "token_shift"),
             matmul: create_pipeline(include_str!("shaders/matmul.wgsl"), "matmul"),
+            matmul_int8: create_pipeline(include_str!("shaders/matmul_int8.wgsl"), "matmul"),
             token_mix: create_pipeline(include_str!("shaders/token_mix.wgsl"), "token_mix"),
             activation: create_pipeline(include_str!("shaders/activation.wgsl"), "activation"),
             channel_mix: create_pipeline(include_str!("shaders/channel_mix.wgsl"), "channel_mix"),
@@ -600,6 +715,7 @@ impl Environment {
         Ok(Model {
             env: self.clone(),
             info,
+            quantization: quantization.clone(),
             tensor,
             pipeline,
             buffer,
@@ -635,11 +751,12 @@ impl Model {
         let device = &self.env.device;
         let pipeline = &self.pipeline;
 
-        let [layer_norm_layout, token_shift_layout, matmul_layout, token_mix_layout, activation_layout, channel_mix_layout, add_layout] =
+        let [layer_norm_layout, token_shift_layout, matmul_layout, matmul_int8_layout, token_mix_layout, activation_layout, channel_mix_layout, add_layout] =
             [
                 &pipeline.layer_norm,
                 &pipeline.token_shift,
                 &pipeline.matmul,
+                &pipeline.matmul_int8,
                 &pipeline.token_mix,
                 &pipeline.activation,
                 &pipeline.channel_mix,
@@ -877,72 +994,198 @@ impl Model {
                         },
                     ],
                 });
-                let att_matmul_k = device.create_bind_group(&BindGroupDescriptor {
-                    label: None,
-                    layout: &matmul_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: layer.att.dims.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: layer.att.w_k.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: buffer.att_kx.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: buffer.att_k.as_entire_binding(),
-                        },
-                    ],
-                });
-                let att_matmul_v = device.create_bind_group(&BindGroupDescriptor {
-                    label: None,
-                    layout: &matmul_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: layer.att.dims.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: layer.att.w_v.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: buffer.att_vx.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: buffer.att_v.as_entire_binding(),
-                        },
-                    ],
-                });
-                let att_matmul_r = device.create_bind_group(&BindGroupDescriptor {
-                    label: None,
-                    layout: &matmul_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: layer.att.dims.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: layer.att.w_r.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: buffer.att_rx.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: buffer.att_r.as_entire_binding(),
-                        },
-                    ],
-                });
+                let att_matmul_k = match &layer.att.w_k {
+                    Tensor::Fp16(w) => device.create_bind_group(&BindGroupDescriptor {
+                        label: None,
+                        layout: &matmul_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: layer.att.dims.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: w.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: buffer.att_kx.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: buffer.att_k.as_entire_binding(),
+                            },
+                        ],
+                    }),
+                    Tensor::Int8 { w, mx, my, rx, ry } => {
+                        device.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &matmul_int8_layout,
+                            entries: &[
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: layer.att.dims.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: w.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 2,
+                                    resource: mx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 3,
+                                    resource: rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 4,
+                                    resource: my.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 5,
+                                    resource: ry.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 6,
+                                    resource: buffer.att_kx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 7,
+                                    resource: buffer.att_k.as_entire_binding(),
+                                },
+                            ],
+                        })
+                    }
+                };
+                let att_matmul_v = match &layer.att.w_v {
+                    Tensor::Fp16(w) => device.create_bind_group(&BindGroupDescriptor {
+                        label: None,
+                        layout: &matmul_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: layer.att.dims.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: w.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: buffer.att_vx.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: buffer.att_v.as_entire_binding(),
+                            },
+                        ],
+                    }),
+                    Tensor::Int8 { w, mx, my, rx, ry } => {
+                        device.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &matmul_int8_layout,
+                            entries: &[
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: layer.att.dims.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: w.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 2,
+                                    resource: mx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 3,
+                                    resource: rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 4,
+                                    resource: my.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 5,
+                                    resource: ry.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 6,
+                                    resource: buffer.att_vx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 7,
+                                    resource: buffer.att_v.as_entire_binding(),
+                                },
+                            ],
+                        })
+                    }
+                };
+                let att_matmul_r = match &layer.att.w_r {
+                    Tensor::Fp16(w) => device.create_bind_group(&BindGroupDescriptor {
+                        label: None,
+                        layout: &matmul_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: layer.att.dims.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: w.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: buffer.att_rx.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: buffer.att_r.as_entire_binding(),
+                            },
+                        ],
+                    }),
+                    Tensor::Int8 { w, mx, my, rx, ry } => {
+                        device.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &matmul_int8_layout,
+                            entries: &[
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: layer.att.dims.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: w.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 2,
+                                    resource: mx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 3,
+                                    resource: rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 4,
+                                    resource: my.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 5,
+                                    resource: ry.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 6,
+                                    resource: buffer.att_rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 7,
+                                    resource: buffer.att_r.as_entire_binding(),
+                                },
+                            ],
+                        })
+                    }
+                };
                 let att_token_mix = device.create_bind_group(&BindGroupDescriptor {
                     label: None,
                     layout: &token_mix_layout,
@@ -989,28 +1232,70 @@ impl Model {
                         },
                     ],
                 });
-                let att_matmul_o = device.create_bind_group(&BindGroupDescriptor {
-                    label: None,
-                    layout: &matmul_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: layer.att.dims.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: layer.att.w_o.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: buffer.att_w.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: buffer.att_o.as_entire_binding(),
-                        },
-                    ],
-                });
+                let att_matmul_o = match &layer.att.w_o {
+                    Tensor::Fp16(w) => device.create_bind_group(&BindGroupDescriptor {
+                        label: None,
+                        layout: &matmul_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: layer.att.dims.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: w.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: buffer.att_w.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: buffer.att_o.as_entire_binding(),
+                            },
+                        ],
+                    }),
+                    Tensor::Int8 { w, mx, my, rx, ry } => {
+                        device.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &matmul_int8_layout,
+                            entries: &[
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: layer.att.dims.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: w.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 2,
+                                    resource: mx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 3,
+                                    resource: rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 4,
+                                    resource: my.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 5,
+                                    resource: ry.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 6,
+                                    resource: buffer.att_w.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 7,
+                                    resource: buffer.att_o.as_entire_binding(),
+                                },
+                            ],
+                        })
+                    }
+                };
                 let att_add = device.create_bind_group(&BindGroupDescriptor {
                     label: None,
                     layout: &add_layout,
@@ -1124,28 +1409,70 @@ impl Model {
                         },
                     ],
                 });
-                let ffn_matmul_k = device.create_bind_group(&BindGroupDescriptor {
-                    label: None,
-                    layout: &matmul_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: layer.ffn.dims_k.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: layer.ffn.w_k.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: buffer.ffn_kx.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: buffer.ffn_k.as_entire_binding(),
-                        },
-                    ],
-                });
+                let ffn_matmul_k = match &layer.ffn.w_k {
+                    Tensor::Fp16(w) => device.create_bind_group(&BindGroupDescriptor {
+                        label: None,
+                        layout: &matmul_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: layer.ffn.dims_k.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: w.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: buffer.ffn_kx.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: buffer.ffn_k.as_entire_binding(),
+                            },
+                        ],
+                    }),
+                    Tensor::Int8 { w, mx, my, rx, ry } => {
+                        device.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &matmul_int8_layout,
+                            entries: &[
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: layer.ffn.dims_k.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: w.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 2,
+                                    resource: mx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 3,
+                                    resource: rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 4,
+                                    resource: my.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 5,
+                                    resource: ry.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 6,
+                                    resource: buffer.ffn_kx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 7,
+                                    resource: buffer.ffn_k.as_entire_binding(),
+                                },
+                            ],
+                        })
+                    }
+                };
                 let ffn_activation = device.create_bind_group(&BindGroupDescriptor {
                     label: None,
                     layout: &activation_layout,
@@ -1168,50 +1495,134 @@ impl Model {
                         },
                     ],
                 });
-                let ffn_matmul_v = device.create_bind_group(&BindGroupDescriptor {
-                    label: None,
-                    layout: &matmul_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: layer.ffn.dims_v.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: layer.ffn.w_v.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: buffer.ffn_vx.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: buffer.ffn_v.as_entire_binding(),
-                        },
-                    ],
-                });
-                let ffn_matmul_r = device.create_bind_group(&BindGroupDescriptor {
-                    label: None,
-                    layout: &matmul_layout,
-                    entries: &[
-                        BindGroupEntry {
-                            binding: 0,
-                            resource: layer.ffn.dims_r.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 1,
-                            resource: layer.ffn.w_r.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 2,
-                            resource: buffer.ffn_rx.as_entire_binding(),
-                        },
-                        BindGroupEntry {
-                            binding: 3,
-                            resource: buffer.ffn_r.as_entire_binding(),
-                        },
-                    ],
-                });
+                let ffn_matmul_v = match &layer.ffn.w_v {
+                    Tensor::Fp16(w) => device.create_bind_group(&BindGroupDescriptor {
+                        label: None,
+                        layout: &matmul_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: layer.ffn.dims_v.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: w.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: buffer.ffn_vx.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: buffer.ffn_v.as_entire_binding(),
+                            },
+                        ],
+                    }),
+                    Tensor::Int8 { w, mx, my, rx, ry } => {
+                        device.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &matmul_int8_layout,
+                            entries: &[
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: layer.ffn.dims_v.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: w.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 2,
+                                    resource: mx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 3,
+                                    resource: rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 4,
+                                    resource: my.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 5,
+                                    resource: ry.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 6,
+                                    resource: buffer.ffn_vx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 7,
+                                    resource: buffer.ffn_v.as_entire_binding(),
+                                },
+                            ],
+                        })
+                    }
+                };
+                let ffn_matmul_r = match &layer.ffn.w_r {
+                    Tensor::Fp16(w) => device.create_bind_group(&BindGroupDescriptor {
+                        label: None,
+                        layout: &matmul_layout,
+                        entries: &[
+                            BindGroupEntry {
+                                binding: 0,
+                                resource: layer.ffn.dims_r.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 1,
+                                resource: w.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 2,
+                                resource: buffer.ffn_rx.as_entire_binding(),
+                            },
+                            BindGroupEntry {
+                                binding: 3,
+                                resource: buffer.ffn_r.as_entire_binding(),
+                            },
+                        ],
+                    }),
+                    Tensor::Int8 { w, mx, my, rx, ry } => {
+                        device.create_bind_group(&BindGroupDescriptor {
+                            label: None,
+                            layout: &matmul_int8_layout,
+                            entries: &[
+                                BindGroupEntry {
+                                    binding: 0,
+                                    resource: layer.ffn.dims_r.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 1,
+                                    resource: w.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 2,
+                                    resource: mx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 3,
+                                    resource: rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 4,
+                                    resource: my.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 5,
+                                    resource: ry.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 6,
+                                    resource: buffer.ffn_rx.as_entire_binding(),
+                                },
+                                BindGroupEntry {
+                                    binding: 7,
+                                    resource: buffer.ffn_r.as_entire_binding(),
+                                },
+                            ],
+                        })
+                    }
+                };
                 let ffn_channel_mix = device.create_bind_group(&BindGroupDescriptor {
                     label: None,
                     layout: &channel_mix_layout,
@@ -1340,7 +1751,12 @@ impl Model {
 
         drop(pass);
 
-        for layer in &bind_group.layers {
+        for (index, layer) in bind_group.layers.iter().enumerate() {
+            let matmul_pipeline = match &self.quantization {
+                Quantization::Int8(x) if x.contains(&index) => &pipeline.matmul_int8,
+                _ => &pipeline.matmul,
+            };
+
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
 
             pass.set_pipeline(&pipeline.layer_norm);
@@ -1357,7 +1773,7 @@ impl Model {
             pass.set_bind_group(0, &layer.att_token_shift_r, &[]);
             pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-            pass.set_pipeline(&pipeline.matmul);
+            pass.set_pipeline(matmul_pipeline);
             pass.set_bind_group(0, &layer.att_matmul_k, &[]);
             pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 
@@ -1371,7 +1787,7 @@ impl Model {
             pass.set_bind_group(0, &layer.att_token_mix, &[]);
             pass.dispatch_workgroups(num_emb_blocks, 1, 1);
 
-            pass.set_pipeline(&pipeline.matmul);
+            pass.set_pipeline(matmul_pipeline);
             pass.set_bind_group(0, &layer.att_matmul_o, &[]);
             pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 
@@ -1390,7 +1806,7 @@ impl Model {
             pass.set_bind_group(0, &layer.ffn_token_shift_r, &[]);
             pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
 
-            pass.set_pipeline(&pipeline.matmul);
+            pass.set_pipeline(matmul_pipeline);
             pass.set_bind_group(0, &layer.ffn_matmul_k, &[]);
             pass.dispatch_workgroups(1, 4 * num_emb_vec4, num_tokens);
 
@@ -1401,7 +1817,7 @@ impl Model {
             pass.set_bind_group(0, &layer.ffn_activation, &[]);
             pass.dispatch_workgroups(4 * num_emb_blocks, num_tokens, 1);
 
-            pass.set_pipeline(&pipeline.matmul);
+            pass.set_pipeline(matmul_pipeline);
             pass.set_bind_group(0, &layer.ffn_matmul_v, &[]);
             pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
 

@@ -27,6 +27,9 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.z;
     let stride = dims / 4u;
 
+    let myc = my[channel];
+    let ryc = ry[channel];
+
     local_sum[index] = vec4<f32>(0.0);
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
         let ti = token * stride.x + i;
@@ -37,16 +40,14 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
         let mxi = mx[i];
         let rxi = rx[i];
-        let myc = my[channel];
-        let ryc = ry[channel];
 
         // read 4 rows from the matrix, each with 4 unpacked floats, forming a 4x4 sub-block
         var m: mat4x4<f32>;
 
-        m[0] = unpack4x8unorm(matrix[ci]) * rxi * ryc[0] + mxi + myc[0]; ci += stride.x;
-        m[1] = unpack4x8unorm(matrix[ci]) * rxi * ryc[1] + mxi + ryc[1]; ci += stride.x;
-        m[2] = unpack4x8unorm(matrix[ci]) * rxi * ryc[2] + mxi + ryc[2]; ci += stride.x;
-        m[3] = unpack4x8unorm(matrix[ci]) * rxi * ryc[3] + mxi + ryc[3];
+        m[0] = unpack4x8unorm(matrix[ci]) * ryc[0] * rxi + myc[0] + mxi; ci += stride.x;
+        m[1] = unpack4x8unorm(matrix[ci]) * ryc[1] * rxi + myc[1] + mxi; ci += stride.x;
+        m[2] = unpack4x8unorm(matrix[ci]) * ryc[2] * rxi + myc[2] + mxi; ci += stride.x;
+        m[3] = unpack4x8unorm(matrix[ci]) * ryc[3] * rxi + myc[3] + mxi;
         local_sum[index] += transpose(m) * x;
     }
     workgroupBarrier();

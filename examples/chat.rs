@@ -8,7 +8,7 @@ use std::{
     io::{BufReader, Read, Write},
     path::PathBuf,
 };
-use web_rwkv::{Environment, Model, Tokenizer};
+use web_rwkv::{Environment, Model, Quantization, Tokenizer};
 
 #[derive(Debug, Clone, Args)]
 struct Sampler {
@@ -80,10 +80,13 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(env: &Environment, model: PathBuf) -> Result<Model> {
+fn load_model(env: &Environment, model: PathBuf, quant: Option<usize>) -> Result<Model> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
-    let model = env.create_model_from_bytes(&map)?;
+    let quantization = quant
+        .map(|layer| Quantization::Int8((0..layer).collect()))
+        .unwrap_or_default();
+    let model = env.create_model_from_bytes(&map, &quantization)?;
     println!("{:#?}", model.info());
     Ok(model)
 }
@@ -95,7 +98,7 @@ async fn run(cli: Cli) -> Result<()> {
     let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-    let model = load_model(&env, model)?;
+    let model = load_model(&env, model, cli.quant)?;
     let sampler = cli.sampler;
 
     let user = "User";
@@ -146,7 +149,7 @@ async fn run(cli: Cli) -> Result<()> {
         let prompt = format!("{user}: {user_text}\n\n{bot}:");
         tokens.append(&mut tokenizer.encode(prompt.as_bytes())?);
 
-        while !model_text.contains("\n\n") {
+        loop {
             let mut logits = model.run(&tokens, &state)?;
             logits[0] = f32::NEG_INFINITY;
             for (&token, &count) in occurrences.iter() {
@@ -164,6 +167,10 @@ async fn run(cli: Cli) -> Result<()> {
             tokens = vec![token];
             let count = occurrences.get(&token).unwrap_or(&1);
             occurrences.insert(token, *count);
+
+            if token == 0 || model_text.contains("\n\n") {
+                break;
+            }
         }
     }
 
@@ -175,6 +182,8 @@ async fn run(cli: Cli) -> Result<()> {
 struct Cli {
     #[arg(short, long, value_name = "FILE")]
     model: Option<PathBuf>,
+    #[arg(short, long, value_name = "LAYER")]
+    quant: Option<usize>,
     #[command(flatten)]
     sampler: Sampler,
 }
