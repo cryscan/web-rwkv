@@ -54,7 +54,7 @@ fn load_model(env: Environment, model: PathBuf, quant: Option<u64>) -> Result<Mo
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
     let quantization = quant
-        .map(|bits| Quantization::Int8(LayerFlags::from_bits_truncate(bits)))
+        .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
     let model = ModelBuilder::new(env, &map)
         .with_quantization(quantization)

@@ -47,14 +47,11 @@ bitflags! {
 }
 
 impl LayerFlags {
-    pub fn from_layer<T: TryInto<u64>>(layer: T) -> LayerFlags {
-        match layer.try_into() {
-            Ok(layer) => LayerFlags::from_bits_truncate(1 << layer),
-            Err(_) => LayerFlags::empty(),
-        }
+    pub fn from_layer(layer: u64) -> LayerFlags {
+        LayerFlags::from_bits_retain(1 << layer)
     }
 
-    pub fn contains_layer<T: TryInto<u64>>(&self, layer: T) -> bool {
+    pub fn contains_layer(&self, layer: u64) -> bool {
         self.contains(LayerFlags::from_layer(layer))
     }
 }
@@ -486,6 +483,31 @@ impl<'a> ModelBuilder<'a> {
         let queue = &env.queue;
         let model = SafeTensors::deserialize(data)?;
 
+        let create_pipeline = |shader: &str, entry_point: &str| -> ComputePipeline {
+            let module = &device.create_shader_module(ShaderModuleDescriptor {
+                label: None,
+                source: ShaderSource::Wgsl(Cow::Borrowed(shader)),
+            });
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some(entry_point),
+                layout: None,
+                module,
+                entry_point,
+            })
+        };
+
+        let pipeline = ModelPipeline {
+            layer_norm: create_pipeline(include_str!("shaders/layer_norm.wgsl"), "layer_norm"),
+            token_shift: create_pipeline(include_str!("shaders/token_shift.wgsl"), "token_shift"),
+            matmul: create_pipeline(include_str!("shaders/matmul.wgsl"), "matmul"),
+            matmul_int8: create_pipeline(include_str!("shaders/matmul_int8.wgsl"), "matmul"),
+            token_mix: create_pipeline(include_str!("shaders/token_mix.wgsl"), "token_mix"),
+            activation: create_pipeline(include_str!("shaders/activation.wgsl"), "activation"),
+            channel_mix: create_pipeline(include_str!("shaders/channel_mix.wgsl"), "channel_mix"),
+            add: create_pipeline(include_str!("shaders/add.wgsl"), "add"),
+            softmax: create_pipeline(include_str!("shaders/softmax.wgsl"), "softmax"),
+        };
+
         let num_layers = {
             let mut r: usize = 0;
             for i in model.names() {
@@ -659,7 +681,7 @@ impl<'a> ModelBuilder<'a> {
 
             let att = format!("blocks.{layer}.att");
             let att = match quantization {
-                Quantization::Int8(x) if x.contains_layer(layer) => Att {
+                Quantization::Int8(x) if x.contains_layer(layer as u64) => Att {
                     time_decay: load_tensor_exp_f32(format!("{att}.time_decay"))?,
                     time_first: load_tensor_f32(format!("{att}.time_first"))?,
                     time_mix_k: load_tensor_f16(format!("{att}.time_mix_k"))?,
@@ -692,7 +714,7 @@ impl<'a> ModelBuilder<'a> {
 
             let ffn = format!("blocks.{layer}.ffn");
             let ffn = match quantization {
-                Quantization::Int8(x) if x.contains_layer(layer) => Ffn {
+                Quantization::Int8(x) if x.contains_layer(layer as u64) => Ffn {
                     time_mix_k: load_tensor_f16(format!("{ffn}.time_mix_k"))?,
                     time_mix_r: load_tensor_f16(format!("{ffn}.time_mix_r"))?,
                     dims_k: create_uniform_u32(&[num_emb as u32, 4 * num_emb as u32]),
@@ -732,31 +754,6 @@ impl<'a> ModelBuilder<'a> {
             embed,
             head,
             layers,
-        };
-
-        let create_pipeline = |shader: &str, entry_point: &str| -> ComputePipeline {
-            let module = &device.create_shader_module(ShaderModuleDescriptor {
-                label: None,
-                source: ShaderSource::Wgsl(Cow::Borrowed(shader)),
-            });
-            device.create_compute_pipeline(&ComputePipelineDescriptor {
-                label: Some(entry_point),
-                layout: None,
-                module,
-                entry_point,
-            })
-        };
-
-        let pipeline = ModelPipeline {
-            layer_norm: create_pipeline(include_str!("shaders/layer_norm.wgsl"), "layer_norm"),
-            token_shift: create_pipeline(include_str!("shaders/token_shift.wgsl"), "token_shift"),
-            matmul: create_pipeline(include_str!("shaders/matmul.wgsl"), "matmul"),
-            matmul_int8: create_pipeline(include_str!("shaders/matmul_int8.wgsl"), "matmul"),
-            token_mix: create_pipeline(include_str!("shaders/token_mix.wgsl"), "token_mix"),
-            activation: create_pipeline(include_str!("shaders/activation.wgsl"), "activation"),
-            channel_mix: create_pipeline(include_str!("shaders/channel_mix.wgsl"), "channel_mix"),
-            add: create_pipeline(include_str!("shaders/add.wgsl"), "add"),
-            softmax: create_pipeline(include_str!("shaders/softmax.wgsl"), "softmax"),
         };
 
         let input = vec![0.0; num_emb];
@@ -1826,7 +1823,7 @@ impl Model {
 
         for (index, layer) in bind_group.layers.iter().enumerate() {
             let matmul_pipeline = match &self.quantization {
-                Quantization::Int8(x) if x.contains_layer(index) => &pipeline.matmul_int8,
+                Quantization::Int8(x) if x.contains_layer(index as u64) => &pipeline.matmul_int8,
                 _ => &pipeline.matmul,
             };
 
