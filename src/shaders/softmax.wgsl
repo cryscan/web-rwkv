@@ -46,8 +46,16 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     }
     workgroupBarrier();
 
-    let block_max = local[0];
+    if index == 0u {
+        var block_max = local[0].x;
+        block_max = max(block_max, local[0].y);
+        block_max = max(block_max, local[0].z);
+        block_max = max(block_max, local[0].w);
+        local[0] = vec4<f32>(block_max);
+    }
     workgroupBarrier();
+
+    let block_max = local[0];
 
     local[index] = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
@@ -65,6 +73,12 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         local[index] += local[index + 4u];
         local[index] += local[index + 2u];
         local[index] += local[index + 1u];
+    }
+    workgroupBarrier();
+
+    if index == 0u {
+        let block_sum = dot(local[0], vec4<f32>(1.0));
+        local[0] = vec4<f32>(block_sum);
     }
     workgroupBarrier();
 
