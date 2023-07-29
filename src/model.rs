@@ -35,6 +35,7 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
+    pub const BLOCK_SIZE: u32 = 128;
     pub const HEAD_CHUNK_SIZE: usize = 8192;
     pub const TOKEN_CHUNK_SIZE: usize = 16;
 }
@@ -68,7 +69,9 @@ pub enum Quantization {
 }
 
 struct ModelTensor {
-    dim: Buffer,
+    dim_emb: Buffer,
+    dim_vocab: Buffer,
+
     embed: Embed,
     head: Head,
     layers: Vec<Layer>,
@@ -147,6 +150,7 @@ struct ModelPipeline {
     activation: ComputePipeline,
     channel_mix: ComputePipeline,
     add: ComputePipeline,
+    softmax: ComputePipeline,
 }
 
 pub struct ModelBuffer {
@@ -179,6 +183,7 @@ pub struct ModelBuffer {
     head_x: Buffer,
     head_r: Buffer,
     head_o: Buffer,
+    softmax_o: Buffer,
 
     map: Buffer,
 }
@@ -247,6 +252,7 @@ impl ModelBuffer {
             head_x: create_buffer_f32(num_emb),
             head_r: create_buffer_f32(num_emb),
             head_o: create_buffer_f32(num_vocab),
+            softmax_o: create_buffer_f32(num_vocab),
             map,
         }
     }
@@ -718,9 +724,11 @@ impl<'a> ModelBuilder<'a> {
             });
         }
 
-        let dim = create_uniform_u32(&[num_emb as u32]);
+        let dim_emb = create_uniform_u32(&[num_emb as u32]);
+        let dim_vocab = create_uniform_u32(&[num_vocab as u32]);
         let tensor = ModelTensor {
-            dim,
+            dim_emb,
+            dim_vocab,
             embed,
             head,
             layers,
@@ -748,6 +756,7 @@ impl<'a> ModelBuilder<'a> {
             activation: create_pipeline(include_str!("shaders/activation.wgsl"), "activation"),
             channel_mix: create_pipeline(include_str!("shaders/channel_mix.wgsl"), "channel_mix"),
             add: create_pipeline(include_str!("shaders/add.wgsl"), "add"),
+            softmax: create_pipeline(include_str!("shaders/softmax.wgsl"), "softmax"),
         };
 
         let input = vec![0.0; num_emb];
@@ -814,7 +823,7 @@ impl Model {
                 entries: &[
                     BindGroupEntry {
                         binding: 0,
-                        resource: self.tensor.dim.as_entire_binding(),
+                        resource: self.tensor.dim_emb.as_entire_binding(),
                     },
                     // BindGroupEntry {
                     //     binding: 1,
@@ -848,7 +857,7 @@ impl Model {
                 entries: &[
                     BindGroupEntry {
                         binding: 0,
-                        resource: self.tensor.dim.as_entire_binding(),
+                        resource: self.tensor.dim_emb.as_entire_binding(),
                     },
                     // BindGroupEntry {
                     //     binding: 1,
@@ -923,7 +932,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -953,7 +962,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -983,7 +992,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -1013,7 +1022,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -1235,7 +1244,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         BindGroupEntry {
                             binding: 1,
@@ -1345,7 +1354,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -1368,7 +1377,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -1398,7 +1407,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -1428,7 +1437,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -1522,7 +1531,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -1672,7 +1681,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         BindGroupEntry {
                             binding: 1,
@@ -1706,7 +1715,7 @@ impl Model {
                     entries: &[
                         BindGroupEntry {
                             binding: 0,
-                            resource: self.tensor.dim.as_entire_binding(),
+                            resource: self.tensor.dim_emb.as_entire_binding(),
                         },
                         // BindGroupEntry {
                         //     binding: 1,
@@ -1754,6 +1763,29 @@ impl Model {
         }
     }
 
+    fn create_softmax_bind_group(&self, buffer: &ModelBuffer) -> BindGroup {
+        let device = &self.env.device;
+        let layout = &self.pipeline.softmax.get_bind_group_layout(0);
+        device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: self.tensor.dim_vocab.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: buffer.head_o.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: buffer.softmax_o.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
     fn reload_buffer(&self, tokens: &[u16]) {
         let mut buffer = self.buffer.borrow_mut();
         let input = self.embedding(tokens);
@@ -1773,6 +1805,7 @@ impl Model {
 
         let bind_group = self.create_bind_group(&buffer, state);
         let pipeline = &self.pipeline;
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
 
         let ModelInfo {
             num_emb, num_vocab, ..
@@ -1780,11 +1813,8 @@ impl Model {
 
         let num_tokens = buffer.num_tokens() as u32;
         let num_emb_vec4 = num_emb as u32 / 4;
-        let num_emb_blocks = (num_emb_vec4 + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        let num_emb_blocks = (num_emb_vec4 + ModelInfo::BLOCK_SIZE - 1) / ModelInfo::BLOCK_SIZE;
         let chunk_size_vec4 = ModelInfo::HEAD_CHUNK_SIZE as u32 / 4;
-        const BLOCK_SIZE: u32 = 128;
-
-        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
 
@@ -1936,17 +1966,56 @@ impl Model {
         });
 
         device.poll(wgpu::MaintainBase::Wait);
-        match receiver.recv() {
-            Ok(Ok(_)) => {
-                let data = {
-                    let data = slice.get_mapped_range();
-                    cast_slice(&data).to_vec()
-                };
-                buffer.map.unmap();
-                Ok(data)
-            }
-            Ok(Err(err)) => Err(err.into()),
-            Err(err) => Err(err.into()),
-        }
+        receiver.recv()??;
+
+        let data = {
+            let data = slice.get_mapped_range();
+            cast_slice(&data).to_vec()
+        };
+        buffer.map.unmap();
+        Ok(data)
+    }
+
+    pub fn softmax(&self, logits: &[f32]) -> Result<Vec<f32>> {
+        let device = &self.env.device;
+        let queue = &self.env.queue;
+        let buffer = self.buffer.borrow();
+
+        queue.write_buffer(&buffer.head_o, 0, cast_slice(logits));
+
+        let bind_group = self.create_softmax_bind_group(&buffer);
+        let pipeline = &self.pipeline;
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let num_tokens = buffer.num_tokens() as u32;
+        let num_vocab = self.info.num_vocab;
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+
+        pass.set_pipeline(&pipeline.softmax);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(1, num_tokens, 1);
+
+        drop(pass);
+
+        encoder.copy_buffer_to_buffer(&buffer.softmax_o, 0, &buffer.map, 0, 4 * num_vocab as u64);
+
+        queue.submit(Some(encoder.finish()));
+
+        let (sender, receiver) = flume::unbounded();
+        let slice = buffer.map.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |v| {
+            let _ = sender.send(v);
+        });
+
+        device.poll(wgpu::MaintainBase::Wait);
+        receiver.recv()??;
+
+        let data = {
+            let data = slice.get_mapped_range();
+            cast_slice(&data).to_vec()
+        };
+        buffer.map.unmap();
+        Ok(data)
     }
 }

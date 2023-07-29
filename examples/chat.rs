@@ -23,14 +23,7 @@ struct Sampler {
 }
 
 impl Sampler {
-    fn softmax(data: Vec<f32>) -> Vec<f32> {
-        let exp: Vec<_> = data.into_iter().map(f32::exp).collect();
-        let sum: f32 = exp.iter().sum();
-        exp.into_iter().map(|x| x / sum).collect()
-    }
-
-    pub fn sample(&self, logits: Vec<f32>) -> u16 {
-        let probs = Self::softmax(logits);
+    pub fn sample(&self, probs: Vec<f32>) -> u16 {
         let sorted: Vec<_> = probs
             .into_iter()
             .enumerate()
@@ -159,7 +152,8 @@ async fn run(cli: Cli) -> Result<()> {
                 logits[token as usize] -= penalty;
             }
 
-            let token = sampler.sample(logits);
+            let probs = model.softmax(&logits)?;
+            let token = sampler.sample(probs);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;
 
             model_text += &word;

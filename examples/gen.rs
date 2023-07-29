@@ -10,12 +10,6 @@ use std::{
 };
 use web_rwkv::{Environment, LayerFlags, Model, ModelBuilder, Quantization, Tokenizer};
 
-fn softmax(data: Vec<f32>) -> Vec<f32> {
-    let exp = data.iter().copied().map(f32::exp).collect_vec();
-    let sum: f32 = exp.iter().sum();
-    exp.into_iter().map(|x| x / sum).collect()
-}
-
 fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
     let sorted = probs
         .into_iter()
@@ -88,7 +82,7 @@ async fn run(cli: Cli) -> Result<()> {
     let num_tokens = 100;
     for index in 0..=num_tokens {
         let logits = model.run(&tokens, &state)?;
-        let probs = softmax(logits);
+        let probs = model.softmax(&logits)?;
         let token = sample(probs, 0.5);
         let word = String::from_utf8(tokenizer.decode(&[token])?)?;
         print!("{}", word);
