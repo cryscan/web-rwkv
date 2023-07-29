@@ -8,7 +8,7 @@ use std::{
     io::{BufReader, Read, Write},
     path::PathBuf,
 };
-use web_rwkv::{Environment, Model, Quantization, Tokenizer};
+use web_rwkv::{Environment, LayerFlags, Model, ModelBuilder, Quantization, Tokenizer};
 
 #[derive(Debug, Clone, Args)]
 struct Sampler {
@@ -80,13 +80,15 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(env: &Environment, model: PathBuf, quant: Option<usize>) -> Result<Model> {
+fn load_model(env: Environment, model: PathBuf, quant: Option<u64>) -> Result<Model> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
     let quantization = quant
-        .map(|layer| Quantization::Int8((0..layer).collect()))
+        .map(|bits| Quantization::Int8(LayerFlags::from_bits_truncate(bits)))
         .unwrap_or_default();
-    let model = env.create_model_from_bytes(&map, &quantization)?;
+    let model = ModelBuilder::new(env, &map)
+        .with_quantization(quantization)
+        .build()?;
     println!("{:#?}", model.info());
     Ok(model)
 }
@@ -98,7 +100,7 @@ async fn run(cli: Cli) -> Result<()> {
     let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-    let model = load_model(&env, model, cli.quant)?;
+    let model = load_model(env, model, cli.quant)?;
     let sampler = cli.sampler;
 
     let user = "User";
@@ -182,8 +184,8 @@ async fn run(cli: Cli) -> Result<()> {
 struct Cli {
     #[arg(short, long, value_name = "FILE")]
     model: Option<PathBuf>,
-    #[arg(short, long, value_name = "LAYER")]
-    quant: Option<usize>,
+    #[arg(short, long, value_name = "LAYERS")]
+    quant: Option<u64>,
     #[command(flatten)]
     sampler: Sampler,
 }

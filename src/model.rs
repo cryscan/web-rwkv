@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bitflags::bitflags;
 use bytemuck::{cast_slice, pod_collect_to_vec};
 use derive_getters::Getters;
 use half::prelude::*;
@@ -38,13 +39,32 @@ impl ModelInfo {
     pub const TOKEN_CHUNK_SIZE: usize = 16;
 }
 
-#[derive(Debug, Default, Clone)]
+bitflags! {
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    pub struct LayerFlags: u64 {
+    }
+}
+
+impl LayerFlags {
+    pub fn from_layer<T: TryInto<u64>>(layer: T) -> LayerFlags {
+        match layer.try_into() {
+            Ok(layer) => LayerFlags::from_bits_truncate(1 << layer),
+            Err(_) => LayerFlags::empty(),
+        }
+    }
+
+    pub fn contains_layer<T: TryInto<u64>>(&self, layer: T) -> bool {
+        self.contains(LayerFlags::from_layer(layer))
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
 pub enum Quantization {
     /// No quantization.
     #[default]
     None,
     /// Use int8 quantization, given layers to be quantized.
-    Int8(Vec<usize>),
+    Int8(LayerFlags),
 }
 
 struct ModelTensor {
@@ -427,14 +447,37 @@ struct LayerBindGroup {
     ffn_add: BindGroup,
 }
 
-impl Environment {
-    pub fn create_model_from_bytes(
-        &self,
-        data: &[u8],
-        quantization: &Quantization,
-    ) -> Result<Model> {
-        let device = &self.device;
-        let queue = &self.queue;
+pub struct ModelBuilder<'a> {
+    env: Environment,
+    data: &'a [u8],
+    quantization: Quantization,
+}
+
+impl<'a> ModelBuilder<'a> {
+    pub fn new(env: Environment, data: &[u8]) -> ModelBuilder {
+        ModelBuilder {
+            env,
+            data,
+            quantization: Default::default(),
+        }
+    }
+
+    pub fn with_quantization(self, quantization: Quantization) -> ModelBuilder<'a> {
+        ModelBuilder {
+            quantization,
+            ..self
+        }
+    }
+
+    pub fn build(self) -> Result<Model> {
+        let Self {
+            env,
+            data,
+            quantization,
+        } = self;
+
+        let device = &env.device;
+        let queue = &env.queue;
         let model = SafeTensors::deserialize(data)?;
 
         let num_layers = {
@@ -610,7 +653,7 @@ impl Environment {
 
             let att = format!("blocks.{layer}.att");
             let att = match quantization {
-                Quantization::Int8(x) if x.contains(&layer) => Att {
+                Quantization::Int8(x) if x.contains_layer(layer) => Att {
                     time_decay: load_tensor_exp_f32(format!("{att}.time_decay"))?,
                     time_first: load_tensor_f32(format!("{att}.time_first"))?,
                     time_mix_k: load_tensor_f16(format!("{att}.time_mix_k"))?,
@@ -643,7 +686,7 @@ impl Environment {
 
             let ffn = format!("blocks.{layer}.ffn");
             let ffn = match quantization {
-                Quantization::Int8(x) if x.contains(&layer) => Ffn {
+                Quantization::Int8(x) if x.contains_layer(layer) => Ffn {
                     time_mix_k: load_tensor_f16(format!("{ffn}.time_mix_k"))?,
                     time_mix_r: load_tensor_f16(format!("{ffn}.time_mix_r"))?,
                     dims_k: create_uniform_u32(&[num_emb as u32, 4 * num_emb as u32]),
@@ -708,14 +751,14 @@ impl Environment {
         };
 
         let input = vec![0.0; num_emb];
-        let buffer = RefCell::new(ModelBuffer::new(self, info, &input));
+        let buffer = RefCell::new(ModelBuffer::new(&env, info, &input));
 
         queue.submit(None);
         device.poll(wgpu::MaintainBase::Wait);
         Ok(Model {
-            env: self.clone(),
+            env,
             info,
-            quantization: quantization.clone(),
+            quantization,
             tensor,
             pipeline,
             buffer,
@@ -1753,7 +1796,7 @@ impl Model {
 
         for (index, layer) in bind_group.layers.iter().enumerate() {
             let matmul_pipeline = match &self.quantization {
-                Quantization::Int8(x) if x.contains(&index) => &pipeline.matmul_int8,
+                Quantization::Int8(x) if x.contains_layer(index) => &pipeline.matmul_int8,
                 _ => &pipeline.matmul,
             };
 
