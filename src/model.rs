@@ -699,13 +699,9 @@ impl<'a> ModelBuilder<'a> {
             let shape = tensor.shape();
 
             let tensor = tensor.data();
-            let tensor: Vec<_> = pod_collect_to_vec::<_, f16>(tensor)
-                .into_iter()
-                .map(f16::to_f32)
-                .collect();
             let buffer = device.create_buffer_init(&BufferInitDescriptor {
                 label: Some(&name),
-                contents: cast_slice(&tensor),
+                contents: cast_slice(tensor),
                 usage: BufferUsages::STORAGE,
             });
 

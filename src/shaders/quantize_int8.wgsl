@@ -1,5 +1,5 @@
 @group(0) @binding(0) var<uniform> dims: vec2<u32>;                         // [C, R]
-@group(0) @binding(1) var<storage, read_write> input: array<vec4<f32>>;     // (R, C)
+@group(0) @binding(1) var<storage, read_write> input: array<vec2<u32>>;     // (R, C)
 
 @group(0) @binding(2) var<storage, read_write> mx: array<vec4<f32>>;        // (C)
 @group(0) @binding(3) var<storage, read_write> rx: array<vec4<f32>>;        // (C)
@@ -15,6 +15,14 @@ var<workgroup> local_mx: vec4<f32>;
 var<workgroup> local_rx: vec4<f32>;
 var<workgroup> local_my: f32;
 var<workgroup> local_ry: f32;
+
+fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
+    return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
+}
+
+fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
+    return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
+}
 
 fn reduce_min(index: u32, stride: u32) {
     if index < stride {
@@ -38,7 +46,7 @@ fn compute_my(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     sketch[index] = vec4<f32>(1.0e30);
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
-        let value = input[stride.x * batch + i];
+        let value = unpack4x16float(input[stride.x * batch + i]);
         sketch[index] = min(sketch[index], value);
     }
     workgroupBarrier();
@@ -65,8 +73,8 @@ fn compute_my(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
-        let value = input[stride.x * batch + i];
-        input[stride.x * batch + i] = value - local_my;
+        let value = unpack4x16float(input[stride.x * batch + i]);
+        input[stride.x * batch + i] = pack4x16float(value - local_my);
     }
 }
 
@@ -78,7 +86,7 @@ fn compute_mx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     sketch[index] = vec4<f32>(1.0e30);
     for (var j = index; j < stride.y; j += BLOCK_SIZE) {
-        let value = input[stride.x * j + batch];
+        let value = unpack4x16float(input[stride.x * j + batch]);
         sketch[index] = min(sketch[index], value);
     }
     workgroupBarrier();
@@ -102,8 +110,8 @@ fn compute_mx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     for (var j = index; j < stride.y; j += BLOCK_SIZE) {
-        let value = input[stride.x * j + batch];
-        input[stride.x * j + batch] = value - local_mx;
+        let value = unpack4x16float(input[stride.x * j + batch]);
+        input[stride.x * j + batch] = pack4x16float(value - local_mx);
     }
 }
 
@@ -115,7 +123,7 @@ fn compute_ry(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     sketch[index] = vec4<f32>(-1.0e30);
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
-        let value = input[stride.x * batch + i];
+        let value = unpack4x16float(input[stride.x * batch + i]);
         sketch[index] = max(sketch[index], value);
     }
     workgroupBarrier();
@@ -142,8 +150,8 @@ fn compute_ry(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
-        let value = input[stride.x * batch + i];
-        input[stride.x * batch + i] = value / local_ry;
+        let value = unpack4x16float(input[stride.x * batch + i]);
+        input[stride.x * batch + i] = pack4x16float(value / local_ry);
     }
 }
 
@@ -155,7 +163,7 @@ fn compute_rx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     sketch[index] = vec4<f32>(-1.0e30);
     for (var j = index; j < stride.y; j += BLOCK_SIZE) {
-        let value = input[stride.x * j + batch];
+        let value = unpack4x16float(input[stride.x * j + batch]);
         sketch[index] = max(sketch[index], value);
     }
     workgroupBarrier();
@@ -179,8 +187,8 @@ fn compute_rx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     for (var j = index; j < stride.y; j += BLOCK_SIZE) {
-        let value = input[stride.x * j + batch];
-        input[stride.x * j + batch] = value / local_rx;
+        let value = unpack4x16float(input[stride.x * j + batch]);
+        input[stride.x * j + batch] = pack4x16float(value / local_rx);
     }
 }
 
@@ -191,7 +199,7 @@ fn quantize(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = vec2<u32>(dims.x / 4u, dims.y);
 
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
-        let value = input[stride.x * batch + i];
+        let value = unpack4x16float(input[stride.x * batch + i]);
         output[stride.x * batch + i] = pack4x8unorm(value);
     }
 }
