@@ -7,9 +7,10 @@ use safetensors::SafeTensors;
 use std::{borrow::Cow, cell::RefCell, num::NonZeroU64};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindGroup, BindGroupDescriptor, BindGroupEntry, Buffer, BufferBinding, BufferDescriptor,
-    BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline,
-    ComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, Buffer, BufferBinding, BufferDescriptor, BufferUsages,
+    CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
+    PipelineLayout, PipelineLayoutDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
 };
 
 use crate::Environment;
@@ -148,6 +149,15 @@ struct ModelPipeline {
     channel_mix: ComputePipeline,
     add: ComputePipeline,
     softmax: ComputePipeline,
+}
+
+struct QuantizeInt8Pipeline {
+    bind_group_layout: BindGroupLayout,
+    mx: ComputePipeline,
+    my: ComputePipeline,
+    rx: ComputePipeline,
+    ry: ComputePipeline,
+    quantize: ComputePipeline,
 }
 
 pub struct ModelBuffer {
@@ -483,29 +493,138 @@ impl<'a> ModelBuilder<'a> {
         let queue = &env.queue;
         let model = SafeTensors::deserialize(data)?;
 
-        let create_pipeline = |shader: &str, entry_point: &str| -> ComputePipeline {
-            let module = &device.create_shader_module(ShaderModuleDescriptor {
-                label: None,
-                source: ShaderSource::Wgsl(Cow::Borrowed(shader)),
-            });
-            device.create_compute_pipeline(&ComputePipelineDescriptor {
-                label: Some(entry_point),
-                layout: None,
-                module,
-                entry_point,
-            })
-        };
+        let create_pipeline =
+            |shader: &str, layout: Option<&PipelineLayout>, entry_point: &str| -> ComputePipeline {
+                let module = &device.create_shader_module(ShaderModuleDescriptor {
+                    label: None,
+                    source: ShaderSource::Wgsl(Cow::Borrowed(shader)),
+                });
+                device.create_compute_pipeline(&ComputePipelineDescriptor {
+                    label: Some(entry_point),
+                    layout,
+                    module,
+                    entry_point,
+                })
+            };
 
         let pipeline = ModelPipeline {
-            layer_norm: create_pipeline(include_str!("shaders/layer_norm.wgsl"), "layer_norm"),
-            token_shift: create_pipeline(include_str!("shaders/token_shift.wgsl"), "token_shift"),
-            matmul: create_pipeline(include_str!("shaders/matmul.wgsl"), "matmul"),
-            matmul_int8: create_pipeline(include_str!("shaders/matmul_int8.wgsl"), "matmul"),
-            token_mix: create_pipeline(include_str!("shaders/token_mix.wgsl"), "token_mix"),
-            activation: create_pipeline(include_str!("shaders/activation.wgsl"), "activation"),
-            channel_mix: create_pipeline(include_str!("shaders/channel_mix.wgsl"), "channel_mix"),
-            add: create_pipeline(include_str!("shaders/add.wgsl"), "add"),
-            softmax: create_pipeline(include_str!("shaders/softmax.wgsl"), "softmax"),
+            layer_norm: create_pipeline(
+                include_str!("shaders/layer_norm.wgsl"),
+                None,
+                "layer_norm",
+            ),
+            token_shift: create_pipeline(
+                include_str!("shaders/token_shift.wgsl"),
+                None,
+                "token_shift",
+            ),
+            matmul: create_pipeline(include_str!("shaders/matmul.wgsl"), None, "matmul"),
+            matmul_int8: create_pipeline(include_str!("shaders/matmul_int8.wgsl"), None, "matmul"),
+            token_mix: create_pipeline(include_str!("shaders/token_mix.wgsl"), None, "token_mix"),
+            activation: create_pipeline(
+                include_str!("shaders/activation.wgsl"),
+                None,
+                "activation",
+            ),
+            channel_mix: create_pipeline(
+                include_str!("shaders/channel_mix.wgsl"),
+                None,
+                "channel_mix",
+            ),
+            add: create_pipeline(include_str!("shaders/add.wgsl"), None, "add"),
+            softmax: create_pipeline(include_str!("shaders/softmax.wgsl"), None, "softmax"),
+        };
+
+        let quantize_int8_pipeline = {
+            let shader = include_str!("shaders/quantize_int8.wgsl");
+            let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+            let layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+            QuantizeInt8Pipeline {
+                bind_group_layout,
+                mx: create_pipeline(shader, Some(&layout), "compute_mx"),
+                my: create_pipeline(shader, Some(&layout), "compute_my"),
+                rx: create_pipeline(shader, Some(&layout), "compute_rx"),
+                ry: create_pipeline(shader, Some(&layout), "compute_ry"),
+                quantize: create_pipeline(shader, Some(&layout), "quantize"),
+            }
         };
 
         let num_layers = {
@@ -532,6 +651,13 @@ impl<'a> ModelBuilder<'a> {
             num_vocab,
         };
 
+        let create_uniform_u32 = |values: &[u32]| -> Buffer {
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: cast_slice(values),
+                usage: BufferUsages::UNIFORM,
+            })
+        };
         let load_tensor_f32 = |name: String| -> Result<Buffer> {
             let tensor = model.tensor(&name)?.data();
             let tensor: Vec<_> = pod_collect_to_vec::<_, f16>(tensor)
@@ -568,74 +694,123 @@ impl<'a> ModelBuilder<'a> {
             });
             Ok(buffer)
         };
-        let load_tensor_int8 = |name: String, num_rows: usize, num_cols: usize| -> Result<Tensor> {
-            let tensor = model.tensor(&name)?.data();
-            let mut tensor: Vec<_> = pod_collect_to_vec::<_, f16>(tensor)
+        let load_tensor_int8 = |name: String| -> Result<Tensor> {
+            let tensor = model.tensor(&name)?;
+            let shape = tensor.shape();
+
+            let tensor = tensor.data();
+            let tensor: Vec<_> = pod_collect_to_vec::<_, f16>(tensor)
                 .into_iter()
                 .map(f16::to_f32)
                 .collect();
+            let buffer = device.create_buffer_init(&BufferInitDescriptor {
+                label: Some(&name),
+                contents: cast_slice(&tensor),
+                usage: BufferUsages::STORAGE,
+            });
 
-            let mut mx = vec![f32::MAX; num_cols];
-            let mut my = vec![f32::MAX; num_rows];
-            let mut rx = vec![f32::MIN; num_cols];
-            let mut ry = vec![f32::MIN; num_rows];
-
-            for j in 0..num_cols {
-                (0..num_rows).for_each(|i| mx[j] = mx[j].min(tensor[num_cols * i + j]));
-                (0..num_rows).for_each(|i| tensor[num_cols * i + j] -= mx[j]);
-            }
-            for i in 0..num_rows {
-                (0..num_cols).for_each(|j| my[i] = my[i].min(tensor[num_cols * i + j]));
-                (0..num_cols).for_each(|j| tensor[num_cols * i + j] -= my[i]);
-            }
-            for j in 0..num_cols {
-                (0..num_rows).for_each(|i| rx[j] = rx[j].max(tensor[num_cols * i + j]));
-                (0..num_rows).for_each(|i| tensor[num_cols * i + j] /= rx[j]);
-            }
-            for i in 0..num_rows {
-                (0..num_cols).for_each(|j| ry[i] = ry[i].max(tensor[num_cols * i + j]));
-                (0..num_cols).for_each(|j| tensor[num_cols * i + j] /= ry[i]);
-            }
-
-            let tensor: Vec<_> = tensor
-                .into_iter()
-                .map(|x| (0.5 + 255.0 * x.clamp(0.0, 1.0)) as u8)
-                .collect();
-
-            Ok(Tensor::Int8 {
-                w: device.create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: tensor.as_slice(),
-                    usage: BufferUsages::STORAGE,
-                }),
-                mx: device.create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: cast_slice(&mx),
-                    usage: BufferUsages::STORAGE,
-                }),
-                my: device.create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: cast_slice(&my),
-                    usage: BufferUsages::STORAGE,
-                }),
-                rx: device.create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: cast_slice(&rx),
-                    usage: BufferUsages::STORAGE,
-                }),
-                ry: device.create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: cast_slice(&ry),
-                    usage: BufferUsages::STORAGE,
-                }),
-            })
-        };
-        let create_uniform_u32 = |values: &[u32]| -> Buffer {
-            device.create_buffer_init(&BufferInitDescriptor {
+            let dims = create_uniform_u32(&[shape[1] as u32, shape[0] as u32]);
+            let w = device.create_buffer(&BufferDescriptor {
                 label: None,
-                contents: cast_slice(values),
-                usage: BufferUsages::UNIFORM,
-            })
+                size: shape[0] as u64 * shape[1] as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let mx = device.create_buffer(&BufferDescriptor {
+                label: None,
+                size: 4 * shape[1] as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let my = device.create_buffer(&BufferDescriptor {
+                label: None,
+                size: 4 * shape[0] as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let rx = device.create_buffer(&BufferDescriptor {
+                label: None,
+                size: 4 * shape[1] as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let ry = device.create_buffer(&BufferDescriptor {
+                label: None,
+                size: 4 * shape[0] as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+
+            let bind_group = device.create_bind_group(&BindGroupDescriptor {
+                label: None,
+                layout: &quantize_int8_pipeline.bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: dims.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: mx.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: rx.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: my.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 5,
+                        resource: ry.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 6,
+                        resource: w.as_entire_binding(),
+                    },
+                ],
+            });
+
+            let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            pass.set_bind_group(0, &bind_group, &[]);
+
+            if shape[0] > shape[1] {
+                pass.set_pipeline(&quantize_int8_pipeline.my);
+                pass.dispatch_workgroups(1, shape[0] as u32, 1);
+
+                pass.set_pipeline(&quantize_int8_pipeline.mx);
+                pass.dispatch_workgroups(1, shape[1] as u32 / 4, 1);
+            } else {
+                pass.set_pipeline(&quantize_int8_pipeline.mx);
+                pass.dispatch_workgroups(1, shape[1] as u32 / 4, 1);
+
+                pass.set_pipeline(&quantize_int8_pipeline.my);
+                pass.dispatch_workgroups(1, shape[0] as u32, 1);
+            }
+
+            pass.set_pipeline(&quantize_int8_pipeline.rx);
+            pass.dispatch_workgroups(1, shape[1] as u32 / 4, 1);
+
+            pass.set_pipeline(&quantize_int8_pipeline.ry);
+            pass.dispatch_workgroups(1, shape[0] as u32, 1);
+
+            pass.set_pipeline(&quantize_int8_pipeline.quantize);
+            pass.dispatch_workgroups(1, shape[0] as u32, 1);
+
+            drop(pass);
+            queue.submit(Some(encoder.finish()));
+
+            buffer.destroy();
+            device.poll(wgpu::MaintainBase::Wait);
+
+            Ok(Tensor::Int8 { w, mx, my, rx, ry })
         };
 
         let embed = Embed {
@@ -688,10 +863,10 @@ impl<'a> ModelBuilder<'a> {
                     time_mix_v: load_tensor_f16(format!("{att}.time_mix_v"))?,
                     time_mix_r: load_tensor_f16(format!("{att}.time_mix_r"))?,
                     dims: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
-                    w_k: load_tensor_int8(format!("{att}.key.weight"), num_emb, num_emb)?,
-                    w_v: load_tensor_int8(format!("{att}.value.weight"), num_emb, num_emb)?,
-                    w_r: load_tensor_int8(format!("{att}.receptance.weight"), num_emb, num_emb)?,
-                    w_o: load_tensor_int8(format!("{att}.output.weight"), num_emb, num_emb)?,
+                    w_k: load_tensor_int8(format!("{att}.key.weight"))?,
+                    w_v: load_tensor_int8(format!("{att}.value.weight"))?,
+                    w_r: load_tensor_int8(format!("{att}.receptance.weight"))?,
+                    w_o: load_tensor_int8(format!("{att}.output.weight"))?,
                 },
                 _ => Att {
                     time_decay: load_tensor_exp_f32(format!("{att}.time_decay"))?,
@@ -720,9 +895,9 @@ impl<'a> ModelBuilder<'a> {
                     dims_k: create_uniform_u32(&[num_emb as u32, 4 * num_emb as u32]),
                     dims_v: create_uniform_u32(&[4 * num_emb as u32, num_emb as u32]),
                     dims_r: create_uniform_u32(&[num_emb as u32, num_emb as u32]),
-                    w_k: load_tensor_int8(format!("{ffn}.key.weight"), 4 * num_emb, num_emb)?,
-                    w_v: load_tensor_int8(format!("{ffn}.value.weight"), num_emb, 4 * num_emb)?,
-                    w_r: load_tensor_int8(format!("{ffn}.receptance.weight"), num_emb, num_emb)?,
+                    w_k: load_tensor_int8(format!("{ffn}.key.weight"))?,
+                    w_v: load_tensor_int8(format!("{ffn}.value.weight"))?,
+                    w_r: load_tensor_int8(format!("{ffn}.receptance.weight"))?,
                 },
                 _ => Ffn {
                     time_mix_k: load_tensor_f16(format!("{ffn}.time_mix_k"))?,
@@ -1984,14 +2159,13 @@ impl Model {
         let pipeline = &self.pipeline;
         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let num_tokens = buffer.num_tokens() as u32;
         let num_vocab = self.info.num_vocab;
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
 
         pass.set_pipeline(&pipeline.softmax);
         pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups(1, num_tokens, 1);
+        pass.dispatch_workgroups(1, 1, 1);
 
         drop(pass);
 

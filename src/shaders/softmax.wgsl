@@ -5,18 +5,20 @@
 
 const BLOCK_SIZE: u32 = 128u;
 
-var<workgroup> local: array<vec4<f32>, BLOCK_SIZE>;
+var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
+var<workgroup> sum: f32;
+var<workgroup> maximum: f32;
 
 fn reduce_max(index: u32, stride: u32) {
     if index < stride {
-        local[index] = max(local[index], local[index + stride]);
+        sketch[index] = max(sketch[index], sketch[index + stride]);
     }
     workgroupBarrier();
 }
 
-fn reduce_add(index: u32, stride: u32) {
+fn reduce_sum(index: u32, stride: u32) {
     if index < stride {
-        local[index] += local[index + stride];
+        sketch[index] += sketch[index + stride];
     }
     workgroupBarrier();
 }
@@ -27,10 +29,10 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let stride = dim / 4u;
 
-    local[index] = vec4<f32>(-1.0e30);
+    sketch[index] = vec4<f32>(-1.0e30);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = x[stride * token + i];
-        local[index] = max(local[index], value);
+        sketch[index] = max(sketch[index], value);
     }
     workgroupBarrier();
 
@@ -38,52 +40,48 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     reduce_max(index, 32u);
 
     if index < 32u {
-        local[index] = max(local[index], local[index + 16u]);
-        local[index] = max(local[index], local[index + 8u]);
-        local[index] = max(local[index], local[index + 4u]);
-        local[index] = max(local[index], local[index + 2u]);
-        local[index] = max(local[index], local[index + 1u]);
+        sketch[index] = max(sketch[index], sketch[index + 16u]);
+        sketch[index] = max(sketch[index], sketch[index + 8u]);
+        sketch[index] = max(sketch[index], sketch[index + 4u]);
+        sketch[index] = max(sketch[index], sketch[index + 2u]);
+        sketch[index] = max(sketch[index], sketch[index + 1u]);
     }
     workgroupBarrier();
 
     if index == 0u {
-        var block_max = local[0].x;
-        block_max = max(block_max, local[0].y);
-        block_max = max(block_max, local[0].z);
-        block_max = max(block_max, local[0].w);
-        local[0] = vec4<f32>(block_max);
+        maximum = sketch[0].x;
+        maximum = max(maximum, sketch[0].y);
+        maximum = max(maximum, sketch[0].z);
+        maximum = max(maximum, sketch[0].w);
     }
     workgroupBarrier();
 
-    let block_max = local[0];
-
-    local[index] = vec4<f32>(0.0);
+    sketch[index] = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = x[stride * token + i];
-        local[index] += exp(value - block_max);
+        sketch[index] += exp(value - maximum);
     }
     workgroupBarrier();
 
-    reduce_add(index, 64u);
-    reduce_add(index, 32u);
+    reduce_sum(index, 64u);
+    reduce_sum(index, 32u);
 
     if index < 32u {
-        local[index] += local[index + 16u];
-        local[index] += local[index + 8u];
-        local[index] += local[index + 4u];
-        local[index] += local[index + 2u];
-        local[index] += local[index + 1u];
+        sketch[index] += sketch[index + 16u];
+        sketch[index] += sketch[index + 8u];
+        sketch[index] += sketch[index + 4u];
+        sketch[index] += sketch[index + 2u];
+        sketch[index] += sketch[index + 1u];
     }
     workgroupBarrier();
 
     if index == 0u {
-        let block_sum = dot(local[0], vec4<f32>(1.0));
-        local[0] = vec4<f32>(block_sum);
+        sum = dot(sketch[0], vec4<f32>(1.0));
     }
     workgroupBarrier();
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = x[stride * token + i];
-        output[stride * token + i] = exp(value - block_max) / local[0];
+        output[stride * token + i] = exp(value - maximum) / sum;
     }
 }

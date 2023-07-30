@@ -44,10 +44,10 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         // read 4 rows from the matrix, each with 4 unpacked floats, forming a 4x4 sub-block
         var m: mat4x4<f32>;
 
-        m[0] = unpack4x8unorm(matrix[ci]) * ryc[0] * rxi + myc[0] + mxi; ci += stride.x;
-        m[1] = unpack4x8unorm(matrix[ci]) * ryc[1] * rxi + myc[1] + mxi; ci += stride.x;
-        m[2] = unpack4x8unorm(matrix[ci]) * ryc[2] * rxi + myc[2] + mxi; ci += stride.x;
-        m[3] = unpack4x8unorm(matrix[ci]) * ryc[3] * rxi + myc[3] + mxi;
+        m[0] = fma(unpack4x8unorm(matrix[ci]), ryc[0] * rxi, myc[0] + mxi); ci += stride.x;
+        m[1] = fma(unpack4x8unorm(matrix[ci]), ryc[1] * rxi, myc[1] + mxi); ci += stride.x;
+        m[2] = fma(unpack4x8unorm(matrix[ci]), ryc[2] * rxi, myc[2] + mxi); ci += stride.x;
+        m[3] = fma(unpack4x8unorm(matrix[ci]), ryc[3] * rxi, myc[3] + mxi);
         local_sum[index] += transpose(m) * x;
     }
     workgroupBarrier();

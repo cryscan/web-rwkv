@@ -57,12 +57,12 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if index == 0u {
         mean = dot(sum[0], vec4<f32>(1.0)) / f32(num_emb);
-        deviation = sqrt(dot(sum_squared[0], vec4<f32>(1.0)) / f32(num_emb) - mean * mean);
+        deviation = inverseSqrt(dot(sum_squared[0], vec4<f32>(1.0)) / f32(num_emb) - mean * mean);
     }
     workgroupBarrier();
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-        let value = (x[stride * token + i] - mean) / deviation;
-        output[stride * token + i] = value * unpack4x16float(w[i]) + unpack4x16float(b[i]);
+        let value = (x[stride * token + i] - mean) * deviation;
+        output[stride * token + i] = fma(value, unpack4x16float(w[i]), unpack4x16float(b[i]));
     }
 }
