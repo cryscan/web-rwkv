@@ -11,10 +11,8 @@
 const BLOCK_SIZE: u32 = 128u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
-var<workgroup> local_mx: vec4<f32>;
-var<workgroup> local_rx: vec4<f32>;
-var<workgroup> local_my: f32;
-var<workgroup> local_ry: f32;
+var<workgroup> rmx: vec4<f32>;
+var<workgroup> rmy: f32;
 
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
@@ -64,17 +62,17 @@ fn compute_my(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     if index == 0u {
-        local_my = sketch[0].x;
-        local_my = min(local_my, sketch[0].y);
-        local_my = min(local_my, sketch[0].z);
-        local_my = min(local_my, sketch[0].w);
-        my[batch] = local_my;
+        rmy = sketch[0].x;
+        rmy = min(rmy, sketch[0].y);
+        rmy = min(rmy, sketch[0].z);
+        rmy = min(rmy, sketch[0].w);
+        my[batch] = rmy;
     }
     workgroupBarrier();
 
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
         let value = unpack4x16float(input[stride.x * batch + i]);
-        input[stride.x * batch + i] = pack4x16float(value - local_my);
+        input[stride.x * batch + i] = pack4x16float(value - rmy);
     }
 }
 
@@ -104,14 +102,14 @@ fn compute_mx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     if index == 0u {
-        local_mx = sketch[0];
-        mx[batch] = local_mx;
+        rmx = sketch[0];
+        mx[batch] = rmx;
     }
     workgroupBarrier();
 
     for (var j = index; j < stride.y; j += BLOCK_SIZE) {
         let value = unpack4x16float(input[stride.x * j + batch]);
-        input[stride.x * j + batch] = pack4x16float(value - local_mx);
+        input[stride.x * j + batch] = pack4x16float(value - rmx);
     }
 }
 
@@ -141,17 +139,17 @@ fn compute_ry(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     if index == 0u {
-        local_ry = sketch[0].x;
-        local_ry = max(local_ry, sketch[0].y);
-        local_ry = max(local_ry, sketch[0].z);
-        local_ry = max(local_ry, sketch[0].w);
-        ry[batch] = local_ry;
+        rmy = sketch[0].x;
+        rmy = max(rmy, sketch[0].y);
+        rmy = max(rmy, sketch[0].z);
+        rmy = max(rmy, sketch[0].w);
+        ry[batch] = rmy;
     }
     workgroupBarrier();
 
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
         let value = unpack4x16float(input[stride.x * batch + i]);
-        input[stride.x * batch + i] = pack4x16float(value / local_ry);
+        input[stride.x * batch + i] = pack4x16float(value / rmy);
     }
 }
 
@@ -181,14 +179,14 @@ fn compute_rx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     if index == 0u {
-        local_rx = sketch[0];
-        rx[batch] = local_rx;
+        rmx = sketch[0];
+        rx[batch] = rmx;
     }
     workgroupBarrier();
 
     for (var j = index; j < stride.y; j += BLOCK_SIZE) {
         let value = unpack4x16float(input[stride.x * j + batch]);
-        input[stride.x * j + batch] = pack4x16float(value / local_rx);
+        input[stride.x * j + batch] = pack4x16float(value / rmx);
     }
 }
 
