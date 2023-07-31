@@ -7,7 +7,7 @@ use safetensors::SafeTensors;
 use std::{borrow::Cow, cell::RefCell, num::NonZeroU64};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, Buffer, BufferBinding, BufferDescriptor, BufferUsages,
     CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
     PipelineLayout, PipelineLayoutDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
@@ -152,7 +152,6 @@ struct ModelPipeline {
 }
 
 struct QuantizeInt8Pipeline {
-    bind_group_layout: BindGroupLayout,
     mx: ComputePipeline,
     my: ComputePipeline,
     rx: ComputePipeline,
@@ -494,45 +493,45 @@ impl<'a> ModelBuilder<'a> {
         let model = SafeTensors::deserialize(data)?;
 
         let create_pipeline =
-            |shader: &str, layout: Option<&PipelineLayout>, entry_point: &str| -> ComputePipeline {
+            |shader: &str, entry_point: &str, layout: Option<&PipelineLayout>| -> ComputePipeline {
                 let module = &device.create_shader_module(ShaderModuleDescriptor {
                     label: None,
                     source: ShaderSource::Wgsl(Cow::Borrowed(shader)),
                 });
                 device.create_compute_pipeline(&ComputePipelineDescriptor {
                     label: Some(entry_point),
+                    entry_point,
                     layout,
                     module,
-                    entry_point,
                 })
             };
 
         let pipeline = ModelPipeline {
             layer_norm: create_pipeline(
                 include_str!("shaders/layer_norm.wgsl"),
-                None,
                 "layer_norm",
+                None,
             ),
             token_shift: create_pipeline(
                 include_str!("shaders/token_shift.wgsl"),
-                None,
                 "token_shift",
+                None,
             ),
-            matmul: create_pipeline(include_str!("shaders/matmul.wgsl"), None, "matmul"),
-            matmul_int8: create_pipeline(include_str!("shaders/matmul_int8.wgsl"), None, "matmul"),
-            token_mix: create_pipeline(include_str!("shaders/token_mix.wgsl"), None, "token_mix"),
+            matmul: create_pipeline(include_str!("shaders/matmul.wgsl"), "matmul", None),
+            matmul_int8: create_pipeline(include_str!("shaders/matmul_int8.wgsl"), "matmul", None),
+            token_mix: create_pipeline(include_str!("shaders/token_mix.wgsl"), "token_mix", None),
             activation: create_pipeline(
                 include_str!("shaders/activation.wgsl"),
-                None,
                 "activation",
+                None,
             ),
             channel_mix: create_pipeline(
                 include_str!("shaders/channel_mix.wgsl"),
-                None,
                 "channel_mix",
+                None,
             ),
-            add: create_pipeline(include_str!("shaders/add.wgsl"), None, "add"),
-            softmax: create_pipeline(include_str!("shaders/softmax.wgsl"), None, "softmax"),
+            add: create_pipeline(include_str!("shaders/add.wgsl"), "add", None),
+            softmax: create_pipeline(include_str!("shaders/softmax.wgsl"), "softmax", None),
         };
 
         let quantize_int8_pipeline = {
@@ -617,13 +616,13 @@ impl<'a> ModelBuilder<'a> {
                 bind_group_layouts: &[&bind_group_layout],
                 push_constant_ranges: &[],
             });
+            let layout = Some(&layout);
             QuantizeInt8Pipeline {
-                bind_group_layout,
-                mx: create_pipeline(shader, Some(&layout), "compute_mx"),
-                my: create_pipeline(shader, Some(&layout), "compute_my"),
-                rx: create_pipeline(shader, Some(&layout), "compute_rx"),
-                ry: create_pipeline(shader, Some(&layout), "compute_ry"),
-                quantize: create_pipeline(shader, Some(&layout), "quantize"),
+                mx: create_pipeline(shader, "compute_mx", layout),
+                my: create_pipeline(shader, "compute_my", layout),
+                rx: create_pipeline(shader, "compute_rx", layout),
+                ry: create_pipeline(shader, "compute_ry", layout),
+                quantize: create_pipeline(shader, "quantize", layout),
             }
         };
 
@@ -737,9 +736,10 @@ impl<'a> ModelBuilder<'a> {
                 mapped_at_creation: false,
             });
 
+            let layout = &quantize_int8_pipeline.quantize.get_bind_group_layout(0);
             let bind_group = device.create_bind_group(&BindGroupDescriptor {
                 label: None,
-                layout: &quantize_int8_pipeline.bind_group_layout,
+                layout,
                 entries: &[
                     BindGroupEntry {
                         binding: 0,
