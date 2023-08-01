@@ -1,6 +1,7 @@
 use ahash::{HashMap, HashMapExt};
 use anyhow::Result;
 use clap::{Args, Parser};
+use dialoguer::{theme::ColorfulTheme, Select};
 use itertools::Itertools;
 use memmap2::Mmap;
 use std::{
@@ -8,7 +9,7 @@ use std::{
     io::{BufReader, Read, Write},
     path::PathBuf,
 };
-use web_rwkv::{Environment, LayerFlags, Model, ModelBuilder, Quantization, Tokenizer};
+use web_rwkv::{Environment, Instance, LayerFlags, Model, ModelBuilder, Quantization, Tokenizer};
 
 #[derive(Debug, Clone, Args)]
 struct Sampler {
@@ -60,7 +61,16 @@ impl Sampler {
 }
 
 async fn create_environment() -> Result<Environment> {
-    let env = Environment::create().await?;
+    let instance = Instance::new();
+    let adapters = instance.adapters();
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Please select an adapter")
+        .default(0)
+        .items(&adapters)
+        .interact()?;
+
+    let adapter = instance.select_adapter(selection)?;
+    let env = Environment::new(adapter).await?;
     println!("{:#?}", env.adapter.get_info());
     Ok(env)
 }

@@ -1,13 +1,55 @@
-use anyhow::Result;
 use std::sync::Arc;
-use wgpu::{
-    Adapter, Backends, Device, DeviceDescriptor, Dx12Compiler, Instance, InstanceDescriptor,
-    PowerPreference, Queue, RequestAdapterOptions,
-};
+use wgpu::{Adapter, Backends, Device, DeviceDescriptor, Dx12Compiler, InstanceDescriptor, Queue};
+
+#[derive(Clone)]
+pub struct Instance(pub Arc<wgpu::Instance>);
+
+impl std::ops::Deref for Instance {
+    type Target = wgpu::Instance;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Default for Instance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Instance {
+    pub const BACKENDS: Backends = Backends::PRIMARY;
+
+    pub fn new() -> Self {
+        let instance = wgpu::Instance::new(InstanceDescriptor {
+            backends: Self::BACKENDS,
+            dx12_shader_compiler: Dx12Compiler::Dxc {
+                dxil_path: None,
+                dxc_path: None,
+            },
+        });
+        Self(Arc::new(instance))
+    }
+
+    pub fn adapters(&self) -> Vec<String> {
+        self.enumerate_adapters(Self::BACKENDS)
+            .map(|adapter| {
+                let info = adapter.get_info();
+                format!("{} ({:?})", info.name, info.backend)
+            })
+            .collect()
+    }
+
+    pub fn select_adapter(&self, selection: usize) -> Result<Adapter, CreateEnvironmentError> {
+        self.enumerate_adapters(Self::BACKENDS)
+            .nth(selection)
+            .ok_or(CreateEnvironmentError::RequestAdapterFailed)
+    }
+}
 
 #[derive(Clone)]
 pub struct Environment {
-    pub instance: Arc<Instance>,
     pub adapter: Arc<Adapter>,
     pub device: Arc<Device>,
     pub queue: Arc<Queue>,
@@ -31,22 +73,7 @@ impl std::fmt::Display for CreateEnvironmentError {
 impl std::error::Error for CreateEnvironmentError {}
 
 impl Environment {
-    pub async fn create() -> Result<Self> {
-        let instance = Instance::new(InstanceDescriptor {
-            backends: Backends::PRIMARY,
-            dx12_shader_compiler: Dx12Compiler::Dxc {
-                dxil_path: None,
-                dxc_path: None,
-            },
-        });
-        let adapter = instance
-            .request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            })
-            .await
-            .ok_or(CreateEnvironmentError::RequestAdapterFailed)?;
+    pub async fn new(adapter: Adapter) -> Result<Self, CreateEnvironmentError> {
         let (device, queue) = adapter
             .request_device(
                 &DeviceDescriptor {
@@ -60,7 +87,6 @@ impl Environment {
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
         Ok(Self {
-            instance: Arc::new(instance),
             adapter: Arc::new(adapter),
             device: Arc::new(device),
             queue: Arc::new(queue),
