@@ -46,14 +46,11 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     reduce_step_barrier(index, 64u);
     reduce_step_barrier(index, 32u);
-
-    if index < 32u {
-        local_sum[index] += local_sum[index + 16u];
-        local_sum[index] += local_sum[index + 8u];
-        local_sum[index] += local_sum[index + 4u];
-        local_sum[index] += local_sum[index + 2u];
-        local_sum[index] += local_sum[index + 1u];
-    }
+    reduce_step_barrier(index, 16u);
+    reduce_step_barrier(index, 8u);
+    reduce_step_barrier(index, 4u);
+    reduce_step_barrier(index, 2u);
+    reduce_step_barrier(index, 1u);
 
     if index == 0u {
         output[token * stride.y + channel] = local_sum[0];

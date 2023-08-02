@@ -38,15 +38,11 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     reduce_max(index, 64u);
     reduce_max(index, 32u);
-
-    if index < 32u {
-        sketch[index] = max(sketch[index], sketch[index + 16u]);
-        sketch[index] = max(sketch[index], sketch[index + 8u]);
-        sketch[index] = max(sketch[index], sketch[index + 4u]);
-        sketch[index] = max(sketch[index], sketch[index + 2u]);
-        sketch[index] = max(sketch[index], sketch[index + 1u]);
-    }
-    workgroupBarrier();
+    reduce_max(index, 16u);
+    reduce_max(index, 8u);
+    reduce_max(index, 4u);
+    reduce_max(index, 2u);
+    reduce_max(index, 1u);
 
     if index == 0u {
         maximum = sketch[0].x;
@@ -65,15 +61,11 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     reduce_sum(index, 64u);
     reduce_sum(index, 32u);
-
-    if index < 32u {
-        sketch[index] += sketch[index + 16u];
-        sketch[index] += sketch[index + 8u];
-        sketch[index] += sketch[index + 4u];
-        sketch[index] += sketch[index + 2u];
-        sketch[index] += sketch[index + 1u];
-    }
-    workgroupBarrier();
+    reduce_sum(index, 16u);
+    reduce_sum(index, 8u);
+    reduce_sum(index, 4u);
+    reduce_sum(index, 2u);
+    reduce_sum(index, 1u);
 
     if index == 0u {
         sum = dot(sketch[0], vec4<f32>(1.0));

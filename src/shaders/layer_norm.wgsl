@@ -25,11 +25,6 @@ fn reduce_step_barrier(index: u32, stride: u32) {
     workgroupBarrier();
 }
 
-fn reduce_step(index: u32, stride: u32) {
-    sum[index] += sum[index + stride];
-    sum_squared[index] += sum_squared[index + stride];
-}
-
 @compute @workgroup_size(128, 1, 1)
 fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
@@ -46,14 +41,11 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     reduce_step_barrier(index, 64u);
     reduce_step_barrier(index, 32u);
-
-    if index < 32u {
-        reduce_step(index, 16u);
-        reduce_step(index, 8u);
-        reduce_step(index, 4u);
-        reduce_step(index, 2u);
-        reduce_step(index, 1u);
-    }
+    reduce_step_barrier(index, 16u);
+    reduce_step_barrier(index, 8u);
+    reduce_step_barrier(index, 4u);
+    reduce_step_barrier(index, 2u);
+    reduce_step_barrier(index, 1u);
 
     if index == 0u {
         mean = dot(sum[0], vec4<f32>(1.0)) / f32(num_emb);
