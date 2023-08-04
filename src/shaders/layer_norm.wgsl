@@ -17,7 +17,7 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-fn reduce_step_barrier(index: u32, stride: u32) {
+fn reduce_step(index: u32, stride: u32) {
     if index < stride {
         sum[index] += sum[index + stride];
         sum_squared[index] += sum_squared[index + stride];
@@ -39,13 +39,13 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     }
     workgroupBarrier();
 
-    reduce_step_barrier(index, 64u);
-    reduce_step_barrier(index, 32u);
-    reduce_step_barrier(index, 16u);
-    reduce_step_barrier(index, 8u);
-    reduce_step_barrier(index, 4u);
-    reduce_step_barrier(index, 2u);
-    reduce_step_barrier(index, 1u);
+    reduce_step(index, 64u);
+    reduce_step(index, 32u);
+    reduce_step(index, 16u);
+    reduce_step(index, 8u);
+    reduce_step(index, 4u);
+    reduce_step(index, 2u);
+    reduce_step(index, 1u);
 
     if index == 0u {
         mean = dot(sum[0], vec4<f32>(1.0)) / f32(num_emb);
