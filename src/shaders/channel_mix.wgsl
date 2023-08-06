@@ -15,6 +15,10 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     let token = invocation_id.y;
     let stride = num_emb / 4u;
 
+    if token >= num_tokens {
+        return;
+    }
+
     if index < stride {
         let ti = token * stride + index;
         let rr = 1.0 / (1.0 + exp(-r[ti]));

@@ -31,6 +31,10 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let stride = num_emb / 4u;
 
+    if token >= num_tokens {
+        return;
+    }
+
     sum[index] = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = x[stride * token + i];

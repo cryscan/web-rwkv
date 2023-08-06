@@ -1,4 +1,4 @@
-@group(0) @binding(0) var<uniform> dim: u32;
+@group(0) @binding(0) var<uniform> num_vocab: u32;
 
 @group(0) @binding(1) var<storage, read> x: array<vec4<f32>>;               // (T, C)
 @group(0) @binding(2) var<storage, read_write> output: array<vec4<f32>>;    // (T, C)
@@ -27,7 +27,7 @@ fn reduce_sum(index: u32, stride: u32) {
 fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let token = invocation_id.y;
-    let stride = dim / 4u;
+    let stride = num_vocab / 4u;
 
     sketch[index] = vec4<f32>(-1.0e30);
     for (var i = index; i < stride; i += BLOCK_SIZE) {

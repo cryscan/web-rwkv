@@ -12,6 +12,10 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let stride = num_emb / 4u;
 
+    if token >= num_tokens {
+        return;
+    }
+
     if index < stride {
         let ti = token * stride + index;
         output[ti] = x[ti] + output[ti];

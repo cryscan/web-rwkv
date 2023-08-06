@@ -12,6 +12,10 @@ fn activation(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let stride = num_emb * 4u / 4u;
 
+    if token >= num_tokens {
+        return;
+    }
+
     if index < stride {
         let ti = token * stride + index;
         let p = max(x[ti], vec4<f32>(0.0));
