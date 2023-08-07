@@ -2076,8 +2076,8 @@ impl Model {
 
         let num_tokens = buffer.num_tokens() as u32;
         let num_emb_vec4 = num_emb as u32 / 4;
-        let num_emb_blocks = (num_emb_vec4 + ModelInfo::BLOCK_SIZE - 1) / ModelInfo::BLOCK_SIZE;
         let chunk_size_vec4 = ModelInfo::HEAD_CHUNK_SIZE as u32 / 4;
+        let compute_block_count = |size| (size + ModelInfo::BLOCK_SIZE - 1) / ModelInfo::BLOCK_SIZE;
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
 
@@ -2101,35 +2101,35 @@ impl Model {
 
             pass.set_pipeline(&pipeline.token_shift);
             pass.set_bind_group(0, &layer.att_token_shift_k, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), num_tokens, 1);
 
             pass.set_bind_group(0, &layer.att_token_shift_v, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), num_tokens, 1);
 
             pass.set_bind_group(0, &layer.att_token_shift_r, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), num_tokens, 1);
 
             pass.set_pipeline(matmul_pipeline);
             pass.set_bind_group(0, &layer.att_matmul_k, &[]);
-            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.dispatch_workgroups(num_emb_vec4, num_tokens, 1);
 
             pass.set_bind_group(0, &layer.att_matmul_v, &[]);
-            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.dispatch_workgroups(num_emb_vec4, num_tokens, 1);
 
             pass.set_bind_group(0, &layer.att_matmul_r, &[]);
-            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.dispatch_workgroups(num_emb_vec4, num_tokens, 1);
 
             pass.set_pipeline(&pipeline.token_mix);
             pass.set_bind_group(0, &layer.att_token_mix, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, 1, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), 1, 1);
 
             pass.set_pipeline(matmul_pipeline);
             pass.set_bind_group(0, &layer.att_matmul_o, &[]);
-            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.dispatch_workgroups(num_emb_vec4, num_tokens, 1);
 
             pass.set_pipeline(&pipeline.add);
             pass.set_bind_group(0, &layer.att_add, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), num_tokens, 1);
 
             pass.set_pipeline(&pipeline.layer_norm);
             pass.set_bind_group(0, &layer.ffn_layer_norm, &[]);
@@ -2137,33 +2137,33 @@ impl Model {
 
             pass.set_pipeline(&pipeline.token_shift);
             pass.set_bind_group(0, &layer.ffn_token_shift_k, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), num_tokens, 1);
 
             pass.set_bind_group(0, &layer.ffn_token_shift_r, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), num_tokens, 1);
 
             pass.set_pipeline(matmul_pipeline);
             pass.set_bind_group(0, &layer.ffn_matmul_k, &[]);
-            pass.dispatch_workgroups(1, 4 * num_emb_vec4, num_tokens);
+            pass.dispatch_workgroups(4 * num_emb_vec4, num_tokens, 1);
 
             pass.set_bind_group(0, &layer.ffn_matmul_r, &[]);
-            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.dispatch_workgroups(num_emb_vec4, num_tokens, 1);
 
             pass.set_pipeline(&pipeline.activation);
             pass.set_bind_group(0, &layer.ffn_activation, &[]);
-            pass.dispatch_workgroups(4 * num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(4 * num_emb_vec4), num_tokens, 1);
 
             pass.set_pipeline(matmul_pipeline);
             pass.set_bind_group(0, &layer.ffn_matmul_v, &[]);
-            pass.dispatch_workgroups(1, num_emb_vec4, num_tokens);
+            pass.dispatch_workgroups(num_emb_vec4, num_tokens, 1);
 
             pass.set_pipeline(&pipeline.channel_mix);
             pass.set_bind_group(0, &layer.ffn_channel_mix, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), num_tokens, 1);
 
             pass.set_pipeline(&pipeline.add);
             pass.set_bind_group(0, &layer.ffn_add, &[]);
-            pass.dispatch_workgroups(num_emb_blocks, num_tokens, 1);
+            pass.dispatch_workgroups(compute_block_count(num_emb_vec4), num_tokens, 1);
 
             drop(pass);
 
@@ -2194,7 +2194,7 @@ impl Model {
             pass.set_pipeline(&pipeline.matmul);
             for matmul in &bind_group.head.matmul {
                 pass.set_bind_group(0, matmul, &[]);
-                pass.dispatch_workgroups(1, chunk_size_vec4, 1);
+                pass.dispatch_workgroups(chunk_size_vec4, num_tokens, 1);
             }
 
             drop(pass);

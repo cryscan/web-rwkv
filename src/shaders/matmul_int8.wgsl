@@ -23,9 +23,9 @@ fn reduce_sum(index: u32, stride: u32) {
 
 @compute @workgroup_size(128, 1, 1)
 fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
-    let index = invocation_id.x;
-    let channel = invocation_id.y;      // 1 channel: 4 rows in matrix
-    let token = invocation_id.z;
+    let index = invocation_id.x % BLOCK_SIZE;
+    let channel = invocation_id.x / BLOCK_SIZE;   // 1 channel: 4 rows in matrix
+    let token = invocation_id.y;
     let stride = dims / 4u;
 
     if token >= num_tokens {
