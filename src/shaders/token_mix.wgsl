@@ -58,4 +58,3 @@ fn token_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         state[xi] = x[(num_tokens - 1u) * stride + index];
     }
 }
-    
