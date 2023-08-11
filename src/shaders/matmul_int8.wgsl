@@ -23,25 +23,29 @@ fn reduce_sum(index: u32, stride: u32) {
 
 @compute @workgroup_size(128, 1, 1)
 fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+    let stride = dims / 4u;
     let index = invocation_id.x % BLOCK_SIZE;
     let channel = invocation_id.x / BLOCK_SIZE;   // 1 channel: 4 rows in matrix
     let token = invocation_id.y;
-    let stride = dims / 4u;
+    let batch = invocation_id.z;
 
     if token >= num_tokens {
         return;
     }
+
+    let bb = (batch * num_tokens + token) * stride.x;
+    let cb = channel * 4u * stride.x;
 
     let myc = my[channel];
     let ryc = ry[channel];
 
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
-        let ti = token * stride.x + i;
-        var ci = channel * 4u * stride.x + i;
+        let bti = bb + i;
+        var ci = cb + i;
 
         // read 4 elements from the input
-        let x = input[ti];
+        let x = input[bti];
 
         let mxi = mx[i];
         let rxi = rx[i];
@@ -67,6 +71,6 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     reduce_sum(index, 1u);
 
     if index == 0u {
-        output[token * stride.y + channel] = sketch[0];
+        output[(batch * num_tokens + token) * stride.y + channel] = sketch[0];
     }
 }

@@ -2045,10 +2045,14 @@ impl Model {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: buffer.head_o.as_entire_binding(),
+                    resource: buffer.num_tokens.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
+                    resource: buffer.head_o.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
                     resource: buffer.softmax_o.as_entire_binding(),
                 },
             ],
