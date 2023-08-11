@@ -48,7 +48,7 @@ impl Instance {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Environment {
     pub adapter: Arc<Adapter>,
     pub device: Arc<Device>,
