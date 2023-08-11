@@ -3,7 +3,7 @@ use half::prelude::*;
 use std::sync::Arc;
 use wgpu::{Buffer, BufferDescriptor, BufferUsages};
 
-use crate::Environment;
+use crate::Context;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DataType {
@@ -104,7 +104,7 @@ impl std::fmt::Display for TensorError {
 
 impl std::error::Error for TensorError {}
 
-impl Environment {
+impl Context {
     pub fn create_tensor_cpu_f32(
         &self,
         shape: TensorShape,

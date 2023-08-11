@@ -49,7 +49,7 @@ impl Instance {
 }
 
 #[derive(Debug, Clone)]
-pub struct Environment {
+pub struct Context {
     pub adapter: Arc<Adapter>,
     pub device: Arc<Device>,
     pub queue: Arc<Queue>,
@@ -72,7 +72,7 @@ impl std::fmt::Display for CreateEnvironmentError {
 
 impl std::error::Error for CreateEnvironmentError {}
 
-impl Environment {
+impl Context {
     pub async fn new(adapter: Adapter) -> Result<Self, CreateEnvironmentError> {
         let (device, queue) = adapter
             .request_device(

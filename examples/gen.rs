@@ -9,7 +9,7 @@ use std::{
     path::PathBuf,
     time::Instant,
 };
-use web_rwkv::{Environment, Instance, LayerFlags, Model, ModelBuilder, Quantization, Tokenizer};
+use web_rwkv::{Context, Instance, LayerFlags, Model, ModelBuilder, Quantization, Tokenizer};
 
 fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
     let sorted = probs
@@ -37,7 +37,7 @@ fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
     token as u16
 }
 
-async fn create_environment() -> Result<Environment> {
+async fn create_context() -> Result<Context> {
     let instance = Instance::new();
     let adapters = instance.adapters();
     let selection = Select::with_theme(&ColorfulTheme::default())
@@ -47,9 +47,9 @@ async fn create_environment() -> Result<Environment> {
         .interact()?;
 
     let adapter = instance.select_adapter(selection)?;
-    let env = Environment::new(adapter).await?;
-    println!("{:#?}", env.adapter.get_info());
-    Ok(env)
+    let context = Context::new(adapter).await?;
+    println!("{:#?}", context.adapter.get_info());
+    Ok(context)
 }
 
 fn load_tokenizer() -> Result<Tokenizer> {
@@ -60,13 +60,13 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(env: Environment, model: PathBuf, quant: Option<u64>) -> Result<Model> {
+fn load_model(context: Context, model: PathBuf, quant: Option<u64>) -> Result<Model> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
     let quantization = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(env, &map)
+    let model = ModelBuilder::new(context, &map)
         .with_quantization(quantization)
         .build()?;
     println!("{:#?}", model.info());
@@ -74,13 +74,13 @@ fn load_model(env: Environment, model: PathBuf, quant: Option<u64>) -> Result<Mo
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let env = create_environment().await?;
+    let context = create_context().await?;
 
     let tokenizer = load_tokenizer()?;
     let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-    let model = load_model(env, model, cli.quant)?;
+    let model = load_model(context, model, cli.quant)?;
 
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;

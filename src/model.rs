@@ -13,12 +13,12 @@ use wgpu::{
     PipelineLayout, PipelineLayoutDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
 };
 
-use crate::Environment;
+use crate::Context;
 
 #[derive(Getters)]
 pub struct Model {
     info: ModelInfo,
-    env: Environment,
+    context: Context,
     quantization: Quantization,
     #[getter(skip)]
     tensor: ModelTensor,
@@ -194,8 +194,8 @@ pub struct ModelBuffer {
 }
 
 impl ModelBuffer {
-    fn new(env: &Environment, info: ModelInfo, input: &[f32]) -> Self {
-        let device = &env.device;
+    fn new(context: &Context, info: ModelInfo, input: &[f32]) -> Self {
+        let device = &context.device;
 
         let create_buffer_f32 = |capacity: usize| -> Buffer {
             device.create_buffer(&BufferDescriptor {
@@ -262,9 +262,11 @@ impl ModelBuffer {
         }
     }
 
-    fn reload(&self, env: &Environment, info: ModelInfo, input: &[f32]) {
+    fn reload(&self, context: &Context, info: ModelInfo, input: &[f32]) {
         assert_eq!(self.num_tokens(), input.len() / info.num_emb);
-        env.queue.write_buffer(&self.emb_x, 0, cast_slice(input));
+        context
+            .queue
+            .write_buffer(&self.emb_x, 0, cast_slice(input));
     }
 
     pub fn info(&self) -> ModelInfo {
@@ -278,7 +280,7 @@ impl ModelBuffer {
 }
 
 pub struct ModelState {
-    env: Environment,
+    context: Context,
     info: ModelInfo,
     layers: Vec<LayerState>,
 }
@@ -289,7 +291,7 @@ struct LayerState {
 }
 
 #[derive(Clone)]
-pub struct BackedModelState(pub Vec<Vec<f32>>);
+pub struct BackedState(pub Vec<Vec<f32>>);
 
 #[derive(Debug)]
 pub enum ModelStateError {
@@ -309,8 +311,8 @@ impl std::fmt::Display for ModelStateError {
 impl std::error::Error for ModelStateError {}
 
 impl ModelState {
-    fn new(env: Environment, info: ModelInfo) -> Self {
-        let device = &env.device;
+    fn new(context: Context, info: ModelInfo) -> Self {
+        let device = &context.device;
 
         let ModelInfo {
             num_layers,
@@ -342,12 +344,16 @@ impl ModelState {
             })
             .collect();
 
-        Self { env, info, layers }
+        Self {
+            context,
+            info,
+            layers,
+        }
     }
 
-    pub fn back(&self) -> Result<BackedModelState> {
-        let device = &self.env.device;
-        let queue = &self.env.queue;
+    pub fn back(&self) -> Result<BackedState> {
+        let device = &self.context.device;
+        let queue = &self.context.queue;
 
         let num_emb = self.info.num_emb;
 
@@ -395,11 +401,11 @@ impl ModelState {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(BackedModelState(layers))
+        Ok(BackedState(layers))
     }
 
-    pub fn load(&self, backed: &BackedModelState) -> std::result::Result<(), ModelStateError> {
-        let queue = &self.env.queue;
+    pub fn load(&self, backed: &BackedState) -> std::result::Result<(), ModelStateError> {
+        let queue = &self.context.queue;
 
         let ModelInfo {
             num_layers,
@@ -459,15 +465,15 @@ struct LayerBindGroup {
 }
 
 pub struct ModelBuilder<'a> {
-    env: Environment,
+    context: Context,
     data: &'a [u8],
     quantization: Quantization,
 }
 
 impl<'a> ModelBuilder<'a> {
-    pub fn new(env: Environment, data: &[u8]) -> ModelBuilder {
+    pub fn new(context: Context, data: &[u8]) -> ModelBuilder {
         ModelBuilder {
-            env,
+            context,
             data,
             quantization: Default::default(),
         }
@@ -482,13 +488,13 @@ impl<'a> ModelBuilder<'a> {
 
     pub fn build(self) -> Result<Model> {
         let Self {
-            env,
+            context,
             data,
             quantization,
         } = self;
 
-        let device = &env.device;
-        let queue = &env.queue;
+        let device = &context.device;
+        let queue = &context.queue;
         let model = SafeTensors::deserialize(data)?;
 
         let create_pipeline =
@@ -935,12 +941,12 @@ impl<'a> ModelBuilder<'a> {
         };
 
         let input = vec![0.0; num_emb];
-        let buffer = RefCell::new(ModelBuffer::new(&env, info, &input));
+        let buffer = RefCell::new(ModelBuffer::new(&context, info, &input));
 
         queue.submit(None);
         device.poll(wgpu::MaintainBase::Wait);
         Ok(Model {
-            env,
+            context,
             info,
             quantization,
             tensor,
@@ -971,11 +977,11 @@ impl Model {
     }
 
     pub fn create_state(&self) -> ModelState {
-        ModelState::new(self.env.clone(), self.info)
+        ModelState::new(self.context.clone(), self.info)
     }
 
     fn create_bind_group(&self, buffer: &ModelBuffer, state: &ModelState) -> ModelBindGroup {
-        let device = &self.env.device;
+        let device = &self.context.device;
         let pipeline = &self.pipeline;
 
         let [layer_norm_layout, token_shift_layout, matmul_layout, matmul_int8_layout, token_mix_layout, activation_layout, channel_mix_layout, add_layout] =
@@ -2027,7 +2033,7 @@ impl Model {
     }
 
     fn create_softmax_bind_group(&self, buffer: &ModelBuffer) -> BindGroup {
-        let device = &self.env.device;
+        let device = &self.context.device;
         let layout = &self.pipeline.softmax.get_bind_group_layout(0);
         device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -2053,15 +2059,15 @@ impl Model {
         let mut buffer = self.buffer.borrow_mut();
         let input = self.embedding(tokens);
         if buffer.num_tokens() != tokens.len() {
-            *buffer = ModelBuffer::new(&self.env, self.info, &input);
+            *buffer = ModelBuffer::new(&self.context, self.info, &input);
         } else {
-            buffer.reload(&self.env, self.info, &input);
+            buffer.reload(&self.context, self.info, &input);
         }
     }
 
     fn run_internal(&self, tokens: &[u16], state: &ModelState, output: bool) {
-        let device = &self.env.device;
-        let queue = &self.env.queue;
+        let device = &self.context.device;
+        let queue = &self.context.queue;
 
         self.reload_buffer(tokens);
         let buffer = self.buffer.borrow();
@@ -2209,7 +2215,7 @@ impl Model {
             return Ok(vec![0.0; self.info.num_vocab]);
         }
 
-        let device = &self.env.device;
+        let device = &self.context.device;
 
         let chunk_size = ModelInfo::TOKEN_CHUNK_SIZE;
         let mut tokens = tokens.to_vec();
@@ -2240,8 +2246,8 @@ impl Model {
     }
 
     pub fn softmax(&self, logits: &[f32]) -> Result<Vec<f32>> {
-        let device = &self.env.device;
-        let queue = &self.env.queue;
+        let device = &self.context.device;
+        let queue = &self.context.queue;
         let buffer = self.buffer.borrow();
 
         queue.write_buffer(&buffer.head_o, 0, cast_slice(logits));
