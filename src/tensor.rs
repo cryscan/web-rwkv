@@ -127,7 +127,7 @@ impl<'a> Tensor<'a> {
         let data = match contents {
             Some(contents) => {
                 let buffer = context.device.create_buffer_init(&BufferInitDescriptor {
-                    label: label.clone(),
+                    label,
                     contents,
                     usage: BufferUsages::STORAGE
                         | BufferUsages::COPY_DST
@@ -200,12 +200,12 @@ impl<'a> Tensor<'a> {
 }
 
 impl Context {
-    pub fn create_tensor_cpu_f32<'a>(
+    pub fn create_tensor_cpu_f32<'a, 'b>(
         &'a self,
-        label: Option<&'a str>,
+        label: Option<&'b str>,
         shape: TensorShape,
         data: Vec<f32>,
-    ) -> Result<Tensor<'a>, TensorError> {
+    ) -> Result<Tensor<'b>, TensorError> {
         if shape.len() != data.len() {
             return Err(TensorError::CreateShapeNotMatch(shape.len(), data.len()));
         }
@@ -217,12 +217,12 @@ impl Context {
         })
     }
 
-    pub fn create_tensor_cpu_f16<'a>(
+    pub fn create_tensor_cpu_f16<'a, 'b>(
         &'a self,
-        label: Option<&'a str>,
+        label: Option<&'b str>,
         shape: TensorShape,
         data: Vec<f16>,
-    ) -> Result<Tensor, TensorError> {
+    ) -> Result<Tensor<'b>, TensorError> {
         if shape.len() != data.len() {
             return Err(TensorError::CreateShapeNotMatch(shape.len(), data.len()));
         }
@@ -234,12 +234,12 @@ impl Context {
         })
     }
 
-    pub fn create_tensor_device<'a>(
+    pub fn create_tensor_device<'a, 'b>(
         &'a self,
-        label: Option<&'a str>,
+        label: Option<&'b str>,
         shape: TensorShape,
         data_type: DataType,
-    ) -> Tensor<'a> {
+    ) -> Tensor<'b> {
         let size = data_type.size() as u64 * shape.len() as u64;
         let buffer = Arc::new(self.device.create_buffer(&BufferDescriptor {
             label: None,
@@ -260,5 +260,9 @@ impl Context {
                 DataType::Int8 => TensorData::GpuInt8(buffer),
             },
         }
+    }
+
+    pub fn transfer_tensor<'a, 'b>(&'a self, _tensor: Tensor<'b>) -> Tensor<'b> {
+        todo!()
     }
 }

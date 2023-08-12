@@ -50,6 +50,7 @@ impl Instance {
 
 #[derive(Debug, Clone)]
 pub struct Context {
+    id: uid::Id<Context>,
     pub adapter: Arc<Adapter>,
     pub device: Arc<Device>,
     pub queue: Arc<Queue>,
@@ -87,9 +88,22 @@ impl Context {
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
         Ok(Self {
+            id: uid::Id::new(),
             adapter: Arc::new(adapter),
             device: Arc::new(device),
             queue: Arc::new(queue),
         })
     }
 }
+
+impl PartialEq for Context {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        self.id != other.id
+    }
+}
+
+impl Eq for Context {}
