@@ -1,7 +1,10 @@
 use derive_getters::Getters;
 use half::prelude::*;
-use std::sync::Arc;
-use wgpu::{Buffer, BufferDescriptor, BufferUsages};
+use std::{borrow::Cow, sync::Arc};
+use wgpu::{
+    util::{BufferInitDescriptor, DeviceExt},
+    Buffer, BufferDescriptor, BufferUsages,
+};
 
 use crate::Context;
 
@@ -23,6 +26,8 @@ impl DataType {
     }
 }
 
+/// The shape of a [`Tensor`].
+/// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TensorShape([usize; 4]);
 
@@ -53,36 +58,13 @@ pub struct TensorInfo {
 }
 
 #[derive(Debug, Clone)]
-pub enum TensorData {
-    CpuFp32(Vec<f32>),
-    CpuFp16(Vec<f16>),
-    CpuInt8(Vec<u8>),
+pub enum TensorData<'a> {
+    CpuFp32(Cow<'a, [f32]>),
+    CpuFp16(Cow<'a, [f16]>),
+    CpuInt8(Cow<'a, [u8]>),
     GpuFp32(Arc<Buffer>),
     GpuFp16(Arc<Buffer>),
     GpuInt8(Arc<Buffer>),
-}
-
-#[derive(Debug, Clone, Getters)]
-pub struct Tensor {
-    shape: TensorShape,
-    data: TensorData,
-}
-
-impl Tensor {
-    pub fn data_type(&self) -> DataType {
-        match &self.data {
-            TensorData::CpuFp32(_) | TensorData::GpuFp32(_) => DataType::Fp32,
-            TensorData::CpuFp16(_) | TensorData::GpuFp16(_) => DataType::Fp16,
-            TensorData::CpuInt8(_) | TensorData::GpuInt8(_) => DataType::Int8,
-        }
-    }
-
-    pub fn info(&self) -> TensorInfo {
-        TensorInfo {
-            shape: self.shape,
-            date_type: self.data_type(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -104,23 +86,140 @@ impl std::fmt::Display for TensorError {
 
 impl std::error::Error for TensorError {}
 
+#[derive(Debug, Clone, Getters)]
+pub struct Tensor<'a> {
+    context: Context,
+    label: Option<&'a str>,
+    shape: TensorShape,
+    data: TensorData<'a>,
+}
+
+impl<'a> Tensor<'a> {
+    pub fn data_type(&self) -> DataType {
+        match &self.data {
+            TensorData::CpuFp32(_) | TensorData::GpuFp32(_) => DataType::Fp32,
+            TensorData::CpuFp16(_) | TensorData::GpuFp16(_) => DataType::Fp16,
+            TensorData::CpuInt8(_) | TensorData::GpuInt8(_) => DataType::Int8,
+        }
+    }
+
+    pub fn info(&self) -> TensorInfo {
+        TensorInfo {
+            shape: self.shape,
+            date_type: self.data_type(),
+        }
+    }
+
+    /// Upload the [`Tensor`] to device.
+    pub fn device(self) -> Tensor<'a> {
+        let Tensor {
+            context,
+            label,
+            shape,
+            data,
+        } = self;
+        let contents = match &data {
+            TensorData::CpuFp32(data) => Some(bytemuck::cast_slice(data)),
+            TensorData::CpuFp16(data) => Some(bytemuck::cast_slice(data)),
+            TensorData::CpuInt8(data) => Some(bytemuck::cast_slice(data)),
+            TensorData::GpuFp32(_) | TensorData::GpuFp16(_) | TensorData::GpuInt8(_) => None,
+        };
+        let data = match contents {
+            Some(contents) => {
+                let buffer = context.device.create_buffer_init(&BufferInitDescriptor {
+                    label: label.clone(),
+                    contents,
+                    usage: BufferUsages::STORAGE
+                        | BufferUsages::COPY_DST
+                        | BufferUsages::COPY_SRC
+                        | BufferUsages::MAP_READ,
+                });
+                match data {
+                    TensorData::CpuFp32(_) => TensorData::GpuFp32(Arc::new(buffer)),
+                    TensorData::CpuFp16(_) => TensorData::GpuFp16(Arc::new(buffer)),
+                    TensorData::CpuInt8(_) => TensorData::GpuInt8(Arc::new(buffer)),
+                    _ => unreachable!(),
+                }
+            }
+            None => data,
+        };
+        Tensor {
+            context,
+            label,
+            shape,
+            data,
+        }
+    }
+
+    /// Read back the [`Tensor`] to CPU.
+    pub fn cpu(self) -> Tensor<'a> {
+        let Tensor {
+            context,
+            label,
+            shape,
+            data,
+        } = self;
+        let buffer = match &data {
+            TensorData::GpuFp32(buffer)
+            | TensorData::GpuFp16(buffer)
+            | TensorData::GpuInt8(buffer) => Some(buffer.clone()),
+            _ => None,
+        };
+        let data = match buffer {
+            Some(buffer) => {
+                let slice = buffer.slice(..);
+                slice.map_async(wgpu::MapMode::Read, |_| {});
+
+                context.device.poll(wgpu::MaintainBase::Wait);
+
+                let map = slice.get_mapped_range();
+                let data = match data {
+                    TensorData::GpuFp32(_) => {
+                        TensorData::CpuFp32(Cow::from(bytemuck::cast_slice(&map).to_owned()))
+                    }
+                    TensorData::GpuFp16(_) => {
+                        TensorData::CpuFp16(Cow::from(bytemuck::cast_slice(&map).to_owned()))
+                    }
+                    TensorData::GpuInt8(_) => {
+                        TensorData::CpuInt8(Cow::from(bytemuck::cast_slice(&map).to_owned()))
+                    }
+                    _ => unreachable!(),
+                };
+                buffer.unmap();
+                data
+            }
+            None => data,
+        };
+        Tensor {
+            context,
+            label,
+            shape,
+            data,
+        }
+    }
+}
+
 impl Context {
-    pub fn create_tensor_cpu_f32(
-        &self,
+    pub fn create_tensor_cpu_f32<'a>(
+        &'a self,
+        label: Option<&'a str>,
         shape: TensorShape,
         data: Vec<f32>,
-    ) -> Result<Tensor, TensorError> {
+    ) -> Result<Tensor<'a>, TensorError> {
         if shape.len() != data.len() {
             return Err(TensorError::CreateShapeNotMatch(shape.len(), data.len()));
         }
         Ok(Tensor {
+            context: self.clone(),
+            label,
             shape,
-            data: TensorData::CpuFp32(data),
+            data: TensorData::CpuFp32(Cow::from(data)),
         })
     }
 
-    pub fn create_tensor_cpu_f16(
-        &self,
+    pub fn create_tensor_cpu_f16<'a>(
+        &'a self,
+        label: Option<&'a str>,
         shape: TensorShape,
         data: Vec<f16>,
     ) -> Result<Tensor, TensorError> {
@@ -128,20 +227,32 @@ impl Context {
             return Err(TensorError::CreateShapeNotMatch(shape.len(), data.len()));
         }
         Ok(Tensor {
+            context: self.clone(),
+            label,
             shape,
-            data: TensorData::CpuFp16(data),
+            data: TensorData::CpuFp16(Cow::from(data)),
         })
     }
 
-    pub fn create_tensor_device(&self, shape: TensorShape, data_type: DataType) -> Tensor {
+    pub fn create_tensor_device<'a>(
+        &'a self,
+        label: Option<&'a str>,
+        shape: TensorShape,
+        data_type: DataType,
+    ) -> Tensor<'a> {
         let size = data_type.size() as u64 * shape.len() as u64;
         let buffer = Arc::new(self.device.create_buffer(&BufferDescriptor {
             label: None,
             size,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            usage: BufferUsages::STORAGE
+                | BufferUsages::COPY_DST
+                | BufferUsages::COPY_SRC
+                | BufferUsages::MAP_READ,
             mapped_at_creation: false,
         }));
         Tensor {
+            context: self.clone(),
+            label,
             shape,
             data: match data_type {
                 DataType::Fp32 => TensorData::GpuFp32(buffer),
