@@ -48,9 +48,12 @@ impl Instance {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContextId(usize);
+
 #[derive(Debug, Clone)]
 pub struct Context {
-    id: uid::Id<Context>,
+    pub id: uid::Id<ContextId>,
     pub adapter: Arc<Adapter>,
     pub device: Arc<Device>,
     pub queue: Arc<Queue>,
