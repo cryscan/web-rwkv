@@ -356,12 +356,12 @@ impl Context {
         Arc::new(buffer)
     }
 
-    pub fn create_tensor_cpu_f32<'a, 'b>(
-        &'a self,
-        label: Option<&'b str>,
+    pub fn create_tensor_cpu_f32<'a>(
+        &self,
+        label: Option<&'a str>,
         shape: TensorShape,
         data: Vec<f32>,
-    ) -> Result<Tensor<'b, TensorData<'b>>, TensorError> {
+    ) -> Result<Tensor<'a, TensorData<'a>>, TensorError> {
         if shape.len() != data.len() {
             return Err(TensorError::Size(shape.len(), data.len()));
         }
@@ -374,12 +374,12 @@ impl Context {
         })
     }
 
-    pub fn create_tensor_cpu_f16<'a, 'b>(
-        &'a self,
-        label: Option<&'b str>,
+    pub fn create_tensor_cpu_f16<'a>(
+        &self,
+        label: Option<&'a str>,
         shape: TensorShape,
         data: Vec<f16>,
-    ) -> Result<Tensor<'b, TensorData<'b>>, TensorError> {
+    ) -> Result<Tensor<'a, TensorData<'a>>, TensorError> {
         if shape.len() != data.len() {
             return Err(TensorError::Size(shape.len(), data.len()));
         }
@@ -392,12 +392,12 @@ impl Context {
         })
     }
 
-    pub fn create_tensor_device<'a, 'b>(
-        &'a self,
-        label: Option<&'b str>,
+    pub fn create_tensor_device<'a>(
+        &self,
+        label: Option<&'a str>,
         shape: TensorShape,
         data_type: DataType,
-    ) -> Tensor<'b, TensorData<'b>> {
+    ) -> Tensor<'a, TensorData<'a>> {
         let size = data_type.size() as u64 * shape.len() as u64;
         let buffer = Arc::new(self.device.create_buffer(&BufferDescriptor {
             label: None,
@@ -421,10 +421,10 @@ impl Context {
         }
     }
 
-    pub fn transfer_tensor<'a, 'b>(
-        &'a self,
-        tensor: Tensor<'b, TensorData<'b>>,
-    ) -> Tensor<'b, TensorData<'b>> {
+    pub fn transfer_tensor<'a>(
+        &self,
+        tensor: Tensor<'a, TensorData<'a>>,
+    ) -> Tensor<'a, TensorData<'a>> {
         if &tensor.context == self {
             return tensor;
         }
