@@ -1,5 +1,15 @@
-use std::sync::Arc;
-use wgpu::{Adapter, Backends, Device, DeviceDescriptor, Dx12Compiler, InstanceDescriptor, Queue};
+use derive_getters::Getters;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    str::FromStr,
+    sync::{Arc, RwLock},
+};
+use uid::Id;
+use wgpu::{
+    Adapter, Backends, ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor,
+    Dx12Compiler, InstanceDescriptor, PipelineLayout, Queue, ShaderModuleDescriptor,
+};
 
 #[derive(Clone)]
 pub struct Instance(pub Arc<wgpu::Instance>);
@@ -51,12 +61,13 @@ impl Instance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ContextId(usize);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Getters)]
 pub struct Context {
-    pub id: uid::Id<ContextId>,
-    pub adapter: Arc<Adapter>,
-    pub device: Arc<Device>,
-    pub queue: Arc<Queue>,
+    pub(crate) id: Id<ContextId>,
+    pub(crate) adapter: Arc<Adapter>,
+    pub(crate) device: Arc<Device>,
+    pub(crate) queue: Arc<Queue>,
+    pub(crate) pipelines: Arc<RwLock<HashMap<String, ComputePipeline>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,11 +102,50 @@ impl Context {
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
         Ok(Self {
-            id: uid::Id::new(),
+            id: Id::new(),
             adapter: Arc::new(adapter),
             device: Arc::new(device),
             queue: Arc::new(queue),
+            pipelines: Default::default(),
         })
+    }
+
+    pub fn add_pipeline(
+        &mut self,
+        name: &str,
+        shader: &str,
+        entry_point: &str,
+        layout: Option<&PipelineLayout>,
+    ) {
+        let module = &self.device.create_shader_module(ShaderModuleDescriptor {
+            label: Some(name),
+            source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
+        });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some(name),
+                layout,
+                module,
+                entry_point,
+            });
+
+        let mut pipelines = self.pipelines.write().unwrap();
+        pipelines.insert(
+            String::from_str(name).expect("ill-formed pipeline name"),
+            pipeline,
+        );
+    }
+
+    pub fn with_pipeline(
+        mut self,
+        name: &str,
+        shader: &str,
+        entry_point: &str,
+        layout: Option<&PipelineLayout>,
+    ) -> Self {
+        self.add_pipeline(name, shader, entry_point, layout);
+        self
     }
 }
 
