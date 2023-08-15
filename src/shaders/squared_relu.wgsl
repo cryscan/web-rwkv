@@ -6,7 +6,7 @@
 const BLOCK_SIZE: u32 = 128u;
 
 @compute @workgroup_size(128, 1, 1)
-fn activation(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+fn squared_relu(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
     let token = invocation_id.y;

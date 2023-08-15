@@ -1,44 +1,45 @@
 use bytemuck::Pod;
 use derive_getters::Getters;
 use half::prelude::*;
-use std::{borrow::Cow, marker::PhantomData, sync::Arc};
+use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    Buffer, BufferAddress, BufferDescriptor, BufferUsages, CommandEncoder, MaintainBase, MapMode,
+    BindingResource, Buffer, BufferAddress, BufferBinding, BufferDescriptor, BufferUsages,
+    CommandEncoder, MaintainBase, MapMode,
 };
 
 use crate::Context;
 
 #[derive(Debug, Clone)]
-pub struct BufferView {
+pub struct TensorBuffer {
     pub buffer: Arc<Buffer>,
     pub offset: BufferAddress,
 }
 
-pub trait DeviceKind: sealed::Sealed {
+pub trait Device: sealed::Sealed {
     type Data: Clone;
 }
 
 pub struct Cpu<'a, T>(&'a PhantomData<T>);
 pub struct Gpu;
 
-impl<'a, T: DataKind> DeviceKind for Cpu<'a, T> {
+impl<'a, T: Scalar> Device for Cpu<'a, T> {
     type Data = Cow<'a, [T]>;
 }
 
-impl DeviceKind for Gpu {
-    type Data = BufferView;
+impl Device for Gpu {
+    type Data = TensorBuffer;
 }
 
-pub trait DataKind: Sized + Clone + Copy + Pod + sealed::Sealed {
+pub trait Scalar: Sized + Clone + Copy + Pod + sealed::Sealed {
     fn byte_size() -> usize {
         std::mem::size_of::<Self>()
     }
 }
 
-impl DataKind for f32 {}
-impl DataKind for f16 {}
-impl DataKind for u8 {}
+impl Scalar for f32 {}
+impl Scalar for f16 {}
+impl Scalar for u8 {}
 
 /// The shape of a [`Tensor`].
 /// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
@@ -91,11 +92,11 @@ impl std::fmt::Display for TensorError {
             TensorError::Overflow {
                 buffer_size,
                 offset,
-                size: length,
+                size,
             } => write!(
                 f,
                 "Buffer overflow with buffer size: {}, slice offset: {} and size: {}",
-                buffer_size, offset, length
+                buffer_size, offset, size
             ),
             TensorError::DeviceError => write!(f, "Tensor not on the same device"),
         }
@@ -105,24 +106,24 @@ impl std::fmt::Display for TensorError {
 impl std::error::Error for TensorError {}
 
 #[derive(Debug, Clone, Getters)]
-pub struct Tensor<'a, Device: DeviceKind, T> {
+pub struct Tensor<'a, D: Device, T> {
     context: Context,
     shape: TensorShape,
     name: Option<&'a str>,
-    data: Device::Data,
+    data: D::Data,
     #[getter(skip)]
-    phantom: std::marker::PhantomData<(Device, T)>,
+    phantom: std::marker::PhantomData<(D, T)>,
 }
 
-impl<Device: DeviceKind, T: DataKind> std::ops::Deref for Tensor<'_, Device, T> {
-    type Target = Device::Data;
+impl<D: Device, T: Scalar> std::ops::Deref for Tensor<'_, D, T> {
+    type Target = D::Data;
 
     fn deref(&self) -> &Self::Target {
         &self.data
     }
 }
 
-impl<Device: DeviceKind, T: DataKind> Tensor<'_, Device, T> {
+impl<D: Device, T: Scalar> Tensor<'_, D, T> {
     pub fn byte_size(&self) -> usize {
         self.shape.len() * T::byte_size()
     }
@@ -130,9 +131,17 @@ impl<Device: DeviceKind, T: DataKind> Tensor<'_, Device, T> {
     pub fn byte_offset(offset: usize) -> usize {
         offset * T::byte_size()
     }
+
+    pub fn shape_index(&self, indices: TensorShape) -> usize {
+        let mut index = indices[3];
+        index = index * self.shape[2] + indices[2];
+        index = index * self.shape[1] + indices[1];
+        index = index * self.shape[0] + indices[0];
+        index
+    }
 }
 
-impl<'a, T: DataKind> TensorCpu<'a, T> {
+impl<'a, T: Scalar> TensorCpu<'a, T> {
     pub fn new(
         context: Context,
         shape: TensorShape,
@@ -152,14 +161,30 @@ impl<'a, T: DataKind> TensorCpu<'a, T> {
     }
 }
 
-impl<'a, T: DataKind> TensorGpu<'a, T> {
+impl<'a, T: Scalar> std::ops::Index<usize> for TensorCpu<'a, T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.data[index]
+    }
+}
+
+impl<'a, T: Scalar> std::ops::Index<std::ops::Range<usize>> for TensorCpu<'a, T> {
+    type Output = [T];
+
+    fn index(&self, index: std::ops::Range<usize>) -> &Self::Output {
+        &self.data[index]
+    }
+}
+
+impl<'a, T: Scalar> TensorGpu<'a, T> {
     /// Create a GPU tensor from a [`BufferView`].
     /// Fails if the buffer overflows.
     pub fn new(
         context: Context,
         shape: TensorShape,
         name: Option<&'a str>,
-        data: BufferView,
+        data: TensorBuffer,
     ) -> Result<Self, TensorError> {
         let size = shape.len() as u64 * T::byte_size() as u64;
         if data.offset + size >= data.buffer.size() {
@@ -200,13 +225,21 @@ impl<'a, T: DataKind> TensorGpu<'a, T> {
             context,
             shape,
             name,
-            data: BufferView { buffer, offset: 0 },
+            data: TensorBuffer { buffer, offset: 0 },
             phantom: Default::default(),
         }
     }
+
+    pub fn binding(&self) -> BindingResource {
+        BindingResource::Buffer(BufferBinding {
+            buffer: &self.buffer,
+            offset: self.offset,
+            size: NonZeroU64::new(self.byte_size() as BufferAddress),
+        })
+    }
 }
 
-impl<'a, T: DataKind> From<TensorCpu<'a, T>> for TensorGpu<'a, T> {
+impl<'a, T: Scalar> From<TensorCpu<'a, T>> for TensorGpu<'a, T> {
     fn from(value: TensorCpu<'a, T>) -> Self {
         let Tensor {
             context,
@@ -229,20 +262,20 @@ impl<'a, T: DataKind> From<TensorCpu<'a, T>> for TensorGpu<'a, T> {
             context,
             shape,
             name,
-            data: BufferView { buffer, offset: 0 },
+            data: TensorBuffer { buffer, offset: 0 },
             phantom: Default::default(),
         }
     }
 }
 
-impl<'a, T: DataKind> From<TensorGpu<'a, T>> for TensorCpu<'a, T> {
+impl<'a, T: Scalar> From<TensorGpu<'a, T>> for TensorCpu<'a, T> {
     fn from(value: TensorGpu<'a, T>) -> Self {
         let size = value.byte_size() as u64;
         let Tensor {
             context,
             shape,
             name,
-            data: BufferView { buffer, offset },
+            data: TensorBuffer { buffer, offset },
             ..
         } = value;
 
@@ -265,15 +298,15 @@ impl<'a, T: DataKind> From<TensorGpu<'a, T>> for TensorCpu<'a, T> {
     }
 }
 
-pub trait CopyTensor<T> {
-    fn copy_tensor(&mut self, src: &T, dst: &T) -> Result<(), TensorError>;
+pub trait CopyTensor<Source, Destination> {
+    fn copy_tensor(&mut self, src: &Source, dst: &Destination) -> Result<(), TensorError>;
 }
 
-impl<'a, T: DataKind> CopyTensor<TensorGpu<'a, T>> for CommandEncoder {
+impl<T: Scalar> CopyTensor<TensorGpu<'_, T>, TensorGpu<'_, T>> for CommandEncoder {
     fn copy_tensor(
         &mut self,
-        src: &TensorGpu<'a, T>,
-        dst: &TensorGpu<'a, T>,
+        src: &TensorGpu<'_, T>,
+        dst: &TensorGpu<'_, T>,
     ) -> Result<(), TensorError> {
         if src.shape != dst.shape {
             return Err(TensorError::Shape(src.shape, dst.shape));
