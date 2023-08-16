@@ -1,27 +1,15 @@
 use derive_getters::Getters;
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    str::FromStr,
-    sync::{Arc, RwLock},
-};
-use uid::Id;
+use std::{borrow::Cow, collections::HashMap, str::FromStr, sync::Arc};
+use web_rwkv_derive::{Deref, Id};
 use wgpu::{
     Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, ComputePipeline,
     ComputePipelineDescriptor, Device, DeviceDescriptor, Dx12Compiler, InstanceDescriptor,
-    PipelineLayout, PipelineLayoutDescriptor, Queue, ShaderModuleDescriptor, ShaderStages,
+    PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
+    ShaderModuleDescriptor, ShaderStages,
 };
 
-#[derive(Clone)]
-pub struct Instance(pub Arc<wgpu::Instance>);
-
-impl std::ops::Deref for Instance {
-    type Target = wgpu::Instance;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+#[derive(Deref)]
+pub struct Instance(wgpu::Instance);
 
 impl Default for Instance {
     fn default() -> Self {
@@ -40,7 +28,7 @@ impl Instance {
                 dxc_path: None,
             },
         });
-        Self(Arc::new(instance))
+        Self(instance)
     }
 
     pub fn adapters(&self) -> Vec<String> {
@@ -57,18 +45,36 @@ impl Instance {
             .nth(selection)
             .ok_or(CreateEnvironmentError::RequestAdapterFailed)
     }
+
+    pub async fn adapter(
+        &self,
+        power_preference: PowerPreference,
+    ) -> Result<Adapter, CreateEnvironmentError> {
+        self.request_adapter(&RequestAdapterOptions {
+            power_preference,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })
+        .await
+        .ok_or(CreateEnvironmentError::RequestAdapterFailed)
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Deref, Id, PartialEq, Eq, Hash)]
 pub struct ContextId(usize);
 
 #[derive(Debug, Clone, Getters)]
 pub struct Context {
-    pub(crate) id: Id<ContextId>,
+    pub(crate) id: ContextId,
     pub(crate) adapter: Arc<Adapter>,
     pub(crate) device: Arc<Device>,
     pub(crate) queue: Arc<Queue>,
-    pub(crate) pipelines: Arc<RwLock<HashMap<String, ComputePipeline>>>,
+    pub(crate) pipelines: Arc<HashMap<String, ComputePipeline>>,
+}
+
+pub struct ContextBuilder<'a> {
+    adapter: Adapter,
+    pipelines: HashMap<&'a str, (&'a str, &'a str, Option<&'a [BindGroupLayoutEntry]>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,9 +94,29 @@ impl std::fmt::Display for CreateEnvironmentError {
 
 impl std::error::Error for CreateEnvironmentError {}
 
-impl Context {
-    pub async fn new(adapter: Adapter) -> Result<Self, CreateEnvironmentError> {
-        let (device, queue) = adapter
+impl<'a> ContextBuilder<'a> {
+    pub fn new(adapter: Adapter) -> Self {
+        // let (device, queue) = adapter
+        //     .request_device(
+        //         &DeviceDescriptor {
+        //             label: None,
+        //             features: wgpu::Features::empty(),
+        //             limits: wgpu::Limits::default(),
+        //         },
+        //         None,
+        //     )
+        //     .await
+        //     .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
+
+        Self {
+            adapter,
+            pipelines: HashMap::new(),
+        }
+    }
+
+    pub async fn build(self) -> Result<Context, CreateEnvironmentError> {
+        let (device, queue) = self
+            .adapter
             .request_device(
                 &DeviceDescriptor {
                     label: None,
@@ -101,165 +127,191 @@ impl Context {
             )
             .await
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
-
-        Ok(Self {
-            id: Id::new(),
-            adapter: Arc::new(adapter),
-            device: Arc::new(device),
-            queue: Arc::new(queue),
-            pipelines: Default::default(),
+        let pipelines = self
+            .pipelines
+            .into_iter()
+            .map(|(name, (shader, entry_point, layout))| {
+                let module = &device.create_shader_module(ShaderModuleDescriptor {
+                    label: Some(name),
+                    source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
+                });
+                let layout = layout.map(|entries| {
+                    let layout = &device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                        label: None,
+                        entries,
+                    });
+                    device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                        label: None,
+                        bind_group_layouts: &[layout],
+                        push_constant_ranges: &[],
+                    })
+                });
+                let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+                    label: Some(name),
+                    layout: layout.as_ref(),
+                    module,
+                    entry_point,
+                });
+                (String::from_str(name).expect("Bad pipeline name"), pipeline)
+            })
+            .collect();
+        Ok(Context {
+            id: ContextId::new(),
+            adapter: self.adapter.into(),
+            device: device.into(),
+            queue: queue.into(),
+            pipelines: Arc::new(pipelines),
         })
     }
 
-    pub fn add_pipeline(&mut self, name: &str, shader: &str, layout: Option<&PipelineLayout>) {
-        let module = &self.device.create_shader_module(ShaderModuleDescriptor {
-            label: Some(name),
-            source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
-        });
-        let pipeline = self
-            .device
-            .create_compute_pipeline(&ComputePipelineDescriptor {
-                label: Some(name),
-                layout,
-                module,
-                entry_point: name,
-            });
-
-        let mut pipelines = self.pipelines.write().unwrap();
-        pipelines.insert(String::from_str(name).expect("Bad pipeline name"), pipeline);
-    }
-
     pub fn with_pipeline(
-        mut self,
-        name: &str,
-        shader: &str,
-        layout: Option<&PipelineLayout>,
+        self,
+        name: &'a str,
+        shader: &'a str,
+        entry_point: &'a str,
+        layout: Option<&'a [BindGroupLayoutEntry]>,
     ) -> Self {
-        self.add_pipeline(name, shader, layout);
-        self
+        let Self {
+            adapter,
+            mut pipelines,
+        } = self;
+        pipelines.insert(name, (shader, entry_point, layout));
+        Self { adapter, pipelines }
     }
 
     pub fn with_default_pipelines(self) -> Self {
-        self.with_pipeline("layer_norm", include_str!("shaders/layer_norm.wgsl"), None)
-            .with_pipeline("matmul", include_str!("shaders/matmul.wgsl"), None)
-            .with_pipeline(
-                "matmul_int8",
-                include_str!("shaders/matmul_int8.wgsl"),
-                None,
-            )
-            .with_pipeline(
-                "token_shift",
-                include_str!("shaders/token_shift.wgsl"),
-                None,
-            )
-            .with_pipeline("token_mix", include_str!("shaders/token_mix.wgsl"), None)
-            .with_pipeline("add", include_str!("shaders/add.wgsl"), None)
-            .with_pipeline(
-                "squared_relu",
-                include_str!("shaders/squared_relu.wgsl"),
-                None,
-            )
-            .with_pipeline(
-                "channel_mix",
-                include_str!("shaders/channel_mix.wgsl"),
-                None,
-            )
-            .with_pipeline("softmax", include_str!("shaders/softmax.wgsl"), None)
+        self.with_pipeline(
+            "layer_norm",
+            include_str!("shaders/layer_norm.wgsl"),
+            "layer_norm",
+            None,
+        )
+        .with_pipeline(
+            "matmul",
+            include_str!("shaders/matmul.wgsl"),
+            "matmul",
+            None,
+        )
+        .with_pipeline(
+            "matmul_int8",
+            include_str!("shaders/matmul_int8.wgsl"),
+            "matmul",
+            None,
+        )
+        .with_pipeline(
+            "token_shift",
+            include_str!("shaders/token_shift.wgsl"),
+            "token_shift",
+            None,
+        )
+        .with_pipeline(
+            "token_mix",
+            include_str!("shaders/token_mix.wgsl"),
+            "token_mix",
+            None,
+        )
+        .with_pipeline("add", include_str!("shaders/add.wgsl"), "add", None)
+        .with_pipeline(
+            "squared_relu",
+            include_str!("shaders/squared_relu.wgsl"),
+            "squared_relu",
+            None,
+        )
+        .with_pipeline(
+            "channel_mix",
+            include_str!("shaders/channel_mix.wgsl"),
+            "channel_mix",
+            None,
+        )
+        .with_pipeline(
+            "softmax",
+            include_str!("shaders/softmax.wgsl"),
+            "softmax",
+            None,
+        )
     }
 
     pub fn with_quantize_pipelines(self) -> Self {
         let shader = include_str!("shaders/quantize_int8.wgsl");
-        let bind_group_layout = self
-            .device
-            .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: None,
-                entries: &[
-                    BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 5,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 6,
-                        visibility: ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let layout = self
-            .device
-            .create_pipeline_layout(&PipelineLayoutDescriptor {
-                label: None,
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let layout = Some(&layout);
+        let entries = &[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 6,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
+        let layout: Option<&[BindGroupLayoutEntry]> = Some(entries);
 
-        self.with_pipeline("quantize", shader, layout)
-            .with_pipeline("compute_mx", shader, layout)
-            .with_pipeline("compute_my", shader, layout)
-            .with_pipeline("compute_rx", shader, layout)
-            .with_pipeline("compute_ry", shader, layout)
+        self.with_pipeline("quantize_int8", shader, "quantize", layout)
+            .with_pipeline("compute_mx_int8", shader, "compute_mx", layout)
+            .with_pipeline("compute_my_int8", shader, "compute_my", layout)
+            .with_pipeline("compute_rx_int8", shader, "compute_rx", layout)
+            .with_pipeline("compute_ry_int8", shader, "compute_ry", layout)
     }
 }
 

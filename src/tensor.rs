@@ -5,7 +5,7 @@ use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindingResource, Buffer, BufferAddress, BufferBinding, BufferDescriptor, BufferUsages,
-    CommandEncoder, MaintainBase, MapMode,
+    CommandEncoder, ComputePass, MaintainBase, MapMode,
 };
 
 use crate::Context;
@@ -44,11 +44,15 @@ impl Scalar for u8 {}
 /// The shape of a [`Tensor`].
 /// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TensorShape([usize; 4]);
+pub struct TensorShape(pub [usize; 4]);
 
 impl TensorShape {
     pub fn len(&self) -> usize {
         self.0.into_iter().product()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.into_iter().any(|x| x == 0)
     }
 }
 
@@ -81,6 +85,7 @@ pub enum TensorError {
         offset: BufferAddress,
         size: BufferAddress,
     },
+    PipelineError,
     DeviceError,
 }
 
@@ -98,6 +103,7 @@ impl std::fmt::Display for TensorError {
                 "Buffer overflow with buffer size: {}, slice offset: {} and size: {}",
                 buffer_size, offset, size
             ),
+            TensorError::PipelineError => write!(f, "Pipeline not found"),
             TensorError::DeviceError => write!(f, "Tensor not on the same device"),
         }
     }
@@ -106,7 +112,7 @@ impl std::fmt::Display for TensorError {
 impl std::error::Error for TensorError {}
 
 #[derive(Debug, Clone, Getters)]
-pub struct Tensor<'a, D: Device, T> {
+pub struct Tensor<'a, D: Device, T: Scalar> {
     context: Context,
     shape: TensorShape,
     name: Option<&'a str>,
@@ -114,6 +120,9 @@ pub struct Tensor<'a, D: Device, T> {
     #[getter(skip)]
     phantom: std::marker::PhantomData<(D, T)>,
 }
+
+pub type TensorCpu<'a, T> = Tensor<'a, Cpu<'a, T>, T>;
+pub type TensorGpu<'a, T> = Tensor<'a, Gpu, T>;
 
 impl<D: Device, T: Scalar> std::ops::Deref for Tensor<'_, D, T> {
     type Target = D::Data;
@@ -158,6 +167,12 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
             data: Cow::from(data),
             phantom: Default::default(),
         })
+    }
+}
+
+impl<T: Scalar> From<TensorCpu<'_, T>> for Vec<T> {
+    fn from(value: TensorCpu<'_, T>) -> Self {
+        Self::from(value.data)
     }
 }
 
@@ -284,41 +299,83 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T>> for TensorCpu<'a, T> {
 
         context.device.poll(MaintainBase::Wait);
 
-        let map = slice.get_mapped_range();
-        let data = Cow::from(bytemuck::cast_slice(&map).to_owned());
+        let data = {
+            let map = slice.get_mapped_range();
+            Vec::from(bytemuck::cast_slice(&map))
+        };
         buffer.unmap();
 
         Self {
             context,
             shape,
             name,
-            data,
+            data: Cow::from(data),
             phantom: Default::default(),
         }
     }
 }
 
-pub trait CopyTensor<Source, Destination> {
-    fn copy_tensor(&mut self, src: &Source, dst: &Destination) -> Result<(), TensorError>;
-}
-
-impl<T: Scalar> CopyTensor<TensorGpu<'_, T>, TensorGpu<'_, T>> for CommandEncoder {
+pub trait CopyTensor<D: Device, T: Scalar> {
     fn copy_tensor(
         &mut self,
-        src: &TensorGpu<'_, T>,
-        dst: &TensorGpu<'_, T>,
+        source: &Tensor<'_, D, T>,
+        destination: &Tensor<'_, D, T>,
+    ) -> Result<(), TensorError>;
+}
+
+impl<T: Scalar> CopyTensor<Gpu, T> for CommandEncoder {
+    fn copy_tensor(
+        &mut self,
+        source: &TensorGpu<'_, T>,
+        destination: &TensorGpu<'_, T>,
     ) -> Result<(), TensorError> {
-        if src.shape != dst.shape {
-            return Err(TensorError::Shape(src.shape, dst.shape));
+        if source.shape != destination.shape {
+            return Err(TensorError::Shape(source.shape, destination.shape));
         }
-        let size = src.byte_size() as BufferAddress;
-        self.copy_buffer_to_buffer(&src.buffer, src.offset, &dst.buffer, dst.offset, size);
+        let size = source.byte_size() as BufferAddress;
+        self.copy_buffer_to_buffer(
+            &source.buffer,
+            source.offset,
+            &destination.buffer,
+            destination.offset,
+            size,
+        );
         Ok(())
     }
 }
 
-pub type TensorCpu<'a, T> = Tensor<'a, Cpu<'a, T>, T>;
-pub type TensorGpu<'a, T> = Tensor<'a, Gpu, T>;
+pub trait TensorOp<'a, 'b: 'a, D: Device, T: Scalar> {
+    fn softmax(
+        &'a mut self,
+        x: &'b Tensor<'b, D, T>,
+        out: &Tensor<'_, D, T>,
+    ) -> Result<(), TensorError>;
+}
+
+impl<'a, 'b: 'a, T: Scalar> TensorOp<'a, 'b, Gpu, T> for ComputePass<'a> {
+    fn softmax(
+        &'a mut self,
+        x: &'b TensorGpu<'b, T>,
+        out: &TensorGpu<'_, T>,
+    ) -> Result<(), TensorError> {
+        if x.context != out.context {
+            return Err(TensorError::DeviceError);
+        }
+        if x.shape != out.shape {
+            return Err(TensorError::Shape(x.shape, out.shape));
+        }
+
+        let name: &'static str = "softmax";
+        let pipeline = x
+            .context
+            .pipelines
+            .get(name)
+            .ok_or(TensorError::PipelineError)?;
+        self.set_pipeline(pipeline);
+
+        Ok(())
+    }
+}
 
 mod sealed {
     use super::{Cpu, Gpu};
@@ -332,4 +389,48 @@ mod sealed {
     impl Sealed for f32 {}
     impl Sealed for f16 {}
     impl Sealed for u8 {}
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{ContextBuilder, CopyTensor, Instance, TensorCpu, TensorGpu, TensorShape};
+    use wgpu::{BufferUsages, CommandEncoderDescriptor, PowerPreference};
+
+    #[test]
+    fn test_copy() -> Result<(), anyhow::Error> {
+        let adapter = pollster::block_on(async {
+            let instance = Instance::new();
+            instance.adapter(PowerPreference::HighPerformance).await
+        })?;
+        let context = pollster::block_on(async {
+            ContextBuilder::new(adapter)
+                .with_default_pipelines()
+                .build()
+                .await
+        })?;
+
+        let x = vec![0.0, 1.5, 2.0, -1.0];
+        let shape = TensorShape([4, 1, 1, 1]);
+
+        let x_host = TensorCpu::new(context.clone(), shape, None, x.clone())?;
+        let x_device: TensorGpu<'_, _> = x_host.into();
+        let x_map: TensorGpu<'_, f32> = TensorGpu::init(
+            context.clone(),
+            shape,
+            None,
+            BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        );
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder.copy_tensor(&x_device, &x_map)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let x_host = TensorCpu::from(x_map);
+        let x_vec: Vec<_> = x_host.into();
+
+        assert_eq!(x, x_vec);
+        Ok(())
+    }
 }
