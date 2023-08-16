@@ -32,7 +32,7 @@ impl Device for Gpu {
 }
 
 pub trait Scalar: Sized + Clone + Copy + Pod + sealed::Sealed {
-    fn byte_size() -> usize {
+    fn size() -> usize {
         std::mem::size_of::<Self>()
     }
 }
@@ -133,14 +133,25 @@ impl<D: Device, T: Scalar> std::ops::Deref for Tensor<'_, D, T> {
 }
 
 impl<D: Device, T: Scalar> Tensor<'_, D, T> {
-    pub fn byte_size(&self) -> usize {
-        self.shape.len() * T::byte_size()
+    pub fn len(&self) -> usize {
+        self.shape.len()
     }
 
-    pub fn byte_offset(offset: usize) -> usize {
-        offset * T::byte_size()
+    pub fn is_empty(&self) -> bool {
+        self.shape.is_empty()
     }
 
+    /// Size of the tensor in bytes.
+    pub fn size(&self) -> usize {
+        self.len() * T::size()
+    }
+
+    /// The offset in bytes for a linear index.
+    pub fn offset(index: usize) -> usize {
+        index * T::size()
+    }
+
+    /// Convert a shaped index into a linear index.
     pub fn shape_index(&self, indices: TensorShape) -> usize {
         let mut index = indices[3];
         index = index * self.shape[2] + indices[2];
@@ -201,7 +212,7 @@ impl<'a, T: Scalar> TensorGpu<'a, T> {
         name: Option<&'a str>,
         data: TensorBuffer,
     ) -> Result<Self, TensorError> {
-        let size = shape.len() as u64 * T::byte_size() as u64;
+        let size = shape.len() as u64 * T::size() as u64;
         if data.offset + size >= data.buffer.size() {
             return Err(TensorError::Overflow {
                 buffer_size: data.buffer.size(),
@@ -226,7 +237,7 @@ impl<'a, T: Scalar> TensorGpu<'a, T> {
         usage: BufferUsages,
     ) -> Self {
         let label = name;
-        let size = shape.len() as u64 * T::byte_size() as u64;
+        let size = shape.len() as u64 * T::size() as u64;
         let buffer = context
             .device
             .create_buffer(&BufferDescriptor {
@@ -249,7 +260,7 @@ impl<'a, T: Scalar> TensorGpu<'a, T> {
         BindingResource::Buffer(BufferBinding {
             buffer: &self.buffer,
             offset: self.offset,
-            size: NonZeroU64::new(self.byte_size() as BufferAddress),
+            size: NonZeroU64::new(self.size() as BufferAddress),
         })
     }
 }
@@ -285,7 +296,7 @@ impl<'a, T: Scalar> From<TensorCpu<'a, T>> for TensorGpu<'a, T> {
 
 impl<'a, T: Scalar> From<TensorGpu<'a, T>> for TensorCpu<'a, T> {
     fn from(value: TensorGpu<'a, T>) -> Self {
-        let size = value.byte_size() as u64;
+        let size = value.size() as u64;
         let Tensor {
             context,
             shape,
@@ -332,7 +343,7 @@ impl<T: Scalar> CopyTensor<Gpu, T> for CommandEncoder {
         if source.shape != destination.shape {
             return Err(TensorError::Shape(source.shape, destination.shape));
         }
-        let size = source.byte_size() as BufferAddress;
+        let size = source.size() as BufferAddress;
         self.copy_buffer_to_buffer(
             &source.buffer,
             source.offset,
