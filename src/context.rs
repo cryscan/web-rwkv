@@ -1,5 +1,5 @@
 use derive_getters::Getters;
-use std::{borrow::Cow, collections::HashMap, str::FromStr, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, str::FromStr};
 use web_rwkv_derive::{Deref, Id};
 use wgpu::{
     Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, ComputePipeline,
@@ -63,13 +63,13 @@ impl Instance {
 #[derive(Debug, Clone, Copy, Deref, Id, PartialEq, Eq, Hash)]
 pub struct ContextId(usize);
 
-#[derive(Debug, Clone, Getters)]
+#[derive(Debug, Getters)]
 pub struct Context {
     pub(crate) id: ContextId,
-    pub(crate) adapter: Arc<Adapter>,
-    pub(crate) device: Arc<Device>,
-    pub(crate) queue: Arc<Queue>,
-    pub(crate) pipelines: Arc<HashMap<String, ComputePipeline>>,
+    pub(crate) adapter: Adapter,
+    pub(crate) device: Device,
+    pub(crate) queue: Queue,
+    pub(crate) pipelines: HashMap<String, ComputePipeline>,
 }
 
 pub struct ContextBuilder<'a> {
@@ -157,10 +157,10 @@ impl<'a> ContextBuilder<'a> {
             .collect();
         Ok(Context {
             id: ContextId::new(),
-            adapter: self.adapter.into(),
-            device: device.into(),
-            queue: queue.into(),
-            pipelines: Arc::new(pipelines),
+            adapter: self.adapter,
+            device,
+            queue,
+            pipelines,
         })
     }
 

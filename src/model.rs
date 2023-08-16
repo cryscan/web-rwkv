@@ -1,12 +1,10 @@
 use bitflags::bitflags;
 use derive_getters::Getters;
 
-use crate::Context;
-
 #[derive(Debug, Clone, Getters)]
 pub struct Model {
     pub(crate) info: ModelInfo,
-    pub(crate) context: Context,
+    // pub(crate) context: Context,
 }
 
 #[derive(Debug, Clone, Copy)]
