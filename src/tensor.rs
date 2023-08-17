@@ -1,3 +1,4 @@
+use half::f16;
 use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
 use web_rwkv_derive::{Deref, Id, Kind};
 use wgpu::{
@@ -436,8 +437,8 @@ pub trait TensorCommand<T: Scalar, K: Kind> {
 impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
     fn copy_tensor(
         &mut self,
-        source: &TensorGpu<'_, T, ReadWrite>,
-        destination: &TensorGpu<'_, T, K>,
+        source: &TensorGpu<T, ReadWrite>,
+        destination: &TensorGpu<T, K>,
     ) -> Result<(), TensorError> {
         if source.shape != destination.shape {
             return Err(TensorError::Shape(source.shape, destination.shape));
@@ -464,43 +465,57 @@ where
 {
     fn execute_tensor_op(&mut self, op: &'a TensorOp) {
         self.set_pipeline(op.pipeline);
-        for (index, bind_group) in op.bind_groups.iter().enumerate() {
-            self.set_bind_group(index as u32, bind_group, &[]);
-        }
-        self.dispatch_workgroups(op.dispatch.0, op.dispatch.1, op.dispatch.2);
+        op.bindings
+            .iter()
+            .enumerate()
+            .for_each(|(index, bind_group)| self.set_bind_group(index as u32, bind_group, &[]));
+        self.dispatch_workgroups(op.dispatch[0], op.dispatch[1], op.dispatch[2]);
     }
 }
 
 pub struct TensorOp<'a> {
     pub pipeline: &'a ComputePipeline,
-    pub bind_groups: Vec<BindGroup>,
-    pub dispatch: (u32, u32, u32),
+    pub bindings: Vec<BindGroup>,
+    pub dispatch: [u32; 3],
 }
 
 impl<'a> TensorOp<'a> {
-    pub fn softmax(
-        x: &'a TensorGpu<'a, f32, ReadWrite>,
-        out: &'a TensorGpu<'a, f32, ReadWrite>,
-    ) -> Result<Self, TensorError> {
-        if x.context != out.context {
-            return Err(TensorError::DeviceError);
-        }
-        if x.shape != out.shape {
-            return Err(TensorError::Shape(x.shape, out.shape));
-        }
+    const BLOCK_SIZE: u32 = 128;
 
-        let context = x.context;
+    fn check_shape<D: Device, T: Scalar, K: Kind>(
+        tensor: &Tensor<D, T, K>,
+        shape: TensorShape,
+    ) -> Result<(), TensorError> {
+        if tensor.shape == shape {
+            Ok(())
+        } else {
+            Err(TensorError::Shape(tensor.shape, shape))
+        }
+    }
+
+    fn block_count(x: u32) -> u32 {
+        (x + Self::BLOCK_SIZE - 1) / Self::BLOCK_SIZE
+    }
+
+    pub fn softmax(
+        x: &'a TensorGpu<f32, ReadWrite>,
+        out: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = out.shape;
+        Self::check_shape(x, shape)?;
+
+        let context = out.context;
         let pipeline = context
             .pipelines
             .get("softmax")
             .ok_or(TensorError::PipelineError)?;
-        let bind_groups = vec![context.device.create_bind_group(&BindGroupDescriptor {
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: x.shape_binding(),
+                    resource: out.shape_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
@@ -513,13 +528,189 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        let shape = x.shape;
-        let dispatch = (1, shape[1] as u32, shape[2] as u32);
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [1, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
+    pub fn layer_norm(
+        x: &'a TensorGpu<f32, ReadWrite>,
+        w: &'a TensorGpu<f16, ReadWrite>,
+        b: &'a TensorGpu<f16, ReadWrite>,
+        out: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = out.shape;
+        Self::check_shape(x, shape)?;
+        Self::check_shape(w, TensorShape([shape[0], 1, 1, 1]))?;
+        Self::check_shape(b, TensorShape([shape[0], 1, 1, 1]))?;
+
+        let context = out.context;
+        let pipeline = context
+            .pipelines
+            .get("layer_norm")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: out.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: w.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: b.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: out.binding(),
+                },
+            ],
+        })];
 
         Ok(Self {
             pipeline,
-            bind_groups,
-            dispatch,
+            bindings,
+            dispatch: [1, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
+    pub fn token_shift(
+        time_mix: &'a TensorGpu<f16, ReadWrite>,
+        x: &'a TensorGpu<f32, ReadWrite>,
+        sx: &'a TensorGpu<f32, ReadWrite>,
+        out: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = out.shape;
+        Self::check_shape(x, shape)?;
+        Self::check_shape(time_mix, TensorShape([shape[0], 1, 1, 1]))?;
+        Self::check_shape(sx, TensorShape([shape[0], shape[2], 1, 1]))?;
+
+        let context = out.context;
+        let pipeline = context
+            .pipelines
+            .get("token_shift")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: out.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: time_mix.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: sx.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: out.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn token_mix(
+        time_decay: &'a TensorGpu<f32, ReadWrite>,
+        time_first: &'a TensorGpu<f32, ReadWrite>,
+        x: &'a TensorGpu<f32, ReadWrite>,
+        k: &'a TensorGpu<f32, ReadWrite>,
+        v: &'a TensorGpu<f32, ReadWrite>,
+        r: &'a TensorGpu<f32, ReadWrite>,
+        state: &'a TensorGpu<f32, ReadWrite>,
+        out: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = out.shape;
+        Self::check_shape(x, shape)?;
+        Self::check_shape(k, shape)?;
+        Self::check_shape(v, shape)?;
+        Self::check_shape(r, shape)?;
+        Self::check_shape(time_decay, TensorShape([shape[0], 1, 1, 1]))?;
+        Self::check_shape(time_first, TensorShape([shape[0], 1, 1, 1]))?;
+        Self::check_shape(state, TensorShape([shape[0], 4, shape[2], shape[3]]))?;
+
+        let context = out.context;
+        let pipeline = context
+            .pipelines
+            .get("token_mix")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: out.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: time_decay.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: time_first.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: k.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: v.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: r.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: state.binding(),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: out.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [Self::block_count(shape[0] as u32 / 4), 1, shape[2] as u32],
         })
     }
 }
@@ -625,6 +816,10 @@ mod tests {
         Ok(())
     }
 
+    fn is_approx(a: f32, b: f32) -> bool {
+        (a - b).abs() <= f32::max(f32::EPSILON, f32::max(a.abs(), b.abs()) * f32::EPSILON)
+    }
+
     #[test]
     fn test_softmax() -> Result<(), anyhow::Error> {
         let adapter = pollster::block_on(async {
@@ -673,9 +868,8 @@ mod tests {
         }
 
         for (index, (a, b)) in Iterator::zip(x_host.into_iter(), ans.into_iter()).enumerate() {
-            let d = (a - b).abs();
             assert!(
-                d <= f32::max(f32::EPSILON, f32::max(a.abs(), b.abs()) * f32::EPSILON),
+                is_approx(a, b),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }
