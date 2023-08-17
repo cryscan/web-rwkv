@@ -96,18 +96,6 @@ impl std::error::Error for CreateEnvironmentError {}
 
 impl<'a> ContextBuilder<'a> {
     pub fn new(adapter: Adapter) -> Self {
-        // let (device, queue) = adapter
-        //     .request_device(
-        //         &DeviceDescriptor {
-        //             label: None,
-        //             features: wgpu::Features::empty(),
-        //             limits: wgpu::Limits::default(),
-        //         },
-        //         None,
-        //     )
-        //     .await
-        //     .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
-
         Self {
             adapter,
             pipelines: HashMap::new(),

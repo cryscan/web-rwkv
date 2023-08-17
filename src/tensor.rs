@@ -1,16 +1,17 @@
 use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
-use web_rwkv_derive::Kind;
+use web_rwkv_derive::{Deref, Id, Kind};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindingResource, Buffer, BufferAddress, BufferBinding, BufferDescriptor, BufferUsages,
-    CommandEncoder, ComputePass, MaintainBase, MapMode,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer, BufferAddress,
+    BufferBinding, BufferDescriptor, BufferUsages, CommandEncoder, ComputePass, ComputePipeline,
+    MaintainBase, MapMode,
 };
 
 use crate::{context::Context, num::Scalar};
 
 #[derive(Debug, Clone)]
 pub struct TensorBuffer {
-    pub shape: Arc<Buffer>,
+    pub shape_buffer: Arc<Buffer>,
     pub buffer: Arc<Buffer>,
     pub offset: BufferAddress,
 }
@@ -125,8 +126,12 @@ impl std::fmt::Display for TensorError {
 
 impl std::error::Error for TensorError {}
 
+#[derive(Debug, Clone, Copy, Deref, Id, PartialEq, Eq, Hash)]
+pub struct TensorId(usize);
+
 #[derive(Debug, Clone)]
 pub struct Tensor<'a, D: Device, T: Scalar, K: Kind> {
+    id: TensorId,
     context: &'a Context,
     shape: TensorShape,
     name: Option<&'a str>,
@@ -208,6 +213,7 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
             return Err(TensorError::Size(shape.len(), data.len()));
         }
         Ok(Self {
+            id: TensorId::new(),
             context,
             shape,
             name,
@@ -275,11 +281,12 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
             })
             .into();
         Self {
+            id: TensorId::new(),
             context,
             shape,
             name,
             data: TensorBuffer {
-                shape: shape_buffer,
+                shape_buffer,
                 buffer,
                 offset: 0,
             },
@@ -307,15 +314,24 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
             });
         }
         Ok(Self {
+            id: TensorId::new(),
             context,
             shape,
             name,
             data: TensorBuffer {
-                shape: data.shape,
+                shape_buffer: data.shape_buffer,
                 buffer: data.buffer,
                 offset,
             },
             phantom: Default::default(),
+        })
+    }
+
+    pub fn shape_binding(&self) -> BindingResource {
+        BindingResource::Buffer(BufferBinding {
+            buffer: &self.shape_buffer,
+            offset: self.offset,
+            size: NonZeroU64::new(16),
         })
     }
 
@@ -331,6 +347,7 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
 impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
     fn from(value: TensorCpu<'a, T, K>) -> Self {
         let Tensor {
+            id,
             context,
             shape,
             name,
@@ -356,11 +373,12 @@ impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
             })
             .into();
         Self {
+            id,
             context,
             shape,
             name,
             data: TensorBuffer {
-                shape: shape_buffer,
+                shape_buffer,
                 buffer,
                 offset: 0,
             },
@@ -373,6 +391,7 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, T, ReadBa
     fn from(value: TensorGpu<'a, T, ReadBack>) -> Self {
         let size = value.size() as u64;
         let Tensor {
+            id,
             context,
             shape,
             name,
@@ -392,6 +411,7 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, T, ReadBa
         buffer.unmap();
 
         Self {
+            id,
             context,
             shape,
             name,
@@ -430,20 +450,32 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
     }
 }
 
-pub trait TensorPass<'a, 'b: 'a, T: Scalar> {
-    fn softmax(
-        &'a mut self,
-        x: &'b TensorGpu<'b, T, ReadWrite>,
-        out: &TensorGpu<'_, T, ReadWrite>,
-    ) -> Result<(), TensorError>;
+pub trait TensorPass<'a> {
+    fn execute_tensor_op(&mut self, op: &'a TensorOp);
 }
 
-impl<'a, 'b: 'a, T: Scalar> TensorPass<'a, 'b, T> for ComputePass<'a> {
-    fn softmax(
-        &'a mut self,
-        x: &'b TensorGpu<'b, T, ReadWrite>,
-        out: &TensorGpu<'_, T, ReadWrite>,
-    ) -> Result<(), TensorError> {
+impl<'a, 'b> TensorPass<'a> for ComputePass<'b>
+where
+    'a: 'b,
+{
+    fn execute_tensor_op(&mut self, op: &'a TensorOp) {
+        self.set_pipeline(op.pipeline);
+        self.set_bind_group(0, &op.bind_group, &[]);
+        self.dispatch_workgroups(op.dispatch.0, op.dispatch.1, op.dispatch.2);
+    }
+}
+
+pub struct TensorOp<'a> {
+    pub pipeline: &'a ComputePipeline,
+    pub bind_group: BindGroup,
+    pub dispatch: (u32, u32, u32),
+}
+
+impl<'a> TensorOp<'a> {
+    pub fn softmax(
+        x: &'a TensorGpu<'a, f32, ReadWrite>,
+        out: &'a TensorGpu<'a, f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
         if x.context != out.context {
             return Err(TensorError::DeviceError);
         }
@@ -451,15 +483,38 @@ impl<'a, 'b: 'a, T: Scalar> TensorPass<'a, 'b, T> for ComputePass<'a> {
             return Err(TensorError::Shape(x.shape, out.shape));
         }
 
-        let name: &'static str = "softmax";
-        let pipeline = x
-            .context
+        let context = x.context;
+        let pipeline = context
             .pipelines
-            .get(name)
+            .get("softmax")
             .ok_or(TensorError::PipelineError)?;
-        self.set_pipeline(pipeline);
+        let bind_group = context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: out.binding(),
+                },
+            ],
+        });
 
-        Ok(())
+        let shape = x.shape;
+        let dispatch = (1, shape[1] as u32, shape[2] as u32);
+
+        Ok(Self {
+            pipeline,
+            bind_group,
+            dispatch,
+        })
     }
 }
 
@@ -515,12 +570,14 @@ mod sealed {
 
 #[cfg(test)]
 mod tests {
-    use wgpu::{CommandEncoderDescriptor, PowerPreference};
+    use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, PowerPreference};
 
     use crate::{
         context::{ContextBuilder, Instance},
         tensor::{TensorCommand, TensorCpu, TensorGpu, TensorShape},
     };
+
+    use super::{TensorOp, TensorPass};
 
     #[test]
     fn test_shape_index() {
@@ -559,6 +616,56 @@ mod tests {
         let x_vec = Vec::from(x_host);
 
         assert_eq!(x, x_vec);
+        Ok(())
+    }
+
+    #[test]
+    fn test_softmax() -> Result<(), anyhow::Error> {
+        let adapter = pollster::block_on(async {
+            let instance = Instance::new();
+            instance.adapter(PowerPreference::HighPerformance).await
+        })?;
+        let context = pollster::block_on(async {
+            ContextBuilder::new(adapter)
+                .with_default_pipelines()
+                .build()
+                .await
+        })?;
+
+        let x = [(); 1000].map(|_| 10.0 * (fastrand::f32() - 0.5)).to_vec();
+        let shape = TensorShape([x.len(), 1, 1, 1]);
+
+        let x_device: TensorGpu<_, _> = context.tensor_from_data(None, shape, x.clone())?;
+        let x_out = context.tensor_init(None, x_device.shape());
+        let x_map = context.tensor_init(None, x_device.shape());
+
+        let softmax = TensorOp::softmax(&x_device, &x_out)?;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&softmax);
+        drop(pass);
+
+        encoder.copy_tensor(&x_out, &x_map)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let x_host = TensorCpu::from(x_map);
+        let x_vec = Vec::from(x_host);
+
+        let ans = x.into_iter();
+        let max = ans.clone().reduce(f32::max).unwrap_or_default();
+        let ans = ans.map(|x| (x - max).exp());
+        let sum: f32 = ans.clone().sum();
+        let ans: Vec<_> = ans.map(|x| x / sum).collect();
+
+        for (a, b) in x_vec.into_iter().zip(ans.into_iter()) {
+            let d = (a - b).abs();
+            assert!(d <= f32::max(f32::EPSILON, f32::max(a.abs(), b.abs()) * f32::EPSILON));
+        }
+
         Ok(())
     }
 }
