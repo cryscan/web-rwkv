@@ -54,7 +54,7 @@ pub fn derive_id(input: TokenStream) -> TokenStream {
     .into()
 }
 
-#[proc_macro_derive(Kind, attributes(kind))]
+#[proc_macro_derive(Kind, attributes(usage))]
 pub fn derive_kind(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let name = &ast.ident;
@@ -62,7 +62,7 @@ pub fn derive_kind(input: TokenStream) -> TokenStream {
     let mut usages = vec![];
 
     for attr in &ast.attrs {
-        if attr.path().is_ident("kind") {
+        if attr.path().is_ident("usage") {
             attr.parse_nested_meta(|meta| match meta.path.get_ident() {
                 Some(ident) => {
                     usages.push(ident.to_owned());
