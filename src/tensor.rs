@@ -1,4 +1,5 @@
 use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
+use web_rwkv_derive::Kind;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindingResource, Buffer, BufferAddress, BufferBinding, BufferDescriptor, BufferUsages,
@@ -9,6 +10,7 @@ use crate::{context::Context, num::Scalar};
 
 #[derive(Debug, Clone)]
 pub struct TensorBuffer {
+    pub shape: Arc<Buffer>,
     pub buffer: Arc<Buffer>,
     pub offset: BufferAddress,
 }
@@ -33,29 +35,19 @@ pub trait Kind: sealed::Sealed {
 }
 
 /// Tensor is a uniform buffer.
+#[derive(Kind)]
+#[kind(UNIFORM)]
 pub struct Uniform;
+
 /// Tensor is a storage buffer with can be copied to other buffers.
+#[derive(Kind)]
+#[kind(STORAGE, COPY_DST, COPY_SRC)]
 pub struct ReadWrite;
+
 /// Tensor is served as a read-back buffer.
+#[derive(Kind)]
+#[kind(MAP_READ, COPY_DST)]
 pub struct ReadBack;
-
-impl Kind for Uniform {
-    fn buffer_usages() -> BufferUsages {
-        BufferUsages::UNIFORM
-    }
-}
-
-impl Kind for ReadWrite {
-    fn buffer_usages() -> BufferUsages {
-        BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC
-    }
-}
-
-impl Kind for ReadBack {
-    fn buffer_usages() -> BufferUsages {
-        BufferUsages::MAP_READ | BufferUsages::COPY_DST
-    }
-}
 
 /// The shape of a [`Tensor`].
 /// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
@@ -274,11 +266,23 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
                 mapped_at_creation: false,
             })
             .into();
+        let shape_buffer = context
+            .device
+            .create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&shape.0),
+                usage: BufferUsages::UNIFORM,
+            })
+            .into();
         Self {
             context,
             shape,
             name,
-            data: TensorBuffer { buffer, offset: 0 },
+            data: TensorBuffer {
+                shape: shape_buffer,
+                buffer,
+                offset: 0,
+            },
             phantom: Default::default(),
         }
     }
@@ -307,6 +311,7 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
             shape,
             name,
             data: TensorBuffer {
+                shape: data.shape,
                 buffer: data.buffer,
                 offset,
             },
@@ -342,11 +347,23 @@ impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             })
             .into();
+        let shape_buffer = context
+            .device
+            .create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&shape.0),
+                usage: BufferUsages::UNIFORM,
+            })
+            .into();
         Self {
             context,
             shape,
             name,
-            data: TensorBuffer { buffer, offset: 0 },
+            data: TensorBuffer {
+                shape: shape_buffer,
+                buffer,
+                offset: 0,
+            },
             phantom: Default::default(),
         }
     }
@@ -359,7 +376,7 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, T, ReadBa
             context,
             shape,
             name,
-            data: TensorBuffer { buffer, offset },
+            data: TensorBuffer { buffer, offset, .. },
             ..
         } = value;
 
@@ -446,51 +463,39 @@ impl<'a, 'b: 'a, T: Scalar> TensorPass<'a, 'b, T> for ComputePass<'a> {
     }
 }
 
-impl Context {
-    pub fn zeros<'a, D: Device, T: Scalar, K: Kind>(
+impl<'a> Context {
+    pub fn zeros<T: Scalar, Tensor: TensorExt<'a, T>>(
         &'a self,
         name: Option<&'a str>,
         shape: TensorShape,
-    ) -> Tensor<'a, D, T, K>
-    where
-        Tensor<'a, D, T, K>: TensorExt<'a, T>,
-    {
+    ) -> Tensor {
         let data = vec![T::zero(); shape.len()];
         Tensor::from_data(self, name, shape, data).unwrap()
     }
 
-    pub fn ones<'a, D: Device, T: Scalar, K: Kind>(
+    pub fn ones<T: Scalar, Tensor: TensorExt<'a, T>>(
         &'a self,
         name: Option<&'a str>,
         shape: TensorShape,
-    ) -> Tensor<'a, D, T, K>
-    where
-        Tensor<'a, D, T, K>: TensorExt<'a, T>,
-    {
+    ) -> Tensor {
         let data = vec![T::one(); shape.len()];
         Tensor::from_data(self, name, shape, data).unwrap()
     }
 
-    pub fn tensor_from_data<'a, D: Device, T: Scalar, K: Kind>(
+    pub fn tensor_from_data<T: Scalar, Tensor: TensorExt<'a, T>>(
         &'a self,
         name: Option<&'a str>,
         shape: TensorShape,
         data: Vec<T>,
-    ) -> Result<Tensor<'a, D, T, K>, TensorError>
-    where
-        Tensor<'a, D, T, K>: TensorExt<'a, T>,
-    {
+    ) -> Result<Tensor, TensorError> {
         Tensor::from_data(self, name, shape, data)
     }
 
-    pub fn tensor_init<'a, D: Device, T: Scalar, K: Kind>(
+    pub fn tensor_init<T: Scalar, Tensor: TensorExt<'a, T>>(
         &'a self,
         name: Option<&'a str>,
         shape: TensorShape,
-    ) -> Tensor<'a, D, T, K>
-    where
-        Tensor<'a, D, T, K>: TensorExt<'a, T>,
-    {
+    ) -> Tensor {
         Tensor::init(self, name, shape)
     }
 }

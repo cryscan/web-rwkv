@@ -53,3 +53,39 @@ pub fn derive_id(input: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+#[proc_macro_derive(Kind, attributes(kind))]
+pub fn derive_kind(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
+    let name = &ast.ident;
+
+    let mut usages = vec![];
+
+    for attr in &ast.attrs {
+        if attr.path().is_ident("kind") {
+            attr.parse_nested_meta(|meta| match meta.path.get_ident() {
+                Some(ident) => {
+                    usages.push(ident.to_owned());
+                    Ok(())
+                }
+                None => Err(meta.error("Unrecognized buffer usage")),
+            })
+            .unwrap();
+        }
+    }
+
+    let usages = usages
+        .into_iter()
+        .fold(quote! { wgpu::BufferUsages::empty() }, |acc, usage| {
+            quote! { #acc | wgpu::BufferUsages::#usage }
+        });
+
+    quote! {
+        impl Kind for #name {
+            fn buffer_usages() -> wgpu::BufferUsages {
+                #usages
+            }
+        }
+    }
+    .into()
+}
