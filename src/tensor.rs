@@ -70,6 +70,12 @@ impl TensorShape {
     pub fn is_empty(&self) -> bool {
         self.0.into_iter().any(|x| x == 0)
     }
+
+    /// Convert a shaped index into a linear index.
+    pub fn shape_index(&self, indices: TensorShape) -> usize {
+        Iterator::zip(self.0.into_iter().rev(), indices.0.into_iter().rev())
+            .fold(0, |acc, (shape, index)| acc * shape + index)
+    }
 }
 
 impl std::fmt::Display for TensorShape {
@@ -139,15 +145,15 @@ pub struct Tensor<'a, D: Device, T: Scalar, K: Kind> {
 pub type TensorCpu<'a, T, K> = Tensor<'a, Cpu<'a, T>, T, K>;
 pub type TensorGpu<'a, T, K> = Tensor<'a, Gpu, T, K>;
 
-pub trait TensorExt<'a, T: Scalar> {
+pub trait TensorExt<'a, T: Scalar>: Sized {
     fn from_data(
         context: &'a Context,
         name: Option<&'a str>,
         shape: TensorShape,
         data: Vec<T>,
-    ) -> Result<Self, TensorError>
-    where
-        Self: Sized;
+    ) -> Result<Self, TensorError>;
+
+    fn init(context: &'a Context, name: Option<&'a str>, shape: TensorShape) -> Self;
 }
 
 impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
@@ -179,11 +185,7 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
 
     /// Convert a shaped index into a linear index.
     pub fn shape_index(&self, indices: TensorShape) -> usize {
-        let mut index = indices[3];
-        index = index * self.shape[2] + indices[2];
-        index = index * self.shape[1] + indices[1];
-        index = index * self.shape[0] + indices[0];
-        index
+        self.shape.shape_index(indices)
     }
 
     pub fn context(&self) -> &Context {
@@ -221,6 +223,10 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
             phantom: Default::default(),
         })
     }
+
+    fn init(context: &'a Context, name: Option<&'a str>, shape: TensorShape) -> Self {
+        context.zeros(name, shape)
+    }
 }
 
 impl<T: Scalar, K: Kind> From<TensorCpu<'_, T, K>> for Vec<T> {
@@ -254,6 +260,28 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
     ) -> Result<Self, TensorError> {
         TensorCpu::from_data(context, name, shape, data).map(Into::into)
     }
+
+    /// Initialize a GPU tensor with a given shape.
+    fn init(context: &'a Context, name: Option<&'a str>, shape: TensorShape) -> Self {
+        let label = name;
+        let size = shape.len() as u64 * T::size() as u64;
+        let buffer = context
+            .device
+            .create_buffer(&BufferDescriptor {
+                label,
+                size,
+                usage: K::buffer_usages(),
+                mapped_at_creation: false,
+            })
+            .into();
+        Self {
+            context,
+            shape,
+            name,
+            data: TensorBuffer { buffer, offset: 0 },
+            phantom: Default::default(),
+        }
+    }
 }
 
 impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
@@ -284,28 +312,6 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
             },
             phantom: Default::default(),
         })
-    }
-
-    /// Initialize a GPU tensor with a given shape.
-    pub fn init(context: &'a Context, name: Option<&'a str>, shape: TensorShape) -> Self {
-        let label = name;
-        let size = shape.len() as u64 * T::size() as u64;
-        let buffer = context
-            .device
-            .create_buffer(&BufferDescriptor {
-                label,
-                size,
-                usage: K::buffer_usages(),
-                mapped_at_creation: false,
-            })
-            .into();
-        Self {
-            context,
-            shape,
-            name,
-            data: TensorBuffer { buffer, offset: 0 },
-            phantom: Default::default(),
-        }
     }
 
     pub fn binding(&self) -> BindingResource {
@@ -464,6 +470,29 @@ impl Context {
         let data = vec![T::one(); shape.len()];
         Tensor::from_data(self, name, shape, data).unwrap()
     }
+
+    pub fn tensor_from_data<'a, D: Device, T: Scalar, K: Kind>(
+        &'a self,
+        name: Option<&'a str>,
+        shape: TensorShape,
+        data: Vec<T>,
+    ) -> Result<Tensor<'a, D, T, K>, TensorError>
+    where
+        Tensor<'a, D, T, K>: TensorExt<'a, T>,
+    {
+        Tensor::from_data(self, name, shape, data)
+    }
+
+    pub fn tensor_init<'a, D: Device, T: Scalar, K: Kind>(
+        &'a self,
+        name: Option<&'a str>,
+        shape: TensorShape,
+    ) -> Tensor<'a, D, T, K>
+    where
+        Tensor<'a, D, T, K>: TensorExt<'a, T>,
+    {
+        Tensor::init(self, name, shape)
+    }
 }
 
 mod sealed {
@@ -485,8 +514,16 @@ mod tests {
 
     use crate::{
         context::{ContextBuilder, Instance},
-        tensor::{TensorCommand, TensorCpu, TensorExt, TensorGpu, TensorShape},
+        tensor::{TensorCommand, TensorCpu, TensorGpu, TensorShape},
     };
+
+    #[test]
+    fn test_shape_index() {
+        let shape = TensorShape([1024, 768, 12, 1]);
+        let indices = TensorShape([35, 42, 9, 0]);
+        let index = shape.shape_index(indices);
+        assert_eq!(index, 35 + 42 * 1024 + 9 * 1024 * 768);
+    }
 
     #[test]
     fn test_copy() -> Result<(), anyhow::Error> {
@@ -502,8 +539,10 @@ mod tests {
         })?;
 
         let x = vec![0.0, 1.5, 2.0, -1.0];
-        let x_device = TensorGpu::from_data(&context, None, TensorShape([4, 1, 1, 1]), x.clone())?;
-        let x_map = TensorGpu::init(&context, None, x_device.shape());
+        let shape = TensorShape([x.len(), 1, 1, 1]);
+
+        let x_device: TensorGpu<_, _> = context.tensor_from_data(None, shape, x.clone())?;
+        let x_map = context.tensor_init(None, x_device.shape());
 
         let mut encoder = context
             .device
