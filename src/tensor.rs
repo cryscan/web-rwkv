@@ -69,6 +69,10 @@ impl TensorShape {
         Iterator::zip(self.0.into_iter().rev(), indices.0.into_iter().rev())
             .fold(0, |acc, (shape, index)| acc * shape + index)
     }
+
+    pub fn to_u32_slice(self) -> [u32; 4] {
+        self.0.map(|x| x as u32)
+    }
 }
 
 impl std::fmt::Display for TensorShape {
@@ -276,7 +280,7 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
             .device
             .create_buffer_init(&BufferInitDescriptor {
                 label: None,
-                contents: bytemuck::cast_slice(&shape.0),
+                contents: bytemuck::cast_slice(&shape.to_u32_slice()),
                 usage: BufferUsages::UNIFORM,
             })
             .into();
@@ -368,7 +372,7 @@ impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
             .device
             .create_buffer_init(&BufferInitDescriptor {
                 label: None,
-                contents: bytemuck::cast_slice(&shape.0),
+                contents: bytemuck::cast_slice(&shape.to_u32_slice()),
                 usage: BufferUsages::UNIFORM,
             })
             .into();
@@ -460,14 +464,16 @@ where
 {
     fn execute_tensor_op(&mut self, op: &'a TensorOp) {
         self.set_pipeline(op.pipeline);
-        self.set_bind_group(0, &op.bind_group, &[]);
+        for (index, bind_group) in op.bind_groups.iter().enumerate() {
+            self.set_bind_group(index as u32, bind_group, &[]);
+        }
         self.dispatch_workgroups(op.dispatch.0, op.dispatch.1, op.dispatch.2);
     }
 }
 
 pub struct TensorOp<'a> {
     pub pipeline: &'a ComputePipeline,
-    pub bind_group: BindGroup,
+    pub bind_groups: Vec<BindGroup>,
     pub dispatch: (u32, u32, u32),
 }
 
@@ -488,7 +494,7 @@ impl<'a> TensorOp<'a> {
             .pipelines
             .get("softmax")
             .ok_or(TensorError::PipelineError)?;
-        let bind_group = context.device.create_bind_group(&BindGroupDescriptor {
+        let bind_groups = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
@@ -505,14 +511,14 @@ impl<'a> TensorOp<'a> {
                     resource: out.binding(),
                 },
             ],
-        });
+        })];
 
         let shape = x.shape;
         let dispatch = (1, shape[1] as u32, shape[2] as u32);
 
         Ok(Self {
             pipeline,
-            bind_group,
+            bind_groups,
             dispatch,
         })
     }
@@ -570,14 +576,14 @@ mod sealed {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
     use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, PowerPreference};
 
+    use super::{TensorOp, TensorPass};
     use crate::{
         context::{ContextBuilder, Instance},
         tensor::{TensorCommand, TensorCpu, TensorGpu, TensorShape},
     };
-
-    use super::{TensorOp, TensorPass};
 
     #[test]
     fn test_shape_index() {
@@ -613,9 +619,9 @@ mod tests {
         context.queue.submit(Some(encoder.finish()));
 
         let x_host = TensorCpu::from(x_map);
-        let x_vec = Vec::from(x_host);
+        let x_host = Vec::from(x_host);
 
-        assert_eq!(x, x_vec);
+        assert_eq!(x, x_host);
         Ok(())
     }
 
@@ -632,8 +638,8 @@ mod tests {
                 .await
         })?;
 
-        let x = [(); 1000].map(|_| 10.0 * (fastrand::f32() - 0.5)).to_vec();
-        let shape = TensorShape([x.len(), 1, 1, 1]);
+        let x = [(); 6000].map(|_| 10.0 * (fastrand::f32() - 0.5)).to_vec();
+        let shape = TensorShape([x.len() / 6, 3, 2, 1]);
 
         let x_device: TensorGpu<_, _> = context.tensor_from_data(None, shape, x.clone())?;
         let x_out = context.tensor_init(None, x_device.shape());
@@ -653,17 +659,25 @@ mod tests {
         context.queue.submit(Some(encoder.finish()));
 
         let x_host = TensorCpu::from(x_map);
-        let x_vec = Vec::from(x_host);
+        let x_host = Vec::from(x_host);
 
-        let ans = x.into_iter();
-        let max = ans.clone().reduce(f32::max).unwrap_or_default();
-        let ans = ans.map(|x| (x - max).exp());
-        let sum: f32 = ans.clone().sum();
-        let ans: Vec<_> = ans.map(|x| x / sum).collect();
+        let mut ans = vec![];
+        for x in &x.into_iter().chunks(1000) {
+            let x: Vec<_> = x.collect();
+            let x = x.into_iter();
+            let max = x.clone().reduce(f32::max).unwrap_or_default();
+            let x = x.map(|x| (x - max).exp());
+            let sum: f32 = x.clone().sum();
+            let mut x: Vec<_> = x.map(|x| x / sum).collect();
+            ans.append(&mut x);
+        }
 
-        for (a, b) in x_vec.into_iter().zip(ans.into_iter()) {
+        for (index, (a, b)) in Iterator::zip(x_host.into_iter(), ans.into_iter()).enumerate() {
             let d = (a - b).abs();
-            assert!(d <= f32::max(f32::EPSILON, f32::max(a.abs(), b.abs()) * f32::EPSILON));
+            assert!(
+                d <= f32::max(f32::EPSILON, f32::max(a.abs(), b.abs()) * f32::EPSILON),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
         }
 
         Ok(())
