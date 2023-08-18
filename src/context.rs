@@ -8,7 +8,7 @@ use wgpu::{
     ShaderModuleDescriptor, ShaderStages,
 };
 
-use crate::tensor::TensorShapeCache;
+use crate::tensor::ShapeCache;
 
 #[derive(Deref)]
 pub struct Instance(wgpu::Instance);
@@ -72,8 +72,7 @@ pub struct Context {
     pub(crate) device: Device,
     pub(crate) queue: Queue,
     pub(crate) pipelines: HashMap<String, ComputePipeline>,
-
-    pub tensor_shape_cache: TensorShapeCache,
+    pub(crate) shape_cache: ShapeCache,
 }
 
 pub struct ContextBuilder<'a> {
@@ -153,7 +152,7 @@ impl<'a> ContextBuilder<'a> {
             device,
             queue,
             pipelines,
-            tensor_shape_cache: Default::default(),
+            shape_cache: Default::default(),
         })
     }
 
@@ -224,8 +223,8 @@ impl<'a> ContextBuilder<'a> {
         )
     }
 
-    pub fn with_quantize_pipelines(self) -> Self {
-        let shader = include_str!("shaders/quantize_int8.wgsl");
+    pub fn with_quant_pipelines(self) -> Self {
+        let shader = include_str!("shaders/quant_mat_int8.wgsl");
         let entries = &[
             BindGroupLayoutEntry {
                 binding: 0,
@@ -300,11 +299,17 @@ impl<'a> ContextBuilder<'a> {
         ];
         let layout: Option<&[BindGroupLayoutEntry]> = Some(entries);
 
-        self.with_pipeline("quantize_int8", shader, "quantize", layout)
-            .with_pipeline("compute_mx_int8", shader, "compute_mx", layout)
-            .with_pipeline("compute_my_int8", shader, "compute_my", layout)
-            .with_pipeline("compute_rx_int8", shader, "compute_rx", layout)
-            .with_pipeline("compute_ry_int8", shader, "compute_ry", layout)
+        self.with_pipeline("quant_mat_int8", shader, "quantize", layout)
+            .with_pipeline("quant_mat_int8_mx", shader, "compute_mx", layout)
+            .with_pipeline("quant_mat_int8_my", shader, "compute_my", layout)
+            .with_pipeline("quant_mat_int8_rx", shader, "compute_rx", layout)
+            .with_pipeline("quant_mat_int8_ry", shader, "compute_ry", layout)
+            .with_pipeline(
+                "quant_vec_fp16",
+                include_str!("shaders/quant_vec_fp16.wgsl"),
+                "quantize",
+                None,
+            )
     }
 }
 

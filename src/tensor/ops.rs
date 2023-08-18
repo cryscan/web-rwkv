@@ -1,491 +1,11 @@
-use ahash::HashMap;
 use half::f16;
-use std::{
-    borrow::Cow,
-    cell::RefCell,
-    marker::PhantomData,
-    num::NonZeroU64,
-    sync::{Arc, RwLock},
-};
-use web_rwkv_derive::{Deref, Id, Kind};
 use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer, BufferAddress,
-    BufferBinding, BufferDescriptor, BufferUsages, CommandEncoder, ComputePass, ComputePipeline,
-    MaintainBase, MapMode, Queue,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BufferAddress, CommandEncoder, ComputePass,
+    ComputePipeline, Queue,
 };
 
-use crate::{context::Context, num::Scalar};
-
-#[derive(Debug, Clone)]
-pub struct TensorBuffer {
-    pub shape_buffer: Arc<Buffer>,
-    pub buffer: Arc<Buffer>,
-    pub offset: BufferAddress,
-}
-
-pub trait Device: sealed::Sealed {
-    type Data: Clone;
-}
-
-pub struct Cpu<'a, T>(&'a PhantomData<T>);
-pub struct Gpu;
-
-impl<'a, T: Scalar> Device for Cpu<'a, T> {
-    type Data = Cow<'a, [T]>;
-}
-
-impl Device for Gpu {
-    type Data = TensorBuffer;
-}
-
-pub trait Kind: sealed::Sealed {
-    fn buffer_usages() -> BufferUsages;
-}
-
-/// Tensor is a uniform buffer.
-#[derive(Kind)]
-#[usage(UNIFORM)]
-pub struct Uniform;
-
-/// Tensor is a storage buffer with can be copied to other buffers.
-#[derive(Kind)]
-#[usage(STORAGE, COPY_DST, COPY_SRC)]
-pub struct ReadWrite;
-
-/// Tensor is served as a read-back buffer.
-#[derive(Kind)]
-#[usage(MAP_READ, COPY_DST)]
-pub struct ReadBack;
-
-/// The shape of a [`Tensor`].
-/// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TensorShape(pub [usize; 3]);
-
-impl TensorShape {
-    pub fn len(&self) -> usize {
-        self.0.into_iter().product()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.into_iter().any(|x| x == 0)
-    }
-
-    /// Convert a shaped index into a linear index.
-    pub fn shape_index(&self, indices: TensorShape) -> usize {
-        Iterator::zip(self.0.into_iter().rev(), indices.0.into_iter().rev())
-            .fold(0, |acc, (shape, index)| acc * shape + index)
-    }
-
-    pub fn to_u32_slice(self) -> [u32; 4] {
-        [self.0[0] as u32, self.0[1] as u32, self.0[2] as u32, 1]
-    }
-}
-
-impl std::fmt::Display for TensorShape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({}, {}, {})", self[0], self[1], self[2])
-    }
-}
-
-impl std::ops::Index<usize> for TensorShape {
-    type Output = usize;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
-    }
-}
-
-impl std::ops::IndexMut<usize> for TensorShape {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.0[index]
-    }
-}
-
-fn check_shape<D: Device, T: Scalar, K: Kind>(
-    tensor: &Tensor<D, T, K>,
-    shape: TensorShape,
-) -> Result<(), TensorError> {
-    if tensor.shape == shape {
-        Ok(())
-    } else {
-        Err(TensorError::Shape(tensor.shape, shape))
-    }
-}
-
-#[allow(dead_code)]
-fn check_shape_dims<D: Device, T: Scalar, K: Kind>(
-    tensor: &Tensor<D, T, K>,
-    shape: TensorShape,
-    dims: Vec<usize>,
-) -> Result<(), TensorError> {
-    dims.into_iter()
-        .all(|dim| tensor.shape[dim] == shape[dim])
-        .then_some(())
-        .ok_or(TensorError::Shape(tensor.shape, shape))
-}
-
-#[derive(Debug, Default, Deref)]
-pub struct TensorShapeCache(RefCell<RwLock<HashMap<TensorShape, Arc<Buffer>>>>);
-
-impl TensorShapeCache {
-    pub fn clear(&self) {
-        let map = self.borrow_mut();
-        let mut map = map.write().unwrap();
-        map.clear();
-    }
-
-    pub fn query(&self, shape: TensorShape) -> Option<Arc<Buffer>> {
-        let map = self.borrow();
-        let map = map.read().unwrap();
-        map.get(&shape).cloned()
-    }
-
-    pub fn buffer<F>(&self, shape: TensorShape, op: F) -> Arc<Buffer>
-    where
-        F: FnOnce() -> Buffer,
-    {
-        match self.query(shape) {
-            Some(buffer) => buffer,
-            None => {
-                let buffer = Arc::new(op());
-                let map = self.borrow_mut();
-                let mut map = map.write().unwrap();
-                map.insert(shape, buffer.clone());
-                buffer
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TensorError {
-    Size(usize, usize),
-    Shape(TensorShape, TensorShape),
-    Overflow {
-        buffer_size: BufferAddress,
-        offset: BufferAddress,
-        size: BufferAddress,
-    },
-    PipelineError,
-    DeviceError,
-}
-
-impl std::fmt::Display for TensorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TensorError::Size(a, b) => write!(f, "Data size not match: {} vs. {}", a, b),
-            TensorError::Shape(a, b) => write!(f, "Tensor shape not match: {} vs. {}", a, b),
-            TensorError::Overflow {
-                buffer_size,
-                offset,
-                size,
-            } => write!(
-                f,
-                "Buffer overflow with buffer size: {}, slice offset: {} and size: {}",
-                buffer_size, offset, size
-            ),
-            TensorError::PipelineError => write!(f, "Pipeline not found"),
-            TensorError::DeviceError => write!(f, "Tensor not on the same device"),
-        }
-    }
-}
-
-impl std::error::Error for TensorError {}
-
-#[derive(Debug, Clone, Copy, Deref, Id, PartialEq, Eq, Hash)]
-pub struct TensorId(usize);
-
-#[derive(Debug, Clone)]
-pub struct Tensor<'a, D: Device, T: Scalar, K: Kind> {
-    id: TensorId,
-    context: &'a Context,
-    shape: TensorShape,
-    name: Option<&'a str>,
-    data: D::Data,
-    phantom: std::marker::PhantomData<(D, T, K)>,
-}
-
-pub type TensorCpu<'a, T, K> = Tensor<'a, Cpu<'a, T>, T, K>;
-pub type TensorGpu<'a, T, K> = Tensor<'a, Gpu, T, K>;
-
-pub trait TensorExt<'a, T: Scalar>: Sized {
-    fn from_data(
-        context: &'a Context,
-        name: Option<&'a str>,
-        shape: TensorShape,
-        data: Vec<T>,
-    ) -> Result<Self, TensorError>;
-
-    fn init(context: &'a Context, name: Option<&'a str>, shape: TensorShape) -> Self;
-}
-
-impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
-    type Target = D::Data;
-
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
-    pub fn len(&self) -> usize {
-        self.shape.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.shape.is_empty()
-    }
-
-    /// Size of the tensor in bytes.
-    pub fn size(&self) -> usize {
-        self.len() * T::size()
-    }
-
-    /// The offset in bytes for a linear index.
-    pub fn offset(index: usize) -> usize {
-        index * T::size()
-    }
-
-    /// Convert a shaped index into a linear index.
-    pub fn shape_index(&self, indices: TensorShape) -> usize {
-        self.shape.shape_index(indices)
-    }
-
-    pub fn context(&self) -> &Context {
-        self.context
-    }
-
-    pub fn shape(&self) -> TensorShape {
-        self.shape
-    }
-
-    pub fn name(&self) -> Option<&str> {
-        self.name
-    }
-
-    pub fn data(&self) -> &D::Data {
-        &self.data
-    }
-}
-
-impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
-    fn from_data(
-        context: &'a Context,
-        name: Option<&'a str>,
-        shape: TensorShape,
-        data: Vec<T>,
-    ) -> Result<Self, TensorError> {
-        if shape.len() != data.len() {
-            return Err(TensorError::Size(shape.len(), data.len()));
-        }
-        Ok(Self {
-            id: TensorId::new(),
-            context,
-            shape,
-            name,
-            data: Cow::from(data),
-            phantom: Default::default(),
-        })
-    }
-
-    fn init(context: &'a Context, name: Option<&'a str>, shape: TensorShape) -> Self {
-        context.zeros(name, shape)
-    }
-}
-
-impl<T: Scalar, K: Kind> From<TensorCpu<'_, T, K>> for Vec<T> {
-    fn from(value: TensorCpu<'_, T, K>) -> Self {
-        Self::from(value.data)
-    }
-}
-
-impl<'a, T: Scalar, K: Kind> std::ops::Index<usize> for TensorCpu<'a, T, K> {
-    type Output = T;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.data[index]
-    }
-}
-
-impl<'a, T: Scalar, K: Kind> std::ops::Index<std::ops::Range<usize>> for TensorCpu<'a, T, K> {
-    type Output = [T];
-
-    fn index(&self, index: std::ops::Range<usize>) -> &Self::Output {
-        &self.data[index]
-    }
-}
-
-impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
-    fn from_data(
-        context: &'a Context,
-        name: Option<&'a str>,
-        shape: TensorShape,
-        data: Vec<T>,
-    ) -> Result<Self, TensorError> {
-        TensorCpu::from_data(context, name, shape, data).map(Into::into)
-    }
-
-    /// Initialize a GPU tensor with a given shape.
-    fn init(context: &'a Context, name: Option<&'a str>, shape: TensorShape) -> Self {
-        let label = name;
-        let size = shape.len() as u64 * T::size() as u64;
-        let buffer = context
-            .device
-            .create_buffer(&BufferDescriptor {
-                label,
-                size,
-                usage: K::buffer_usages(),
-                mapped_at_creation: false,
-            })
-            .into();
-        let shape_buffer = context.tensor_shape_cache.buffer(shape, || {
-            context.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&shape.to_u32_slice()),
-                usage: BufferUsages::UNIFORM,
-            })
-        });
-        Self {
-            id: TensorId::new(),
-            context,
-            shape,
-            name,
-            data: TensorBuffer {
-                shape_buffer,
-                buffer,
-                offset: 0,
-            },
-            phantom: Default::default(),
-        }
-    }
-}
-
-impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
-    /// Create a GPU tensor from another one with new name, shape and offset.
-    /// Fails if the buffer overflows.
-    pub fn from_other(
-        other: Self,
-        name: Option<&'a str>,
-        shape: TensorShape,
-        offset: BufferAddress,
-    ) -> Result<Self, TensorError> {
-        let Self { context, data, .. } = other;
-        let size = shape.len() as u64 * T::size() as u64;
-        if data.offset + size >= data.buffer.size() {
-            return Err(TensorError::Overflow {
-                buffer_size: data.buffer.size(),
-                offset: data.offset,
-                size,
-            });
-        }
-        Ok(Self {
-            id: TensorId::new(),
-            context,
-            shape,
-            name,
-            data: TensorBuffer {
-                shape_buffer: data.shape_buffer,
-                buffer: data.buffer,
-                offset,
-            },
-            phantom: Default::default(),
-        })
-    }
-
-    pub fn shape_binding(&self) -> BindingResource {
-        BindingResource::Buffer(BufferBinding {
-            buffer: &self.shape_buffer,
-            offset: self.offset,
-            size: NonZeroU64::new(16),
-        })
-    }
-
-    pub fn binding(&self) -> BindingResource {
-        BindingResource::Buffer(BufferBinding {
-            buffer: &self.buffer,
-            offset: self.offset,
-            size: NonZeroU64::new(self.size() as BufferAddress),
-        })
-    }
-}
-
-impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
-    fn from(value: TensorCpu<'a, T, K>) -> Self {
-        let Tensor {
-            id,
-            context,
-            shape,
-            name,
-            data,
-            ..
-        } = value;
-        let label = name;
-        let contents = bytemuck::cast_slice(&data);
-        let buffer = context
-            .device
-            .create_buffer_init(&BufferInitDescriptor {
-                label,
-                contents,
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-            })
-            .into();
-        let shape_buffer = context.tensor_shape_cache.buffer(shape, || {
-            context.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&shape.to_u32_slice()),
-                usage: BufferUsages::UNIFORM,
-            })
-        });
-        Self {
-            id,
-            context,
-            shape,
-            name,
-            data: TensorBuffer {
-                shape_buffer,
-                buffer,
-                offset: 0,
-            },
-            phantom: Default::default(),
-        }
-    }
-}
-
-impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, T, ReadBack> {
-    fn from(value: TensorGpu<'a, T, ReadBack>) -> Self {
-        let size = value.size() as u64;
-        let Tensor {
-            id,
-            context,
-            shape,
-            name,
-            data: TensorBuffer { buffer, offset, .. },
-            ..
-        } = value;
-
-        let slice = buffer.slice(offset..offset + size);
-        slice.map_async(MapMode::Read, |_| ());
-
-        context.device.poll(MaintainBase::Wait);
-
-        let data = {
-            let map = slice.get_mapped_range();
-            Vec::from(bytemuck::cast_slice(&map))
-        };
-        buffer.unmap();
-
-        Self {
-            id,
-            context,
-            shape,
-            name,
-            data: Cow::from(data),
-            phantom: Default::default(),
-        }
-    }
-}
+use super::{Kind, ReadWrite, Shape, TensorCpu, TensorError, TensorGpu, Uniform};
+use crate::num::Scalar;
 
 pub trait TensorCommand<T: Scalar, K: Kind> {
     fn copy_tensor(
@@ -501,7 +21,7 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
         source: &TensorGpu<T, ReadWrite>,
         destination: &TensorGpu<T, K>,
     ) -> Result<(), TensorError> {
-        check_shape(source, destination.shape)?;
+        source.check_shape(destination.shape)?;
         let size = source.size() as BufferAddress;
         self.copy_buffer_to_buffer(
             &source.buffer,
@@ -528,7 +48,7 @@ impl<T: Scalar, K: Kind> TensorQueue<T, K> for Queue {
         host: &TensorCpu<T, K>,
         device: &TensorGpu<T, K>,
     ) -> Result<(), TensorError> {
-        check_shape(host, device.shape)?;
+        host.check_shape(device.shape)?;
         self.write_buffer(
             &device.buffer,
             device.offset,
@@ -574,7 +94,7 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(x, shape)?;
+        x.check_shape(shape)?;
 
         let context = output.context;
         let pipeline = context
@@ -614,9 +134,9 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(x, shape)?;
-        check_shape(w, TensorShape([shape[0], 1, 1]))?;
-        check_shape(b, TensorShape([shape[0], 1, 1]))?;
+        x.check_shape(shape)?;
+        w.check_shape(Shape::new(shape[0], 1, 1))?;
+        b.check_shape(Shape::new(shape[0], 1, 1))?;
 
         let context = output.context;
         let pipeline = context
@@ -663,8 +183,8 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(matrix, TensorShape([input.shape[0], shape[0], 1]))?;
-        check_shape(input, TensorShape([matrix.shape[0], shape[1], shape[2]]))?;
+        matrix.check_shape(Shape::new(input.shape[0], shape[0], 1))?;
+        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
 
         let context = output.context;
         let pipeline = context
@@ -715,12 +235,12 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(matrix, TensorShape([input.shape[0], shape[0], 1]))?;
-        check_shape(input, TensorShape([matrix.shape[0], shape[1], shape[2]]))?;
-        check_shape(mx, TensorShape([matrix.shape[0], 1, 1]))?;
-        check_shape(rx, TensorShape([matrix.shape[0], 1, 1]))?;
-        check_shape(my, TensorShape([matrix.shape[1], 1, 1]))?;
-        check_shape(ry, TensorShape([matrix.shape[1], 1, 1]))?;
+        matrix.check_shape(Shape::new(input.shape[0], shape[0], 1))?;
+        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
+        mx.check_shape(Shape::new(matrix.shape[0], 1, 1))?;
+        rx.check_shape(Shape::new(matrix.shape[0], 1, 1))?;
+        my.check_shape(Shape::new(matrix.shape[1], 1, 1))?;
+        ry.check_shape(Shape::new(matrix.shape[1], 1, 1))?;
 
         let context = output.context;
         let pipeline = context
@@ -782,7 +302,7 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(x, shape)?;
+        x.check_shape(shape)?;
 
         let context = output.context;
         let pipeline = context
@@ -826,9 +346,9 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(x, shape)?;
-        check_shape(time_mix, TensorShape([shape[0], 1, 1]))?;
-        check_shape(sx, TensorShape([shape[0], 1, shape[2]]))?;
+        x.check_shape(shape)?;
+        time_mix.check_shape(Shape::new(shape[0], 1, 1))?;
+        sx.check_shape(Shape::new(shape[0], 1, shape[2]))?;
 
         let context = output.context;
         let pipeline = context
@@ -886,14 +406,14 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(mask, TensorShape([1, 1, 1]))?;
-        check_shape(x, shape)?;
-        check_shape(k, shape)?;
-        check_shape(v, shape)?;
-        check_shape(r, shape)?;
-        check_shape(time_decay, TensorShape([shape[0], 1, 1]))?;
-        check_shape(time_first, TensorShape([shape[0], 1, 1]))?;
-        check_shape(state, TensorShape([shape[0], 4, shape[2]]))?;
+        mask.check_shape(Shape::new(1, 1, 1))?;
+        x.check_shape(shape)?;
+        k.check_shape(shape)?;
+        v.check_shape(shape)?;
+        r.check_shape(shape)?;
+        time_decay.check_shape(Shape::new(shape[0], 1, 1))?;
+        time_first.check_shape(Shape::new(shape[0], 1, 1))?;
+        state.check_shape(Shape::new(shape[0], 4, shape[2]))?;
 
         let context = output.context;
         let pipeline = context
@@ -959,7 +479,7 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(x, shape)?;
+        x.check_shape(shape)?;
 
         let context = output.context;
         let pipeline = context
@@ -1005,11 +525,11 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        check_shape(mask, TensorShape([1, 1, 1]))?;
-        check_shape(x, shape)?;
-        check_shape(v, shape)?;
-        check_shape(r, shape)?;
-        check_shape(state, TensorShape([shape[0], 1, shape[2]]))?;
+        mask.check_shape(Shape::new(1, 1, 1))?;
+        x.check_shape(shape)?;
+        v.check_shape(shape)?;
+        r.check_shape(shape)?;
+        state.check_shape(Shape::new(shape[0], 1, shape[2]))?;
 
         let context = output.context;
         let pipeline = context
@@ -1062,7 +582,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    pub fn quantize_int8(
+    pub fn quantize_mat_int8(
         input: &'a TensorGpu<f16, ReadWrite>,
         mx: &'a TensorGpu<f32, ReadWrite>,
         rx: &'a TensorGpu<f32, ReadWrite>,
@@ -1071,11 +591,11 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<[Self; 5], TensorError> {
         let shape = output.shape;
-        check_shape(input, shape)?;
-        check_shape(mx, TensorShape([shape[0], 1, 1]))?;
-        check_shape(rx, TensorShape([shape[0], 1, 1]))?;
-        check_shape(my, TensorShape([shape[1], 1, 1]))?;
-        check_shape(ry, TensorShape([shape[1], 1, 1]))?;
+        input.check_shape(shape)?;
+        mx.check_shape(Shape::new(shape[0], 1, 1))?;
+        rx.check_shape(Shape::new(shape[0], 1, 1))?;
+        my.check_shape(Shape::new(shape[1], 1, 1))?;
+        ry.check_shape(Shape::new(shape[1], 1, 1))?;
 
         let context = output.context;
         let entries = &[
@@ -1125,68 +645,18 @@ impl<'a> TensorOp<'a> {
             })
         };
 
-        let compute_my = create_op("compute_my_int8", [1, shape[1] as u32, 1])?;
-        let compute_ry = create_op("compute_ry_int8", [1, shape[1] as u32, 1])?;
-        let compute_mx = create_op("compute_mx_int8", [1, shape[0] as u32 / 4, 1])?;
-        let compute_rx = create_op("compute_rx_int8", [1, shape[0] as u32 / 4, 1])?;
-        let quantize = create_op("quantize_int8", [shape[0] as u32 / 4, shape[1] as u32, 1])?;
+        let my = create_op("quant_mat_int8_my", [1, shape[1] as u32, 1])?;
+        let ry = create_op("quant_mat_int8_ry", [1, shape[1] as u32, 1])?;
+        let mx = create_op("quant_mat_int8_mx", [1, shape[0] as u32 / 4, 1])?;
+        let rx = create_op("quant_mat_int8_rx", [1, shape[0] as u32 / 4, 1])?;
+        let quantize = create_op("quant_mat_int8", [shape[0] as u32 / 4, shape[1] as u32, 1])?;
 
         if shape[1] > shape[0] {
-            Ok([compute_my, compute_mx, compute_rx, compute_ry, quantize])
+            Ok([my, mx, rx, ry, quantize])
         } else {
-            Ok([compute_mx, compute_my, compute_rx, compute_ry, quantize])
+            Ok([mx, my, rx, ry, quantize])
         }
     }
-}
-
-impl<'a> Context {
-    pub fn zeros<T: Scalar, Tensor: TensorExt<'a, T>>(
-        &'a self,
-        name: Option<&'a str>,
-        shape: TensorShape,
-    ) -> Tensor {
-        let data = vec![T::zero(); shape.len()];
-        Tensor::from_data(self, name, shape, data).unwrap()
-    }
-
-    pub fn ones<T: Scalar, Tensor: TensorExt<'a, T>>(
-        &'a self,
-        name: Option<&'a str>,
-        shape: TensorShape,
-    ) -> Tensor {
-        let data = vec![T::one(); shape.len()];
-        Tensor::from_data(self, name, shape, data).unwrap()
-    }
-
-    pub fn tensor_from_data<T: Scalar, Tensor: TensorExt<'a, T>>(
-        &'a self,
-        name: Option<&'a str>,
-        shape: TensorShape,
-        data: Vec<T>,
-    ) -> Result<Tensor, TensorError> {
-        Tensor::from_data(self, name, shape, data)
-    }
-
-    pub fn tensor_init<T: Scalar, Tensor: TensorExt<'a, T>>(
-        &'a self,
-        name: Option<&'a str>,
-        shape: TensorShape,
-    ) -> Tensor {
-        Tensor::init(self, name, shape)
-    }
-}
-
-mod sealed {
-    use super::{Cpu, Gpu, ReadBack, ReadWrite, Uniform};
-
-    pub trait Sealed {}
-
-    impl<T> Sealed for Cpu<'_, T> {}
-    impl Sealed for Gpu {}
-
-    impl Sealed for Uniform {}
-    impl Sealed for ReadWrite {}
-    impl Sealed for ReadBack {}
 }
 
 #[cfg(test)]
@@ -1195,10 +665,10 @@ mod tests {
     use itertools::Itertools;
     use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, PowerPreference};
 
-    use super::{TensorExt, TensorOp, TensorPass};
+    use super::{TensorOp, TensorPass};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{TensorCommand, TensorCpu, TensorGpu, TensorShape},
+        tensor::{Shape, TensorCommand, TensorCpu, TensorExt, TensorGpu},
     };
 
     fn is_approx(a: f32, b: f32) -> bool {
@@ -1224,19 +694,11 @@ mod tests {
     }
 
     #[test]
-    fn test_shape_index() {
-        let shape = TensorShape([1024, 768, 12]);
-        let indices = TensorShape([35, 42, 9]);
-        let index = shape.shape_index(indices);
-        assert_eq!(index, 35 + 42 * 1024 + 9 * 1024 * 768);
-    }
-
-    #[test]
     fn test_copy() -> Result<(), anyhow::Error> {
         let context = create_context()?;
 
         let x = vec![0.0, 1.5, 2.0, -1.0];
-        let shape = TensorShape([x.len(), 1, 1]);
+        let shape = Shape::new(x.len(), 1, 1);
 
         let x_device: TensorGpu<_, _> = context.tensor_from_data(None, shape, x.clone())?;
         let x_map = context.tensor_init(None, x_device.shape());
@@ -1259,7 +721,7 @@ mod tests {
         let context = create_context()?;
 
         let x = [(); 6000].map(|_| 10.0 * (fastrand::f32() - 0.5)).to_vec();
-        let shape = TensorShape([x.len() / 6, 3, 2]);
+        let shape = Shape::new(x.len() / 6, 3, 2);
 
         let x_dev: TensorGpu<_, _> = context.tensor_from_data(None, shape, x.clone())?;
         let x_out = context.tensor_init(None, x_dev.shape());
@@ -1324,16 +786,12 @@ mod tests {
         let matrix_dev = TensorGpu::from_data(
             &context,
             Some("matrix"),
-            TensorShape([C, R, 1]),
+            Shape::new(C, R, 1),
             matrix.clone(),
         )?;
-        let input_dev = TensorGpu::from_data(
-            &context,
-            Some("input"),
-            TensorShape([C, T, B]),
-            input.clone(),
-        )?;
-        let output_dev = TensorGpu::init(&context, None, TensorShape([R, T, B]));
+        let input_dev =
+            TensorGpu::from_data(&context, Some("input"), Shape::new(C, T, B), input.clone())?;
+        let output_dev = TensorGpu::init(&context, None, Shape::new(R, T, B));
         let output_map = TensorGpu::init(&context, None, output_dev.shape());
 
         let matmul = TensorOp::matmul(&matrix_dev, &input_dev, &output_dev)?;
