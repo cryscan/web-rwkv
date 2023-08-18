@@ -135,26 +135,21 @@ fn check_slice_dim<B: RangeBounds<usize>>(
     state: &mut SliceState,
 ) -> Result<(), TensorError> {
     let (start, end) = slice_to_dim(slice, dim);
-    let current_state = if start >= end {
-        SliceState::Zero
-    } else if start >= dim || end <= 0 || end > dim {
-        return Err(TensorError::SliceOutOfRange { dim, start, end });
-    } else if start == 0 && end == dim {
-        SliceState::Full
-    } else if end == start + 1 {
-        SliceState::One
-    } else {
-        SliceState::NotFull
-    };
+    let current_state = match (start, end) {
+        (start, end) if start >= dim => Err(TensorError::SliceOutOfRange { dim, start, end }),
+        (start, end) if end > dim => Err(TensorError::SliceOutOfRange { dim, start, end }),
+        (start, end) if start >= end => Ok(SliceState::Zero),
+        (start, end) if end == start + 1 => Ok(SliceState::One),
+        (0, end) if end == dim => Ok(SliceState::Full),
+        _ => Ok(SliceState::NotFull),
+    }?;
 
     let previous_state = *state;
     *state = current_state;
 
-    if previous_state == SliceState::NotFull {
-        // cannot have 2 dims that are both not full.
-        current_state < previous_state
-    } else {
-        current_state <= previous_state
+    match previous_state {
+        SliceState::NotFull => current_state < previous_state,
+        _ => current_state <= previous_state,
     }
     .then_some(())
     .ok_or(TensorError::SliceNotContiguous)
