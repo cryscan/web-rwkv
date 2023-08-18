@@ -23,6 +23,12 @@ impl Zero for u8 {
     }
 }
 
+impl Zero for u32 {
+    fn zero() -> Self {
+        0
+    }
+}
+
 pub trait One: Sized + core::ops::Mul<Self, Output = Self> {
     fn one() -> Self;
 }
@@ -45,6 +51,12 @@ impl One for u8 {
     }
 }
 
+impl One for u32 {
+    fn one() -> Self {
+        1
+    }
+}
+
 pub trait Scalar: Sized + Clone + Copy + Pod + Zero + One + sealed::Sealed {
     fn size() -> usize {
         std::mem::size_of::<Self>()
@@ -54,6 +66,7 @@ pub trait Scalar: Sized + Clone + Copy + Pod + Zero + One + sealed::Sealed {
 impl Scalar for f32 {}
 impl Scalar for f16 {}
 impl Scalar for u8 {}
+impl Scalar for u32 {}
 
 mod sealed {
     use half::f16;
@@ -63,4 +76,5 @@ mod sealed {
     impl Sealed for f32 {}
     impl Sealed for f16 {}
     impl Sealed for u8 {}
+    impl Sealed for u32 {}
 }

@@ -8,6 +8,8 @@ use wgpu::{
     ShaderModuleDescriptor, ShaderStages,
 };
 
+use crate::tensor::TensorShapeCache;
+
 #[derive(Deref)]
 pub struct Instance(wgpu::Instance);
 
@@ -70,6 +72,8 @@ pub struct Context {
     pub(crate) device: Device,
     pub(crate) queue: Queue,
     pub(crate) pipelines: HashMap<String, ComputePipeline>,
+
+    pub tensor_shape_cache: TensorShapeCache,
 }
 
 pub struct ContextBuilder<'a> {
@@ -149,6 +153,7 @@ impl<'a> ContextBuilder<'a> {
             device,
             queue,
             pipelines,
+            tensor_shape_cache: Default::default(),
         })
     }
 

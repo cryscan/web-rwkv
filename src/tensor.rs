@@ -1,11 +1,18 @@
+use ahash::HashMap;
 use half::f16;
-use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    marker::PhantomData,
+    num::NonZeroU64,
+    sync::{Arc, RwLock},
+};
 use web_rwkv_derive::{Deref, Id, Kind};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindingResource, Buffer, BufferAddress,
     BufferBinding, BufferDescriptor, BufferUsages, CommandEncoder, ComputePass, ComputePipeline,
-    MaintainBase, MapMode,
+    MaintainBase, MapMode, Queue,
 };
 
 use crate::{context::Context, num::Scalar};
@@ -93,6 +100,62 @@ impl std::ops::Index<usize> for TensorShape {
 impl std::ops::IndexMut<usize> for TensorShape {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.0[index]
+    }
+}
+
+fn check_shape<D: Device, T: Scalar, K: Kind>(
+    tensor: &Tensor<D, T, K>,
+    shape: TensorShape,
+) -> Result<(), TensorError> {
+    if tensor.shape == shape {
+        Ok(())
+    } else {
+        Err(TensorError::Shape(tensor.shape, shape))
+    }
+}
+
+#[allow(dead_code)]
+fn check_shape_dims<D: Device, T: Scalar, K: Kind>(
+    tensor: &Tensor<D, T, K>,
+    shape: TensorShape,
+    dims: Vec<usize>,
+) -> Result<(), TensorError> {
+    dims.into_iter()
+        .all(|dim| tensor.shape[dim] == shape[dim])
+        .then_some(())
+        .ok_or(TensorError::Shape(tensor.shape, shape))
+}
+
+#[derive(Debug, Default, Deref)]
+pub struct TensorShapeCache(RefCell<RwLock<HashMap<TensorShape, Arc<Buffer>>>>);
+
+impl TensorShapeCache {
+    pub fn clear(&self) {
+        let map = self.borrow_mut();
+        let mut map = map.write().unwrap();
+        map.clear();
+    }
+
+    pub fn query(&self, shape: TensorShape) -> Option<Arc<Buffer>> {
+        let map = self.borrow();
+        let map = map.read().unwrap();
+        map.get(&shape).cloned()
+    }
+
+    pub fn buffer<F>(&self, shape: TensorShape, op: F) -> Arc<Buffer>
+    where
+        F: FnOnce() -> Buffer,
+    {
+        match self.query(shape) {
+            Some(buffer) => buffer,
+            None => {
+                let buffer = Arc::new(op());
+                let map = self.borrow_mut();
+                let mut map = map.write().unwrap();
+                map.insert(shape, buffer.clone());
+                buffer
+            }
+        }
     }
 }
 
@@ -277,14 +340,13 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
                 mapped_at_creation: false,
             })
             .into();
-        let shape_buffer = context
-            .device
-            .create_buffer_init(&BufferInitDescriptor {
+        let shape_buffer = context.tensor_shape_cache.buffer(shape, || {
+            context.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::cast_slice(&shape.to_u32_slice()),
                 usage: BufferUsages::UNIFORM,
             })
-            .into();
+        });
         Self {
             id: TensorId::new(),
             context,
@@ -369,14 +431,13 @@ impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
             })
             .into();
-        let shape_buffer = context
-            .device
-            .create_buffer_init(&BufferInitDescriptor {
+        let shape_buffer = context.tensor_shape_cache.buffer(shape, || {
+            context.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::cast_slice(&shape.to_u32_slice()),
                 usage: BufferUsages::UNIFORM,
             })
-            .into();
+        });
         Self {
             id,
             context,
@@ -440,9 +501,7 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
         source: &TensorGpu<T, ReadWrite>,
         destination: &TensorGpu<T, K>,
     ) -> Result<(), TensorError> {
-        if source.shape != destination.shape {
-            return Err(TensorError::Shape(source.shape, destination.shape));
-        }
+        check_shape(source, destination.shape)?;
         let size = source.size() as BufferAddress;
         self.copy_buffer_to_buffer(
             &source.buffer,
@@ -450,6 +509,30 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
             &destination.buffer,
             destination.offset,
             size,
+        );
+        Ok(())
+    }
+}
+
+pub trait TensorQueue<T: Scalar, K: Kind> {
+    fn write_tensor(
+        &mut self,
+        host: &TensorCpu<T, K>,
+        device: &TensorGpu<T, K>,
+    ) -> Result<(), TensorError>;
+}
+
+impl<T: Scalar, K: Kind> TensorQueue<T, K> for Queue {
+    fn write_tensor(
+        &mut self,
+        host: &TensorCpu<T, K>,
+        device: &TensorGpu<T, K>,
+    ) -> Result<(), TensorError> {
+        check_shape(host, device.shape)?;
+        self.write_buffer(
+            &device.buffer,
+            device.offset,
+            bytemuck::cast_slice(&host.data),
         );
         Ok(())
     }
@@ -482,29 +565,6 @@ pub struct TensorOp<'a> {
 impl<'a> TensorOp<'a> {
     const BLOCK_SIZE: u32 = 128;
 
-    fn check_shape<D: Device, T: Scalar, K: Kind>(
-        tensor: &Tensor<D, T, K>,
-        shape: TensorShape,
-    ) -> Result<(), TensorError> {
-        if tensor.shape == shape {
-            Ok(())
-        } else {
-            Err(TensorError::Shape(tensor.shape, shape))
-        }
-    }
-
-    #[allow(dead_code)]
-    fn check_shape_dims<D: Device, T: Scalar, K: Kind>(
-        tensor: &Tensor<D, T, K>,
-        shape: TensorShape,
-        dims: Vec<usize>,
-    ) -> Result<(), TensorError> {
-        dims.into_iter()
-            .all(|dim| tensor.shape[dim] == shape[dim])
-            .then_some(())
-            .ok_or(TensorError::Shape(tensor.shape, shape))
-    }
-
     fn block_count(x: u32) -> u32 {
         (x + Self::BLOCK_SIZE - 1) / Self::BLOCK_SIZE
     }
@@ -514,7 +574,7 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        Self::check_shape(x, shape)?;
+        check_shape(x, shape)?;
 
         let context = output.context;
         let pipeline = context
@@ -554,9 +614,9 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        Self::check_shape(x, shape)?;
-        Self::check_shape(w, TensorShape([shape[0], 1, 1]))?;
-        Self::check_shape(b, TensorShape([shape[0], 1, 1]))?;
+        check_shape(x, shape)?;
+        check_shape(w, TensorShape([shape[0], 1, 1]))?;
+        check_shape(b, TensorShape([shape[0], 1, 1]))?;
 
         let context = output.context;
         let pipeline = context
@@ -603,8 +663,8 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        Self::check_shape(matrix, TensorShape([input.shape[0], shape[0], 1]))?;
-        Self::check_shape(input, TensorShape([matrix.shape[0], shape[1], shape[2]]))?;
+        check_shape(matrix, TensorShape([input.shape[0], shape[0], 1]))?;
+        check_shape(input, TensorShape([matrix.shape[0], shape[1], shape[2]]))?;
 
         let context = output.context;
         let pipeline = context
@@ -646,15 +706,117 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn matmul_int8(
-        _matrix: &'a TensorGpu<u8, ReadWrite>,
-        _mx: &'a TensorGpu<f32, ReadWrite>,
-        _rx: &'a TensorGpu<f32, ReadWrite>,
-        _my: &'a TensorGpu<f32, ReadWrite>,
-        _ry: &'a TensorGpu<f32, ReadWrite>,
-        _input: &'a TensorGpu<f32, ReadWrite>,
-        _output: &'a TensorGpu<f32, ReadWrite>,
+        matrix: &'a TensorGpu<u8, ReadWrite>,
+        mx: &'a TensorGpu<f32, ReadWrite>,
+        rx: &'a TensorGpu<f32, ReadWrite>,
+        my: &'a TensorGpu<f32, ReadWrite>,
+        ry: &'a TensorGpu<f32, ReadWrite>,
+        input: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        todo!()
+        let shape = output.shape;
+        check_shape(matrix, TensorShape([input.shape[0], shape[0], 1]))?;
+        check_shape(input, TensorShape([matrix.shape[0], shape[1], shape[2]]))?;
+        check_shape(mx, TensorShape([matrix.shape[0], 1, 1]))?;
+        check_shape(rx, TensorShape([matrix.shape[0], 1, 1]))?;
+        check_shape(my, TensorShape([matrix.shape[1], 1, 1]))?;
+        check_shape(ry, TensorShape([matrix.shape[1], 1, 1]))?;
+
+        let context = output.context;
+        let pipeline = context
+            .pipelines
+            .get("matmul_int8")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: matrix.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: output.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: matrix.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: mx.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: rx.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: my.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: ry.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [matrix.shape[1] as u32 / 4, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
+    pub fn add(
+        x: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape;
+        check_shape(x, shape)?;
+
+        let context = output.context;
+        let pipeline = context
+            .pipelines
+            .get("add")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
     }
 
     pub fn token_shift(
@@ -664,9 +826,9 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        Self::check_shape(x, shape)?;
-        Self::check_shape(time_mix, TensorShape([shape[0], 1, 1]))?;
-        Self::check_shape(sx, TensorShape([shape[0], shape[2], 1]))?;
+        check_shape(x, shape)?;
+        check_shape(time_mix, TensorShape([shape[0], 1, 1]))?;
+        check_shape(sx, TensorShape([shape[0], shape[2], 1]))?;
 
         let context = output.context;
         let pipeline = context
@@ -713,6 +875,7 @@ impl<'a> TensorOp<'a> {
 
     #[allow(clippy::too_many_arguments)]
     pub fn token_mix(
+        mask: &'a TensorGpu<u32, Uniform>,
         time_decay: &'a TensorGpu<f32, ReadWrite>,
         time_first: &'a TensorGpu<f32, ReadWrite>,
         x: &'a TensorGpu<f32, ReadWrite>,
@@ -723,13 +886,14 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        Self::check_shape(x, shape)?;
-        Self::check_shape(k, shape)?;
-        Self::check_shape(v, shape)?;
-        Self::check_shape(r, shape)?;
-        Self::check_shape(time_decay, TensorShape([shape[0], 1, 1]))?;
-        Self::check_shape(time_first, TensorShape([shape[0], 1, 1]))?;
-        Self::check_shape(state, TensorShape([shape[0], 4, shape[2]]))?;
+        check_shape(mask, TensorShape([1, 1, 1]))?;
+        check_shape(x, shape)?;
+        check_shape(k, shape)?;
+        check_shape(v, shape)?;
+        check_shape(r, shape)?;
+        check_shape(time_decay, TensorShape([shape[0], 1, 1]))?;
+        check_shape(time_first, TensorShape([shape[0], 1, 1]))?;
+        check_shape(state, TensorShape([shape[0], 4, shape[2]]))?;
 
         let context = output.context;
         let pipeline = context
@@ -746,34 +910,38 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: time_decay.binding(),
+                    resource: mask.binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: time_first.binding(),
+                    resource: time_decay.binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: x.binding(),
+                    resource: time_first.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: k.binding(),
+                    resource: x.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: v.binding(),
+                    resource: k.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
-                    resource: r.binding(),
+                    resource: v.binding(),
                 },
                 BindGroupEntry {
                     binding: 7,
-                    resource: state.binding(),
+                    resource: r.binding(),
                 },
                 BindGroupEntry {
                     binding: 8,
+                    resource: state.binding(),
+                },
+                BindGroupEntry {
+                    binding: 9,
                     resource: output.binding(),
                 },
             ],
