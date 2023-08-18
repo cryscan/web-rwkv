@@ -93,7 +93,7 @@ impl ShapeCache {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Slice<X, Y, Z>(X, Y, Z);
 
 impl<X, Y, Z> Slice<X, Y, Z>
@@ -115,6 +115,51 @@ enum SliceState {
     Full,
 }
 
+fn slice_to_dim<B: RangeBounds<usize>>(slice: &B, dim: usize) -> (usize, usize) {
+    let start = match slice.start_bound() {
+        Bound::Included(&bound) => bound,
+        Bound::Excluded(&bound) => bound + 1,
+        Bound::Unbounded => 0,
+    };
+    let end = match slice.end_bound() {
+        Bound::Included(&bound) => bound + 1,
+        Bound::Excluded(&bound) => bound,
+        Bound::Unbounded => dim,
+    };
+    (start, end)
+}
+
+fn check_slice_dim<B: RangeBounds<usize>>(
+    slice: &B,
+    dim: usize,
+    state: &mut SliceState,
+) -> Result<(), TensorError> {
+    let (start, end) = slice_to_dim(slice, dim);
+    let current_state = if start >= end {
+        SliceState::Zero
+    } else if start >= dim || end <= 0 || end > dim {
+        return Err(TensorError::SliceOutOfRange { dim, start, end });
+    } else if start == 0 && end == dim {
+        SliceState::Full
+    } else if end == start + 1 {
+        SliceState::One
+    } else {
+        SliceState::NotFull
+    };
+
+    let previous_state = *state;
+    *state = current_state;
+
+    if previous_state == SliceState::NotFull {
+        // cannot have 2 dims that are both not full.
+        current_state < previous_state
+    } else {
+        current_state <= previous_state
+    }
+    .then_some(())
+    .ok_or(TensorError::SliceNotContiguous)
+}
+
 impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
     pub fn check_shape(&self, shape: Shape) -> Result<(), TensorError> {
         if self.shape == shape {
@@ -124,54 +169,42 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
         }
     }
 
-    pub fn is_slice_contiguous<X, Y, Z>(&self, slice: &Slice<X, Y, Z>) -> bool
+    /// Check if a given slice both is not out of range and views a contiguous chunk of memory.
+    pub fn check_slice<X, Y, Z>(&self, slice: &Slice<X, Y, Z>) -> Result<(), TensorError>
     where
         X: RangeBounds<usize>,
         Y: RangeBounds<usize>,
         Z: RangeBounds<usize>,
     {
-        fn check_slice_dim<B: RangeBounds<usize>>(
-            slice: &B,
-            dim: usize,
-            state: &mut SliceState,
-        ) -> bool {
-            let start = match slice.start_bound() {
-                Bound::Included(&bound) => bound,
-                Bound::Excluded(&bound) => bound + 1,
-                Bound::Unbounded => 0,
-            };
-            let end = match slice.end_bound() {
-                Bound::Included(&bound) => bound + 1,
-                Bound::Excluded(&bound) => bound,
-                Bound::Unbounded => dim,
-            };
-            let current_state = if start >= end {
-                SliceState::Zero
-            } else if start >= dim || end <= 0 || end > dim {
-                panic!("Bad slice {}..{} of dim {}", start, end, dim);
-            } else if start == 0 && end == dim {
-                SliceState::Full
-            } else if end == start + 1 {
-                SliceState::One
-            } else {
-                SliceState::NotFull
-            };
-
-            let contiguous = if *state == SliceState::NotFull {
-                // cannot have 2 dims that are both not full.
-                current_state < *state
-            } else {
-                current_state <= *state
-            };
-            *state = current_state;
-            contiguous
-        }
-
         let mut state = SliceState::Full;
         let x = check_slice_dim(&slice.0, self.shape[0], &mut state);
         let y = check_slice_dim(&slice.1, self.shape[1], &mut state);
         let z = check_slice_dim(&slice.2, self.shape[2], &mut state);
-        x && y && z
+        x.and(y).and(z)
+    }
+
+    pub fn shape_bounds<X, Y, Z>(&self, slice: &Slice<X, Y, Z>) -> (Shape, Shape)
+    where
+        X: RangeBounds<usize>,
+        Y: RangeBounds<usize>,
+        Z: RangeBounds<usize>,
+    {
+        let mut start = Shape::default();
+        let mut end = Shape::default();
+        (start[0], end[0]) = slice_to_dim(&slice.0, self.shape[0]);
+        (start[1], end[1]) = slice_to_dim(&slice.1, self.shape[1]);
+        (start[2], end[2]) = slice_to_dim(&slice.2, self.shape[2]);
+        (start, end)
+    }
+
+    pub fn slice_shape<X, Y, Z>(&self, slice: &Slice<X, Y, Z>) -> Shape
+    where
+        X: RangeBounds<usize>,
+        Y: RangeBounds<usize>,
+        Z: RangeBounds<usize>,
+    {
+        let (start, end) = self.shape_bounds(slice);
+        Shape::new(end[0] - start[0], end[1] - start[1], end[2] - start[2])
     }
 }
 
@@ -182,7 +215,7 @@ mod tests {
     use super::{Shape, Slice};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{ReadWrite, TensorCpu},
+        tensor::{ReadWrite, TensorCpu, TensorExt},
     };
 
     fn create_context() -> Result<Context, anyhow::Error> {
@@ -208,18 +241,35 @@ mod tests {
     }
 
     #[test]
-    fn test_shape_contiguous() -> Result<(), anyhow::Error> {
+    fn test_slice() -> Result<(), anyhow::Error> {
         let context = create_context()?;
 
         let x: TensorCpu<f32, ReadWrite> = context.tensor_init(None, Shape::new(1024, 768, 3));
 
-        assert!(x.is_slice_contiguous(&Slice::new(12..42, 7..8, 1..=1)));
-        assert!(x.is_slice_contiguous(&Slice::new(.., .., ..)));
-        assert!(x.is_slice_contiguous(&Slice(.., 42..56, 2..3)));
-        assert!(x.is_slice_contiguous(&Slice(0..1, 0..1, 0..1)));
+        x.check_slice(&Slice::new(12..42, 7..8, 1..=1))?;
+        x.check_slice(&Slice::new(.., .., ..))?;
+        x.check_slice(&Slice::new(.., 42..56, 2..3))?;
+        x.check_slice(&Slice::new(0..1, 0..1, 0..1))?;
 
-        assert!(!x.is_slice_contiguous(&Slice(.., 42..56, 0..2)));
-        assert!(!x.is_slice_contiguous(&Slice(0..1, 0..2, 1..2)));
+        assert!(x.check_slice(&Slice::new(.., 42..56, 0..2)).is_err());
+        assert!(x.check_slice(&Slice::new(0..1, 0..2, 1..2)).is_err());
+
+        assert_eq!(
+            x.shape_bounds(&Slice::new(.., 42..56, 2..=2)),
+            (Shape::new(0, 42, 2), Shape::new(1024, 56, 3))
+        );
+
+        let shape = Shape::new(4, 2, 3);
+        let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
+        let x: TensorCpu<_, ReadWrite> = TensorCpu::from_data(&context, None, shape, x)?;
+
+        let y = x.make_slice(None, &Slice::new(.., 1..2, 1..2))?;
+        let y = Vec::from(y);
+        assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);
+
+        let y = x.make_slice(None, &Slice::new(.., .., 1..2))?;
+        let y = Vec::from(y);
+        assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
 
         Ok(())
     }

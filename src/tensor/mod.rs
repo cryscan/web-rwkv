@@ -1,4 +1,4 @@
-use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
+use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, ops::RangeBounds, sync::Arc};
 
 use web_rwkv_derive::{Deref, Id, Kind};
 use wgpu::{
@@ -58,10 +58,12 @@ pub struct ReadBack;
 pub enum TensorError {
     Size(usize, usize),
     Shape(Shape, Shape),
-    Slice {
-        shape: Shape,
+    SliceOutOfRange {
         dim: usize,
+        start: usize,
+        end: usize,
     },
+    SliceNotContiguous,
     Overflow {
         buffer: BufferAddress,
         offset: BufferAddress,
@@ -76,17 +78,22 @@ impl std::fmt::Display for TensorError {
         match self {
             TensorError::Size(a, b) => write!(f, "Data size not match: {} vs. {}", a, b),
             TensorError::Shape(a, b) => write!(f, "Tensor shape not match: {} vs. {}", a, b),
-            TensorError::Slice { shape, dim } => {
-                write!(f, "Slice overflows dim {} of shape {}", dim, shape)
-            }
+            TensorError::SliceOutOfRange { dim, start, end } => write!(
+                f,
+                "Slice {}..{} out of range for dimension size {}",
+                start, end, dim
+            ),
+            TensorError::SliceNotContiguous => write!(f, "Slice not yield contiguous"),
             TensorError::Overflow {
                 buffer,
                 offset,
                 size,
             } => write!(
                 f,
-                "Buffer overflows with buffer size: {}, slice offset: {} and size: {}",
-                buffer, offset, size
+                "Buffer of size {} overflowed with slice {}..{}",
+                buffer,
+                offset,
+                size + offset
             ),
             TensorError::PipelineError => write!(f, "Pipeline not found"),
             TensorError::DeviceError => write!(f, "Tensor not on the same device"),
@@ -99,7 +106,7 @@ impl std::error::Error for TensorError {}
 #[derive(Debug, Clone, Copy, Deref, Id, PartialEq, Eq, Hash)]
 pub struct TensorId(usize);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Tensor<'a, D: Device, T: Scalar, K: Kind> {
     id: TensorId,
     context: &'a Context,
@@ -112,7 +119,7 @@ pub struct Tensor<'a, D: Device, T: Scalar, K: Kind> {
 pub type TensorCpu<'a, T, K> = Tensor<'a, Cpu<'a, T>, T, K>;
 pub type TensorGpu<'a, T, K> = Tensor<'a, Gpu, T, K>;
 
-pub trait TensorExt<'a, T: Scalar>: Sized {
+pub trait TensorExt<'a, T: Scalar>: Sized + Clone {
     fn from_data(
         context: &'a Context,
         name: Option<&'a str>,
@@ -121,6 +128,16 @@ pub trait TensorExt<'a, T: Scalar>: Sized {
     ) -> Result<Self, TensorError>;
 
     fn init(context: &'a Context, name: Option<&'a str>, shape: Shape) -> Self;
+
+    fn make_slice<X, Y, Z>(
+        &'a self,
+        name: Option<&'a str>,
+        slice: &Slice<X, Y, Z>,
+    ) -> Result<Self, TensorError>
+    where
+        X: RangeBounds<usize>,
+        Y: RangeBounds<usize>,
+        Z: RangeBounds<usize>;
 }
 
 impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
@@ -128,6 +145,19 @@ impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
 
     fn deref(&self) -> &Self::Target {
         &self.data
+    }
+}
+
+impl<D: Device, T: Scalar, K: Kind> Clone for Tensor<'_, D, T, K> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            context: self.context,
+            shape: self.shape,
+            name: self.name,
+            data: self.data.clone(),
+            phantom: Default::default(),
+        }
     }
 }
 
@@ -148,11 +178,6 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
     /// The offset in bytes for a linear index.
     pub fn offset(index: usize) -> usize {
         index * T::size()
-    }
-
-    /// Convert a shaped index into a linear index.
-    pub fn shape_index(&self, indices: Shape) -> usize {
-        self.shape.shape_index(indices)
     }
 
     pub fn context(&self) -> &Context {
@@ -194,6 +219,34 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
 
     fn init(context: &'a Context, name: Option<&'a str>, shape: Shape) -> Self {
         context.zeros(name, shape)
+    }
+
+    fn make_slice<X, Y, Z>(
+        &'a self,
+        name: Option<&'a str>,
+        slice: &Slice<X, Y, Z>,
+    ) -> Result<Self, TensorError>
+    where
+        X: RangeBounds<usize>,
+        Y: RangeBounds<usize>,
+        Z: RangeBounds<usize>,
+    {
+        self.check_slice(slice)?;
+        let (start, _) = self.shape_bounds(slice);
+        let start = self.shape.shape_index(start);
+
+        let shape = self.slice_shape(slice);
+        let end = start + shape.len();
+        let data = Cow::Borrowed(&self.data[start..end]);
+
+        Ok(Self {
+            id: TensorId::new(),
+            context: self.context,
+            shape,
+            name,
+            data,
+            phantom: Default::default(),
+        })
     }
 }
 
@@ -246,6 +299,25 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
             phantom: Default::default(),
         }
     }
+
+    fn make_slice<X, Y, Z>(
+        &'a self,
+        name: Option<&'a str>,
+        slice: &Slice<X, Y, Z>,
+    ) -> Result<Self, TensorError>
+    where
+        X: RangeBounds<usize>,
+        Y: RangeBounds<usize>,
+        Z: RangeBounds<usize>,
+    {
+        self.check_slice(slice)?;
+        let (start, _) = self.shape_bounds(slice);
+        let start = self.shape.shape_index(start);
+
+        let shape = self.slice_shape(slice);
+        let tensor = Self::from_other(self.clone(), name, shape, start as u64)?;
+        Ok(tensor)
+    }
 }
 
 impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
@@ -266,13 +338,21 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
                 size,
             });
         }
+
+        let shape_buffer = context.shape_cache.buffer(shape, || {
+            context.device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&shape.to_u32_slice()),
+                usage: BufferUsages::UNIFORM,
+            })
+        });
         Ok(Self {
             id: TensorId::new(),
             context,
             shape,
             name,
             data: TensorBuffer {
-                shape_buffer: data.shape_buffer,
+                shape_buffer,
                 buffer: data.buffer,
                 offset,
             },
