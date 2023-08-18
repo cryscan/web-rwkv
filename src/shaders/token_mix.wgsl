@@ -24,42 +24,42 @@ fn token_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.z;
 
-    if batch_masked(batch) {
+    if index >= stride || batch >= shape[2] {
         return;
     }
 
-    if index < stride && batch < shape[2] {
-        let xi = (batch + 0u) * stride + index;
-        let ai = (batch + 1u) * stride + index;
-        let bi = (batch + 2u) * stride + index;
-        let pi = (batch + 3u) * stride + index;
+    let xi = (batch + 0u) * stride + index;
+    let ai = (batch + 1u) * stride + index;
+    let bi = (batch + 2u) * stride + index;
+    let pi = (batch + 3u) * stride + index;
 
-        for (var t = 0u; t < shape[1]; t += 1u) {
-            let bti = (batch * shape[1] + t) * stride + index;
+    for (var t = 0u; t < shape[1]; t += 1u) {
+        let bti = (batch * shape[1] + t) * stride + index;
 
-            let kk = k[bti];
-            let vv = v[bti];
+        let kk = k[bti];
+        let vv = v[bti];
 
-            let aa = state[ai];
-            let bb = state[bi];
-            let pp = state[pi];
-            var ww = time_first[index] + kk;
-            var q = max(pp, ww);
-            var e1 = exp(pp - q);
-            var e2 = exp(ww - q);
+        let aa = state[ai];
+        let bb = state[bi];
+        let pp = state[pi];
+        var ww = time_first[index] + kk;
+        var q = max(pp, ww);
+        var e1 = exp(pp - q);
+        var e2 = exp(ww - q);
 
-            let rr = 1.0 / (1.0 + exp(-r[bti]));
-            output[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
+        let rr = 1.0 / (1.0 + exp(-r[bti]));
+        output[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
 
-            ww = time_decay[index] + pp;
-            q = max(ww, kk);
-            e1 = exp(ww - q);
-            e2 = exp(kk - q);
-            state[ai] = e1 * aa + e2 * vv;
-            state[bi] = e1 * bb + e2;
-            state[pi] = q;
-        }
+        ww = time_decay[index] + pp;
+        q = max(ww, kk);
+        e1 = exp(ww - q);
+        e2 = exp(kk - q);
+        state[ai] = e1 * aa + e2 * vv;
+        state[bi] = e1 * bb + e2;
+        state[pi] = q;
+    }
 
+    if !batch_masked(mask) {
         state[xi] = x[(batch * shape[1] + (shape[1] - 1u)) * stride + index];
     }
 }

@@ -997,6 +997,7 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn channel_mix(
+        mask: &'a TensorGpu<u32, Uniform>,
         x: &'a TensorGpu<f32, ReadWrite>,
         r: &'a TensorGpu<f32, ReadWrite>,
         v: &'a TensorGpu<f32, ReadWrite>,
@@ -1004,6 +1005,7 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
+        check_shape(mask, TensorShape([1, 1, 1]))?;
         check_shape(x, shape)?;
         check_shape(v, shape)?;
         check_shape(r, shape)?;
@@ -1024,22 +1026,26 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: x.binding(),
+                    resource: mask.binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: r.binding(),
+                    resource: x.binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: v.binding(),
+                    resource: r.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: state.binding(),
+                    resource: v.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
+                    resource: state.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
                     resource: output.binding(),
                 },
             ],
