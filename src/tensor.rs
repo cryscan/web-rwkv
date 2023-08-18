@@ -828,7 +828,7 @@ impl<'a> TensorOp<'a> {
         let shape = output.shape;
         check_shape(x, shape)?;
         check_shape(time_mix, TensorShape([shape[0], 1, 1]))?;
-        check_shape(sx, TensorShape([shape[0], shape[2], 1]))?;
+        check_shape(sx, TensorShape([shape[0], 1, shape[2]]))?;
 
         let context = output.context;
         let pipeline = context
@@ -951,6 +951,108 @@ impl<'a> TensorOp<'a> {
             pipeline,
             bindings,
             dispatch: [Self::block_count(shape[0] as u32 / 4), 1, shape[2] as u32],
+        })
+    }
+
+    pub fn squared_relu(
+        x: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape;
+        check_shape(x, shape)?;
+
+        let context = output.context;
+        let pipeline = context
+            .pipelines
+            .get("squared_relu")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    pub fn channel_mix(
+        x: &'a TensorGpu<f32, ReadWrite>,
+        r: &'a TensorGpu<f32, ReadWrite>,
+        v: &'a TensorGpu<f32, ReadWrite>,
+        state: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape;
+        check_shape(x, shape)?;
+        check_shape(v, shape)?;
+        check_shape(r, shape)?;
+        check_shape(state, TensorShape([shape[0], 1, shape[2]]))?;
+
+        let context = output.context;
+        let pipeline = context
+            .pipelines
+            .get("channel_mix")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: r.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: v.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: state.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
         })
     }
 }
