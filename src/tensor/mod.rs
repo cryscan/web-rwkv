@@ -8,7 +8,7 @@ use wgpu::{
 
 use crate::{context::Context, num::Scalar};
 pub use ops::{TensorCommand, TensorOp, TensorPass, TensorQueue};
-pub use shape::{Shape, ShapeCache, Slice};
+pub use shape::{Shape, ShapeCache};
 
 mod ops;
 mod shape;
@@ -132,12 +132,12 @@ pub trait TensorExt<'a, T: Scalar>: Sized + Clone {
     fn make_slice<X, Y, Z>(
         &'a self,
         name: Option<&'a str>,
-        slice: &Slice<X, Y, Z>,
+        slice: (X, Y, Z),
     ) -> Result<Self, TensorError>
     where
-        X: RangeBounds<usize>,
-        Y: RangeBounds<usize>,
-        Z: RangeBounds<usize>;
+        X: RangeBounds<usize> + Clone,
+        Y: RangeBounds<usize> + Clone,
+        Z: RangeBounds<usize> + Clone;
 }
 
 impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
@@ -224,18 +224,18 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
     fn make_slice<X, Y, Z>(
         &'a self,
         name: Option<&'a str>,
-        slice: &Slice<X, Y, Z>,
+        (x, y, z): (X, Y, Z),
     ) -> Result<Self, TensorError>
     where
-        X: RangeBounds<usize>,
-        Y: RangeBounds<usize>,
-        Z: RangeBounds<usize>,
+        X: RangeBounds<usize> + Clone,
+        Y: RangeBounds<usize> + Clone,
+        Z: RangeBounds<usize> + Clone,
     {
-        self.check_slice(slice)?;
-        let (start, _) = self.shape_bounds(slice);
+        self.check_slice(x.clone(), y.clone(), z.clone())?;
+        let (start, _) = self.shape_bounds(x.clone(), y.clone(), z.clone());
         let start = self.shape.shape_index(start);
 
-        let shape = self.slice_shape(slice);
+        let shape = self.slice_shape(x, y, z);
         let end = start + shape.len();
         let data = Cow::Borrowed(&self.data[start..end]);
 
@@ -303,18 +303,18 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
     fn make_slice<X, Y, Z>(
         &'a self,
         name: Option<&'a str>,
-        slice: &Slice<X, Y, Z>,
+        (x, y, z): (X, Y, Z),
     ) -> Result<Self, TensorError>
     where
-        X: RangeBounds<usize>,
-        Y: RangeBounds<usize>,
-        Z: RangeBounds<usize>,
+        X: RangeBounds<usize> + Clone,
+        Y: RangeBounds<usize> + Clone,
+        Z: RangeBounds<usize> + Clone,
     {
-        self.check_slice(slice)?;
-        let (start, _) = self.shape_bounds(slice);
+        self.check_slice(x.clone(), y.clone(), z.clone())?;
+        let (start, _) = self.shape_bounds(x.clone(), y.clone(), z.clone());
         let start = self.shape.shape_index(start);
 
-        let shape = self.slice_shape(slice);
+        let shape = self.slice_shape(x, y, z);
         let tensor = Self::from_other(self.clone(), name, shape, start as u64)?;
         Ok(tensor)
     }
