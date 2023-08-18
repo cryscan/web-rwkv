@@ -30,6 +30,10 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
+    if index >= stride || token >= shape[1] || batch >= shape[2] {
+        return;
+    }
+
     let bb = (batch * shape[1] + token) * stride;
 
     sketch[index] = vec4<f32>(-1.0e30);

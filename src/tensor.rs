@@ -1061,6 +1061,82 @@ impl<'a> TensorOp<'a> {
             ],
         })
     }
+
+    pub fn quantize_int8(
+        input: &'a TensorGpu<f16, ReadWrite>,
+        mx: &'a TensorGpu<f32, ReadWrite>,
+        rx: &'a TensorGpu<f32, ReadWrite>,
+        my: &'a TensorGpu<f32, ReadWrite>,
+        ry: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<[Self; 5], TensorError> {
+        let shape = output.shape;
+        check_shape(input, shape)?;
+        check_shape(mx, TensorShape([shape[0], 1, 1]))?;
+        check_shape(rx, TensorShape([shape[0], 1, 1]))?;
+        check_shape(my, TensorShape([shape[1], 1, 1]))?;
+        check_shape(ry, TensorShape([shape[1], 1, 1]))?;
+
+        let context = output.context;
+        let entries = &[
+            BindGroupEntry {
+                binding: 0,
+                resource: output.shape_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: input.binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: mx.binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: rx.binding(),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: my.binding(),
+            },
+            BindGroupEntry {
+                binding: 5,
+                resource: ry.binding(),
+            },
+            BindGroupEntry {
+                binding: 6,
+                resource: output.binding(),
+            },
+        ];
+        let create_op = |name: &str, dispatch| -> Result<Self, TensorError> {
+            let pipeline = context
+                .pipelines
+                .get(name)
+                .ok_or(TensorError::PipelineError)?;
+            let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+                label: None,
+                layout: &pipeline.get_bind_group_layout(0),
+                entries,
+            })];
+            Ok(Self {
+                pipeline,
+                bindings,
+                dispatch,
+            })
+        };
+
+        let compute_my = create_op("compute_my_int8", [1, shape[1] as u32, 1])?;
+        let compute_ry = create_op("compute_ry_int8", [1, shape[1] as u32, 1])?;
+        let compute_mx = create_op("compute_mx_int8", [1, shape[0] as u32 / 4, 1])?;
+        let compute_rx = create_op("compute_rx_int8", [1, shape[0] as u32 / 4, 1])?;
+        let quantize = create_op("quantize_int8", [shape[0] as u32 / 4, shape[1] as u32, 1])?;
+
+        if shape[1] > shape[0] {
+            Ok([compute_my, compute_mx, compute_rx, compute_ry, quantize])
+        } else {
+            Ok([compute_mx, compute_my, compute_rx, compute_ry, quantize])
+        }
+    }
 }
 
 impl<'a> Context {

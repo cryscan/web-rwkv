@@ -18,17 +18,15 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
-    if token >= shape[1] || batch >= shape[2] {
+    if index >= stride || token >= shape[1] || batch >= shape[2] {
         return;
     }
 
-    if index < stride {
-        let bi = batch * stride + index;
-        let bti = (batch * shape[1] + token) * stride + index;
-        if token == 0u {
-            output[bti] = mix(sx[bi], x[bti], unpack4x16float(time_mix[index]));
-        } else {
-            output[bti] = mix(x[bti - stride], x[bti], unpack4x16float(time_mix[index]));
-        }
+    let bi = batch * stride + index;
+    let bti = (batch * shape[1] + token) * stride + index;
+    if token == 0u {
+        output[bti] = mix(sx[bi], x[bti], unpack4x16float(time_mix[index]));
+    } else {
+        output[bti] = mix(x[bti - stride], x[bti], unpack4x16float(time_mix[index]));
     }
 }

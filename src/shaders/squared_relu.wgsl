@@ -12,13 +12,11 @@ fn squared_relu(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
-    if token >= shape[1] || batch >= shape[2] {
+    if index >= stride || token >= shape[1] || batch >= shape[2] {
         return;
     }
 
-    if index < stride {
-        let bti = (batch * shape[1] + token) * stride + index;
-        let p = max(x[bti], vec4<f32>(0.0));
-        output[bti] = p * p;
-    }
+    let bti = (batch * shape[1] + token) * stride + index;
+    let p = max(x[bti], vec4<f32>(0.0));
+    output[bti] = p * p;
 }

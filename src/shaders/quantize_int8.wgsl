@@ -180,8 +180,10 @@ fn quantize(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let batch = invocation_id.y;
     let stride = vec2<u32>(shape.x / 4u, shape.y);
 
-    for (var i = index; i < stride.x; i += BLOCK_SIZE) {
-        let value = unpack4x16float(input[stride.x * batch + i]);
-        output[stride.x * batch + i] = pack4x8unorm(value);
+    if index >= stride.x || batch >= stride.y {
+        return;
     }
+
+    let value = unpack4x16float(input[stride.x * batch + index]);
+    output[stride.x * batch + index] = pack4x8unorm(value);
 }
