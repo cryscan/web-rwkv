@@ -2,6 +2,7 @@ use core::ops::RangeBounds;
 use std::{
     cell::RefCell,
     collections::HashMap,
+    hash::Hash,
     ops::Bound,
     sync::{Arc, RwLock},
 };
@@ -60,6 +61,22 @@ impl std::ops::IndexMut<usize> for Shape {
     }
 }
 
+impl std::ops::Add<Shape> for Shape {
+    type Output = Self;
+
+    fn add(self, rhs: Shape) -> Self::Output {
+        Self::new(self[0] + rhs[0], self[1] + rhs[1], self[2] + rhs[2])
+    }
+}
+
+impl std::ops::Sub<Shape> for Shape {
+    type Output = Self;
+
+    fn sub(self, rhs: Shape) -> Self::Output {
+        Self::new(self[0] - rhs[0], self[1] - rhs[1], self[2] - rhs[2])
+    }
+}
+
 #[derive(Debug, Default, Deref)]
 pub struct ShapeCache(RefCell<RwLock<HashMap<Shape, Arc<Buffer>>>>);
 
@@ -93,6 +110,10 @@ impl ShapeCache {
     }
 }
 
+pub trait TensorSlice: RangeBounds<usize> + Clone + PartialEq + Eq + Hash {}
+
+impl<T> TensorSlice for T where T: RangeBounds<usize> + Clone + PartialEq + Eq + Hash {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SliceState {
     Zero,
@@ -101,7 +122,7 @@ enum SliceState {
     Full,
 }
 
-fn slice_to_dim<B: RangeBounds<usize>>(slice: B, dim: usize) -> (usize, usize) {
+fn slice_to_dim(slice: impl TensorSlice, dim: usize) -> (usize, usize) {
     let start = match slice.start_bound() {
         Bound::Included(&bound) => bound,
         Bound::Excluded(&bound) => bound + 1,
@@ -115,8 +136,8 @@ fn slice_to_dim<B: RangeBounds<usize>>(slice: B, dim: usize) -> (usize, usize) {
     (start, end)
 }
 
-fn check_slice_dim<B: RangeBounds<usize>>(
-    slice: B,
+fn check_slice_dim(
+    slice: impl TensorSlice,
     dim: usize,
     state: &mut SliceState,
 ) -> Result<(), TensorError> {
@@ -151,12 +172,12 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
     }
 
     /// Check if a given slice both is not out of range and views a contiguous chunk of memory.
-    pub fn check_slice<X, Y, Z>(&self, x: X, y: Y, z: Z) -> Result<(), TensorError>
-    where
-        X: RangeBounds<usize>,
-        Y: RangeBounds<usize>,
-        Z: RangeBounds<usize>,
-    {
+    pub fn check_slice(
+        &self,
+        x: impl TensorSlice,
+        y: impl TensorSlice,
+        z: impl TensorSlice,
+    ) -> Result<(), TensorError> {
         let mut state = SliceState::Full;
         let x = check_slice_dim(x, self.shape[0], &mut state);
         let y = check_slice_dim(y, self.shape[1], &mut state);
@@ -164,12 +185,12 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
         x.and(y).and(z)
     }
 
-    pub fn shape_bounds<X, Y, Z>(&self, x: X, y: Y, z: Z) -> (Shape, Shape)
-    where
-        X: RangeBounds<usize>,
-        Y: RangeBounds<usize>,
-        Z: RangeBounds<usize>,
-    {
+    pub fn shape_bounds(
+        &self,
+        x: impl TensorSlice,
+        y: impl TensorSlice,
+        z: impl TensorSlice,
+    ) -> (Shape, Shape) {
         let mut start = Shape::default();
         let mut end = Shape::default();
         (start[0], end[0]) = slice_to_dim(x, self.shape[0]);
@@ -178,14 +199,14 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
         (start, end)
     }
 
-    pub fn slice_shape<X, Y, Z>(&self, x: X, y: Y, z: Z) -> Shape
-    where
-        X: RangeBounds<usize>,
-        Y: RangeBounds<usize>,
-        Z: RangeBounds<usize>,
-    {
+    pub fn slice_shape(
+        &self,
+        x: impl TensorSlice,
+        y: impl TensorSlice,
+        z: impl TensorSlice,
+    ) -> Shape {
         let (start, end) = self.shape_bounds(x, y, z);
-        Shape::new(end[0] - start[0], end[1] - start[1], end[2] - start[2])
+        end - start
     }
 }
 
@@ -244,13 +265,14 @@ mod tests {
         let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
         let x: TensorCpu<_, ReadWrite> = TensorCpu::from_data(&context, None, shape, x)?;
 
-        let y = x.make_slice(None, (.., 1..2, 1..2))?;
-        let y = Vec::from(y);
+        let y: Vec<_> = x.make_slice(None, .., 1..2, 1..2)?.into();
         assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);
 
-        let y = x.make_slice(None, (.., .., 1..2))?;
-        let y = Vec::from(y);
+        let y: Vec<_> = x.make_slice(None, .., .., 1..2)?.into();
         assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
+
+        let y: Vec<_> = x.make_slice(None, 2.., 1.., ..0)?.into();
+        assert_eq!(y, Vec::<f32>::new());
 
         Ok(())
     }

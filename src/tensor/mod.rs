@@ -1,4 +1,4 @@
-use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, ops::RangeBounds, sync::Arc};
+use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
 
 use web_rwkv_derive::{Deref, Id, Kind};
 use wgpu::{
@@ -9,6 +9,8 @@ use wgpu::{
 use crate::{context::Context, num::Scalar};
 pub use ops::{TensorCommand, TensorOp, TensorPass, TensorQueue};
 pub use shape::{Shape, ShapeCache};
+
+use self::shape::TensorSlice;
 
 mod ops;
 mod shape;
@@ -129,15 +131,13 @@ pub trait TensorExt<'a, T: Scalar>: Sized + Clone {
 
     fn init(context: &'a Context, name: Option<&'a str>, shape: Shape) -> Self;
 
-    fn make_slice<X, Y, Z>(
+    fn make_slice(
         &'a self,
         name: Option<&'a str>,
-        slice: (X, Y, Z),
-    ) -> Result<Self, TensorError>
-    where
-        X: RangeBounds<usize> + Clone,
-        Y: RangeBounds<usize> + Clone,
-        Z: RangeBounds<usize> + Clone;
+        x: impl TensorSlice,
+        y: impl TensorSlice,
+        z: impl TensorSlice,
+    ) -> Result<Self, TensorError>;
 }
 
 impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
@@ -221,16 +221,13 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
         context.zeros(name, shape)
     }
 
-    fn make_slice<X, Y, Z>(
+    fn make_slice(
         &'a self,
         name: Option<&'a str>,
-        (x, y, z): (X, Y, Z),
-    ) -> Result<Self, TensorError>
-    where
-        X: RangeBounds<usize> + Clone,
-        Y: RangeBounds<usize> + Clone,
-        Z: RangeBounds<usize> + Clone,
-    {
+        x: impl TensorSlice,
+        y: impl TensorSlice,
+        z: impl TensorSlice,
+    ) -> Result<Self, TensorError> {
         self.check_slice(x.clone(), y.clone(), z.clone())?;
         let (start, _) = self.shape_bounds(x.clone(), y.clone(), z.clone());
         let start = self.shape.shape_index(start);
@@ -300,16 +297,13 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
         }
     }
 
-    fn make_slice<X, Y, Z>(
+    fn make_slice(
         &'a self,
         name: Option<&'a str>,
-        (x, y, z): (X, Y, Z),
-    ) -> Result<Self, TensorError>
-    where
-        X: RangeBounds<usize> + Clone,
-        Y: RangeBounds<usize> + Clone,
-        Z: RangeBounds<usize> + Clone,
-    {
+        x: impl TensorSlice,
+        y: impl TensorSlice,
+        z: impl TensorSlice,
+    ) -> Result<Self, TensorError> {
         self.check_slice(x.clone(), y.clone(), z.clone())?;
         let (start, _) = self.shape_bounds(x.clone(), y.clone(), z.clone());
         let start = self.shape.shape_index(start);

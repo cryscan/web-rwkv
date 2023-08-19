@@ -4,13 +4,15 @@ use half::f16;
 
 use crate::{
     context::Context,
-    tensor::{ReadWrite, TensorGpu},
+    tensor::{ReadWrite, TensorCpu, TensorGpu},
 };
 
-#[derive(Debug, Getters)]
-pub struct Model {
+#[derive(Getters)]
+pub struct Model<'a> {
     pub(crate) info: ModelInfo,
     pub(crate) context: Context,
+    #[getter(skip)]
+    tensor: ModelTensor<'a>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -18,6 +20,11 @@ pub struct ModelInfo {
     pub num_layers: usize,
     pub num_emb: usize,
     pub num_vocab: usize,
+
+    /// The head matrix is too big for a storage buffer so it's divided into chunks.
+    pub max_head_chunk: usize,
+    /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
+    pub max_batch_token_chunk: usize,
 }
 
 bitflags! {
@@ -45,23 +52,29 @@ pub enum Quantization {
     Int8(LayerFlags),
 }
 
-pub enum Matrix<'a> {
+enum Matrix<'a> {
     Fp16(TensorGpu<'a, f16, ReadWrite>),
     Int8 {
-        w: TensorGpu<'a, u8, ReadWrite>,
-        mx: TensorGpu<'a, f32, ReadWrite>,
-        rx: TensorGpu<'a, f32, ReadWrite>,
-        my: TensorGpu<'a, f32, ReadWrite>,
-        ry: TensorGpu<'a, f32, ReadWrite>,
+        w: Box<TensorGpu<'a, u8, ReadWrite>>,
+        mx: Box<TensorGpu<'a, f32, ReadWrite>>,
+        rx: Box<TensorGpu<'a, f32, ReadWrite>>,
+        my: Box<TensorGpu<'a, f32, ReadWrite>>,
+        ry: Box<TensorGpu<'a, f32, ReadWrite>>,
     },
 }
 
-pub struct LayerNorm<'a> {
+struct ModelTensor<'a> {
+    embed: Embed<'a>,
+    head: Head<'a>,
+    layers: Vec<Layer<'a>>,
+}
+
+struct LayerNorm<'a> {
     w: TensorGpu<'a, f32, ReadWrite>,
     b: TensorGpu<'a, f32, ReadWrite>,
 }
 
-pub struct Att<'a> {
+struct Att<'a> {
     time_decay: TensorGpu<'a, f32, ReadWrite>,
     time_first: TensorGpu<'a, f32, ReadWrite>,
 
@@ -75,7 +88,45 @@ pub struct Att<'a> {
     w_o: Matrix<'a>,
 }
 
-pub struct Ffn<'a> {
+struct Ffn<'a> {
     time_mix_k: TensorGpu<'a, f16, ReadWrite>,
     time_mix_v: TensorGpu<'a, f16, ReadWrite>,
+
+    w_k: Matrix<'a>,
+    w_v: Matrix<'a>,
+    w_r: Matrix<'a>,
+}
+
+struct Layer<'a> {
+    att_layer_norm: LayerNorm<'a>,
+    ffn_layer_norm: LayerNorm<'a>,
+    att: Att<'a>,
+    ffn: Ffn<'a>,
+}
+
+struct Embed<'a> {
+    layer_norm: LayerNorm<'a>,
+    w: TensorCpu<'a, f16, ReadWrite>,
+}
+
+struct Head<'a> {
+    layer_norm: LayerNorm<'a>,
+    w: Vec<TensorGpu<'a, f16, ReadWrite>>,
+}
+
+/// Runtime buffers.
+pub struct ModelBuffer<'a> {
+    info: ModelInfo,
+
+    emb_x: TensorGpu<'a, f32, ReadWrite>,
+    emb_o: TensorGpu<'a, f32, ReadWrite>,
+
+    att_x: TensorGpu<'a, f32, ReadWrite>,
+    att_kx: TensorGpu<'a, f32, ReadWrite>,
+    att_vx: TensorGpu<'a, f32, ReadWrite>,
+    att_k: TensorGpu<'a, f32, ReadWrite>,
+    att_v: TensorGpu<'a, f32, ReadWrite>,
+    att_r: TensorGpu<'a, f32, ReadWrite>,
+    att_w: TensorGpu<'a, f32, ReadWrite>,
+    att_o: TensorGpu<'a, f32, ReadWrite>,
 }
