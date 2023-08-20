@@ -306,7 +306,7 @@ mod tests {
 
         let shape = Shape::new(4, 2, 3);
         let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
-        let x: TensorCpu<_, ReadWrite> = TensorCpu::from_data(&context, shape, &x)?;
+        let x: TensorCpu<_, ReadWrite> = TensorCpu::from_data(&context, shape, x)?;
 
         let y: Vec<_> = x.clone().into_slice(.., 1..2, 1..2)?.into();
         assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);

@@ -1,10 +1,13 @@
 use bitflags::bitflags;
 use derive_getters::Getters;
 use half::f16;
+use wgpu::CommandEncoderDescriptor;
 
 use crate::{
     context::Context,
-    tensor::{ReadBack, ReadWrite, Shape, TensorCpu, TensorError, TensorGpu, Uniform},
+    tensor::{
+        ReadBack, ReadWrite, Shape, TensorCommand, TensorCpu, TensorError, TensorGpu, Uniform,
+    },
 };
 
 #[derive(Getters)]
@@ -119,7 +122,7 @@ pub struct ModelBuffer<'a> {
     info: ModelInfo,
 
     mask: TensorGpu<'a, f32, Uniform>,
-    emb_x: TensorGpu<'a, f32, ReadWrite>,
+    input: TensorGpu<'a, f32, ReadWrite>,
 
     att_x: TensorGpu<'a, f32, ReadWrite>,
     att_kx: TensorGpu<'a, f32, ReadWrite>,
@@ -138,11 +141,10 @@ pub struct ModelBuffer<'a> {
     ffn_r: TensorGpu<'a, f32, ReadWrite>,
     ffn_o: TensorGpu<'a, f32, ReadWrite>,
 
-    head_x: TensorGpu<'a, f32, ReadWrite>,
-    head_v: Vec<TensorGpu<'a, f32, ReadWrite>>,
+    head_x: Vec<TensorGpu<'a, f32, ReadWrite>>,
     head_o: TensorGpu<'a, f32, ReadWrite>,
 
-    softmax_o: TensorGpu<'a, f32, ReadWrite>,
+    softmax: TensorGpu<'a, f32, ReadWrite>,
 
     map: TensorGpu<'a, f32, ReadBack>,
 }
@@ -161,52 +163,162 @@ impl<'a> ModelBuffer<'a> {
 
         input.check_shape(Shape::new(info.num_emb, shape[1], shape[2]))?;
 
-        let mask = TensorGpu::from(mask);
-        let emb_x = TensorGpu::from(input);
-        let att_x = emb_x.clone();
-
-        let att_o: TensorGpu<_, _> = context.init_tensor(shape);
-        let ffn_x = att_o.clone();
-
-        let ffn_o: TensorGpu<_, _> = context.init_tensor(shape);
-        let head_x = ffn_o.clone();
-
-        let head_v = (0..(info.num_vocab + info.max_head_chunk - 1) / info.max_head_chunk)
+        let head_x = (0..(info.num_vocab + info.max_head_chunk - 1) / info.max_head_chunk)
             .map(|_| context.init_tensor(head_shape))
             .collect();
 
         Ok(Self {
             info,
-            mask,
-            emb_x,
-            att_x,
+            mask: TensorGpu::from(mask),
+            input: TensorGpu::from(input),
+            att_x: context.init_tensor(shape),
             att_kx: context.init_tensor(shape),
             att_vx: context.init_tensor(shape),
             att_k: context.init_tensor(shape),
             att_v: context.init_tensor(shape),
             att_r: context.init_tensor(shape),
             att_w: context.init_tensor(shape),
-            att_o,
-            ffn_x,
+            att_o: context.init_tensor(shape),
+            ffn_x: context.init_tensor(shape),
             ffn_kx: context.init_tensor(shape),
             ffn_rx: context.init_tensor(shape),
             ffn_k: context.init_tensor(ffn_shape),
             ffn_v: context.init_tensor(shape),
             ffn_r: context.init_tensor(shape),
-            ffn_o,
+            ffn_o: context.init_tensor(shape),
             head_x,
-            head_v,
             head_o: context.init_tensor(out_shape),
-            softmax_o: context.init_tensor(out_shape),
+            softmax: context.init_tensor(out_shape),
             map: context.init_tensor(out_shape),
         })
     }
 
     pub fn num_tokens(&self) -> usize {
-        self.emb_x.shape()[1]
+        self.input.shape()[1]
     }
 
     pub fn num_batches(&self) -> usize {
-        self.emb_x.shape()[2]
+        self.input.shape()[2]
+    }
+}
+
+pub struct ModelState<'a> {
+    pub info: ModelInfo,
+    pub context: &'a Context,
+    pub layers: Vec<(TensorGpu<'a, f32, ReadWrite>, TensorGpu<'a, f32, ReadWrite>)>,
+}
+
+impl<'a> ModelState<'a> {
+    pub fn new(context: &'a Context, info: ModelInfo, num_batches: usize) -> Self {
+        let layers = (0..info.num_layers)
+            .map(|_| {
+                let data = [
+                    vec![0.0; info.num_emb],
+                    vec![0.0; info.num_emb],
+                    vec![0.0; info.num_emb],
+                    vec![-f32::MIN; info.num_emb],
+                ]
+                .concat();
+                let att = context
+                    .tensor_from_data(Shape::new(info.num_emb, 4, num_batches), data)
+                    .unwrap();
+                let ffn = context.zeros(Shape::new(info.num_emb, 1, num_batches));
+                (att, ffn)
+            })
+            .collect();
+        Self {
+            info,
+            context,
+            layers,
+        }
+    }
+
+    pub fn att_shape(&self) -> Shape {
+        self.layers[0].0.shape()
+    }
+
+    pub fn ffn_shape(&self) -> Shape {
+        self.layers[0].1.shape()
+    }
+}
+
+pub struct BackedState<'a> {
+    pub info: ModelInfo,
+    pub context: &'a Context,
+    pub data: Vec<f32>,
+}
+
+impl<'a> From<BackedState<'a>> for ModelState<'a> {
+    fn from(value: BackedState<'a>) -> Self {
+        let BackedState {
+            info,
+            context,
+            data,
+        } = value;
+
+        let layer_stride = info.num_emb * 5;
+        let batch_stride = info.num_layers * layer_stride;
+        let num_batch = data.len() / batch_stride;
+
+        let att_shape = Shape::new(info.num_emb, 4, num_batch);
+        let ffn_shape = Shape::new(info.num_emb, 1, num_batch);
+
+        let mut layers = vec![];
+        for batch in 0..num_batch {
+            for layer in 0..info.num_layers {
+                let index = batch * batch_stride + layer * layer_stride;
+                let att = data[index..index + 4 * info.num_emb].to_owned();
+                let ffn = data[index + 4 * info.num_emb..index + 5 * info.num_emb].to_owned();
+                layers.push((
+                    context.tensor_from_data(att_shape, att).unwrap(),
+                    context.tensor_from_data(ffn_shape, ffn).unwrap(),
+                ));
+            }
+        }
+
+        Self {
+            info,
+            context,
+            layers,
+        }
+    }
+}
+
+impl<'a> From<ModelState<'a>> for BackedState<'a> {
+    fn from(value: ModelState<'a>) -> Self {
+        let att_shape = value.att_shape();
+        let ffn_shape = value.ffn_shape();
+
+        let ModelState {
+            info,
+            context,
+            layers,
+        } = value;
+
+        let att_map = context.init_tensor(att_shape);
+        let ffn_map = context.init_tensor(ffn_shape);
+
+        let data = layers
+            .into_iter()
+            .map(|(att, ffn)| {
+                let mut encoder = context
+                    .device
+                    .create_command_encoder(&CommandEncoderDescriptor::default());
+                encoder.copy_tensor(&att, &att_map).unwrap();
+                encoder.copy_tensor(&ffn, &ffn_map).unwrap();
+                context.queue.submit(Some(encoder.finish()));
+
+                let att = Vec::from(TensorCpu::from(att_map.clone()));
+                let ffn = Vec::from(TensorCpu::from(ffn_map.clone()));
+                [att, ffn].concat()
+            })
+            .collect::<Vec<_>>()
+            .concat();
+
+        Self {
+            info,
+            context,
+            data,
+        }
     }
 }

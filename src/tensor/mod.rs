@@ -121,7 +121,7 @@ pub type TensorCpu<'a, T, K> = Tensor<'a, Cpu<'a, T>, T, K>;
 pub type TensorGpu<'a, T, K> = Tensor<'a, Gpu, T, K>;
 
 pub trait TensorExt<'a, T: Scalar>: Sized + Clone {
-    fn from_data(context: &'a Context, shape: Shape, data: &[T]) -> Result<Self, TensorError>;
+    fn from_data(context: &'a Context, shape: Shape, data: Vec<T>) -> Result<Self, TensorError>;
 
     fn init(context: &'a Context, shape: Shape) -> Self;
 
@@ -190,7 +190,7 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
 }
 
 impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
-    fn from_data(context: &'a Context, shape: Shape, data: &[T]) -> Result<Self, TensorError> {
+    fn from_data(context: &'a Context, shape: Shape, data: Vec<T>) -> Result<Self, TensorError> {
         if shape.len() != data.len() {
             return Err(TensorError::Size(shape.len(), data.len()));
         }
@@ -198,7 +198,7 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
             id: TensorId::new(),
             context,
             shape,
-            data: Cow::from(data.to_owned()),
+            data: Cow::from(data),
             phantom: Default::default(),
         })
     }
@@ -238,7 +238,7 @@ impl<T: Scalar, K: Kind> From<TensorCpu<'_, T, K>> for Vec<T> {
 }
 
 impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
-    fn from_data(context: &'a Context, shape: Shape, data: &[T]) -> Result<Self, TensorError> {
+    fn from_data(context: &'a Context, shape: Shape, data: Vec<T>) -> Result<Self, TensorError> {
         TensorCpu::from_data(context, shape, data).map(Into::into)
     }
 
@@ -420,12 +420,12 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, T, ReadBa
 impl<'a> Context {
     pub fn zeros<T: Scalar, Tensor: TensorExt<'a, T>>(&'a self, shape: Shape) -> Tensor {
         let data = vec![T::zero(); shape.len()];
-        Tensor::from_data(self, shape, &data).unwrap()
+        Tensor::from_data(self, shape, data).unwrap()
     }
 
     pub fn ones<T: Scalar, Tensor: TensorExt<'a, T>>(&'a self, shape: Shape) -> Tensor {
         let data = vec![T::one(); shape.len()];
-        Tensor::from_data(self, shape, &data).unwrap()
+        Tensor::from_data(self, shape, data).unwrap()
     }
 
     pub fn tensor_from_data<T: Scalar, Tensor: TensorExt<'a, T>>(
@@ -433,7 +433,7 @@ impl<'a> Context {
         shape: Shape,
         data: Vec<T>,
     ) -> Result<Tensor, TensorError> {
-        Tensor::from_data(self, shape, &data)
+        Tensor::from_data(self, shape, data)
     }
 
     pub fn init_tensor<T: Scalar, Tensor: TensorExt<'a, T>>(&'a self, shape: Shape) -> Tensor {

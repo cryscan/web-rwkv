@@ -870,8 +870,8 @@ mod tests {
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
             .collect();
 
-        let matrix_dev = TensorGpu::from_data(&context, Shape::new(C, R, 1), &matrix)?;
-        let input_dev = TensorGpu::from_data(&context, Shape::new(C, T, B), &input)?;
+        let matrix_dev = TensorGpu::from_data(&context, Shape::new(C, R, 1), matrix.clone())?;
+        let input_dev = TensorGpu::from_data(&context, Shape::new(C, T, B), input.clone())?;
         let output_dev = TensorGpu::init(&context, Shape::new(R, T, B));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
@@ -922,20 +922,20 @@ mod tests {
         let context = create_context()?;
 
         let output = vec![0.0; 24];
-        let output = TensorGpu::from_data(&context, Shape::new(4, 3, 2), &output)?;
+        let output = TensorGpu::from_data(&context, Shape::new(4, 3, 2), output)?;
 
         let map = TensorGpu::init(&context, output.shape());
 
         let offset_shape = Shape::new(4, 1, 1);
 
         let input: Vec<_> = (0..8).map(|x| x as f32).collect();
-        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 2), &input)?;
-        let offset = TensorGpu::from_data(&context, offset_shape, &vec![0, 1, 0, 0])?;
+        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 2), input)?;
+        let offset = TensorGpu::from_data(&context, offset_shape, vec![0, 1, 0, 0])?;
         let blit_1 = TensorOp::blit(&offset, &input, &output)?;
 
         let input: Vec<_> = (8..12).map(|x| x as f32).collect();
-        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &input)?;
-        let offset = TensorGpu::from_data(&context, offset_shape, &vec![0, 2, 1, 0])?;
+        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 1), input)?;
+        let offset = TensorGpu::from_data(&context, offset_shape, vec![0, 2, 1, 0])?;
         let blit_2 = TensorOp::blit(&offset, &input, &output)?;
 
         let mut encoder = context
