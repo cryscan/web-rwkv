@@ -3,21 +3,22 @@ use bitflags::bitflags;
 use derive_getters::Getters;
 use half::f16;
 use safetensors::SafeTensors;
-use wgpu::CommandEncoderDescriptor;
+use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use crate::{
     context::Context,
     tensor::{
-        ReadBack, ReadWrite, Shape, TensorCommand, TensorCpu, TensorError, TensorGpu, Uniform,
+        ReadBack, ReadWrite, Shape, TensorCommand, TensorCpu, TensorError, TensorGpu, TensorOp,
+        TensorPass, Uniform,
     },
 };
 
 #[derive(Getters)]
-pub struct Model<'a> {
+pub struct Model<'a, 'b> {
     pub(crate) info: ModelInfo,
     pub(crate) context: Context,
     #[getter(skip)]
-    tensor: ModelTensor<'a>,
+    tensor: ModelTensor<'a, 'b>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -68,15 +69,15 @@ enum Matrix<'a> {
     },
 }
 
-struct ModelTensor<'a> {
-    embed: Embed<'a>,
+struct ModelTensor<'a, 'b> {
+    embed: Embed<'a, 'b>,
     head: Head<'a>,
     layers: Vec<Layer<'a>>,
 }
 
 struct LayerNorm<'a> {
-    w: TensorGpu<'a, f32, ReadWrite>,
-    b: TensorGpu<'a, f32, ReadWrite>,
+    w: TensorGpu<'a, f16, ReadWrite>,
+    b: TensorGpu<'a, f16, ReadWrite>,
 }
 
 struct Att<'a> {
@@ -109,9 +110,9 @@ struct Layer<'a> {
     ffn: Ffn<'a>,
 }
 
-struct Embed<'a> {
+struct Embed<'a, 'b> {
     layer_norm: LayerNorm<'a>,
-    w: TensorCpu<'a, 'a, f16, ReadWrite>,
+    w: TensorCpu<'a, 'b, f16, ReadWrite>,
 }
 
 struct Head<'a> {
@@ -325,17 +326,16 @@ impl<'a> From<ModelState<'a>> for BackedState<'a> {
     }
 }
 
-pub struct ModelBuilder<'a> {
+pub struct ModelBuilder<'a, 'b> {
     context: &'a Context,
-    data: &'a [u8],
+    data: &'b [u8],
     quant: Quantization,
-
     max_head_chunk: usize,
     max_batch_token_chunk: usize,
 }
 
-impl<'a> ModelBuilder<'a> {
-    pub fn new(context: &'a Context, data: &'a [u8]) -> Self {
+impl<'a, 'b> ModelBuilder<'a, 'b> {
+    pub fn new(context: &'a Context, data: &'b [u8]) -> Self {
         Self {
             context,
             data,
@@ -363,7 +363,7 @@ impl<'a> ModelBuilder<'a> {
         }
     }
 
-    pub fn build(self) -> Result<Model<'a>> {
+    pub fn build(self) -> Result<Model<'a, 'b>> {
         let Self {
             context,
             data,
@@ -373,6 +373,7 @@ impl<'a> ModelBuilder<'a> {
         } = self;
 
         let model = SafeTensors::deserialize(data)?;
+        let emb = model.tensor("emb.weight")?;
 
         let num_layers = {
             let mut r: usize = 0;
@@ -386,7 +387,6 @@ impl<'a> ModelBuilder<'a> {
             r + 1
         };
         let (num_emb, num_vocab) = {
-            let emb = model.tensor("emb.weight")?;
             let num_emb = emb.shape()[1];
             let num_vocab = emb.shape()[0];
             (num_emb, num_vocab)
@@ -400,31 +400,88 @@ impl<'a> ModelBuilder<'a> {
             max_batch_token_chunk,
         };
 
-        let load_tensor_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
+        let load_vector_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
             let tensor = model.tensor(&name)?;
             let data: Vec<_> = bytemuck::pod_collect_to_vec::<_, f16>(tensor.data())
                 .into_iter()
                 .map(f16::to_f32)
                 .collect();
-            let shape = Shape::from_slice(tensor.shape());
+            let shape = Shape::new(data.len(), 1, 1);
             Ok(context.tensor_from_data(shape, data)?)
         };
-
-        let load_tensor_exp_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
+        let load_vector_exp_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
             let tensor = model.tensor(&name)?;
             let data: Vec<_> = bytemuck::pod_collect_to_vec::<_, f16>(tensor.data())
                 .into_iter()
                 .map(f16::to_f32)
                 .map(|x| -x.exp())
                 .collect();
-            let shape = Shape::from_slice(tensor.shape());
+            let shape = Shape::new(data.len(), 1, 1);
             Ok(context.tensor_from_data(shape, data)?)
         };
-
-        let load_tensor_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
+        let load_vector_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
             let tensor = model.tensor(&name)?;
-            let shape = Shape::from_slice(tensor.shape());
-            Ok(context.tensor_from_slice(shape, bytemuck::cast_slice(tensor.data()))?)
+            let data = bytemuck::cast_slice(tensor.data());
+            let shape = Shape::new(data.len(), 1, 1);
+            Ok(context.tensor_from_slice(shape, data)?)
+        };
+        let load_matrix_f16 = |name: String| -> Result<Matrix<'_>> {
+            let tensor = model.tensor(&name)?;
+            let shape = tensor.shape();
+            let shape = Shape::new(shape[1], shape[0], 1);
+            let w = context.tensor_from_slice(shape, bytemuck::cast_slice(tensor.data()))?;
+            Ok(Matrix::Fp16(w))
+        };
+        let load_matrix_u8 = |name: String| -> Result<Matrix<'a>> {
+            let tensor = model.tensor(&name)?;
+            let shape = tensor.shape();
+            let shape = Shape::new(shape[1], shape[0], 1);
+            let matrix: TensorGpu<f16, _> =
+                context.tensor_from_slice(shape, bytemuck::cast_slice(tensor.data()))?;
+            let shape = matrix.shape();
+
+            let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
+            let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
+            let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
+            let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
+
+            let w = Box::new(context.init_tensor(matrix.shape()));
+
+            let mut quant_ops =
+                TensorOp::quantize_mat_int8(&matrix, &mx_f32, &rx_f32, &my_f32, &ry_f32, &w)?;
+
+            let mx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
+            let rx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
+            let my = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
+            let ry = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
+
+            quant_ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
+            quant_ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
+            quant_ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
+            quant_ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
+
+            let mut encoder = context
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor::default());
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            quant_ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            drop(pass);
+
+            context.queue.submit(Some(encoder.finish()));
+
+            Ok(Matrix::Int8 { w, mx, rx, my, ry })
+        };
+
+        let embed = Embed {
+            layer_norm: LayerNorm {
+                w: load_vector_f16("blocks.0.ln0.weight".into())?,
+                b: load_vector_f16("blocks.0.ln0.bias".into())?,
+            },
+            w: context.tensor_from_slice(
+                Shape::new(num_emb, num_vocab, 1),
+                bytemuck::cast_slice(emb.data()),
+            )?,
         };
 
         todo!()

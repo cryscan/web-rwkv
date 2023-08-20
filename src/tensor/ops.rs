@@ -635,7 +635,7 @@ impl<'a> TensorOp<'a> {
         my: &'a TensorGpu<f32, ReadWrite>,
         ry: &'a TensorGpu<f32, ReadWrite>,
         output: &'a TensorGpu<u8, ReadWrite>,
-    ) -> Result<[Self; 5], TensorError> {
+    ) -> Result<Vec<Self>, TensorError> {
         let shape = output.shape;
         input.check_shape(shape)?;
         mx.check_shape(Shape::new(shape[0], 1, 1))?;
@@ -698,9 +698,9 @@ impl<'a> TensorOp<'a> {
         let quantize = create_op("quant_mat_int8", [shape[0] as u32 / 4, shape[1] as u32, 1])?;
 
         if shape[1] > shape[0] {
-            Ok([my, mx, rx, ry, quantize])
+            Ok(vec![my, mx, rx, ry, quantize])
         } else {
-            Ok([mx, my, rx, ry, quantize])
+            Ok(vec![mx, my, rx, ry, quantize])
         }
     }
 
