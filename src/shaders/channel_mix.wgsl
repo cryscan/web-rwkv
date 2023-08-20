@@ -1,11 +1,12 @@
 @group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, T, B]
 @group(0) @binding(1) var<uniform> mask: u32;                               // [B]
 
-@group(0) @binding(2) var<storage, read> r: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(3) var<storage, read> v: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(2) var<storage, read> x: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(3) var<storage, read> r: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(4) var<storage, read> v: array<vec4<f32>>;               // (B, T, C)
 
-@group(0) @binding(4) var<storage, read_write> x: array<vec4<f32>>;         // (B, T, C)
-@group(0) @binding(5) var<storage, read_write> state: array<vec4<f32>>;     // (B, C)
+@group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
+@group(0) @binding(6) var<storage, read_write> state: array<vec4<f32>>;     // (B, C)
 
 const BLOCK_SIZE: u32 = 128u;
 
@@ -31,5 +32,5 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     }
 
     let rr = 1.0 / (1.0 + exp(-r[bti]));
-    x[bti] = rr * v[bti];
+    output[bti] = rr * v[bti];
 }

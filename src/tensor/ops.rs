@@ -396,14 +396,16 @@ impl<'a> TensorOp<'a> {
         mask: &'a TensorGpu<u32, Uniform>,
         time_decay: &'a TensorGpu<f32, ReadWrite>,
         time_first: &'a TensorGpu<f32, ReadWrite>,
+        x: &'a TensorGpu<f32, ReadWrite>,
         k: &'a TensorGpu<f32, ReadWrite>,
         v: &'a TensorGpu<f32, ReadWrite>,
         r: &'a TensorGpu<f32, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
         state: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let shape = x.shape;
+        let shape = output.shape;
         mask.check_shape(Shape::new(1, 1, 1))?;
+        x.check_shape(shape)?;
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
@@ -411,7 +413,7 @@ impl<'a> TensorOp<'a> {
         time_first.check_shape(Shape::new(shape[0], 1, 1))?;
         state.check_shape(Shape::new(shape[0], 4, shape[2]))?;
 
-        let context = x.context;
+        let context = output.context;
         let pipeline = context
             .pipelines
             .get("token_mix")
@@ -422,7 +424,7 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: x.shape_binding(),
+                    resource: output.shape_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
@@ -438,22 +440,26 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: k.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
                     resource: x.binding(),
                 },
                 BindGroupEntry {
+                    binding: 5,
+                    resource: k.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: v.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: r.binding(),
+                },
+                BindGroupEntry {
                     binding: 8,
+                    resource: output.binding(),
+                },
+                BindGroupEntry {
+                    binding: 9,
                     resource: state.binding(),
                 },
             ],
@@ -501,19 +507,20 @@ impl<'a> TensorOp<'a> {
 
     pub fn channel_mix(
         mask: &'a TensorGpu<u32, Uniform>,
+        x: &'a TensorGpu<f32, ReadWrite>,
         r: &'a TensorGpu<f32, ReadWrite>,
         v: &'a TensorGpu<f32, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
         state: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let shape = x.shape;
+        let shape = output.shape;
         mask.check_shape(Shape::new(1, 1, 1))?;
         x.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         state.check_shape(Shape::new(shape[0], 1, shape[2]))?;
 
-        let context = x.context;
+        let context = output.context;
         let pipeline = context
             .pipelines
             .get("channel_mix")
@@ -524,7 +531,7 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: x.shape_binding(),
+                    resource: output.shape_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
@@ -532,18 +539,22 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
                     resource: x.binding(),
                 },
                 BindGroupEntry {
+                    binding: 3,
+                    resource: r.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: v.binding(),
+                },
+                BindGroupEntry {
                     binding: 5,
+                    resource: output.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
                     resource: state.binding(),
                 },
             ],
@@ -777,8 +788,8 @@ mod tests {
         let x = vec![0.0, 1.5, 2.0, -1.0];
         let shape = Shape::new(x.len(), 1, 1);
 
-        let x_device: TensorGpu<_, _> = context.tensor_from_data(None, shape, x.clone())?;
-        let x_map = context.tensor_init(None, x_device.shape());
+        let x_device: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
+        let x_map = context.init_tensor(x_device.shape());
 
         let mut encoder = context
             .device
@@ -800,8 +811,8 @@ mod tests {
         let x = [(); 6000].map(|_| 10.0 * (fastrand::f32() - 0.5)).to_vec();
         let shape = Shape::new(x.len() / 6, 3, 2);
 
-        let x_dev: TensorGpu<_, _> = context.tensor_from_data(None, shape, x.clone())?;
-        let x_map = context.tensor_init(None, x_dev.shape());
+        let x_dev: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
+        let x_map = context.init_tensor(x_dev.shape());
 
         let softmax = TensorOp::softmax(&x_dev)?;
 
@@ -859,16 +870,10 @@ mod tests {
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
             .collect();
 
-        let matrix_dev = TensorGpu::from_data(
-            &context,
-            Some("matrix"),
-            Shape::new(C, R, 1),
-            matrix.clone(),
-        )?;
-        let input_dev =
-            TensorGpu::from_data(&context, Some("input"), Shape::new(C, T, B), input.clone())?;
-        let output_dev = TensorGpu::init(&context, None, Shape::new(R, T, B));
-        let output_map = TensorGpu::init(&context, None, output_dev.shape());
+        let matrix_dev = TensorGpu::from_data(&context, Shape::new(C, R, 1), &matrix)?;
+        let input_dev = TensorGpu::from_data(&context, Shape::new(C, T, B), &input)?;
+        let output_dev = TensorGpu::init(&context, Shape::new(R, T, B));
+        let output_map = TensorGpu::init(&context, output_dev.shape());
 
         let matmul = TensorOp::matmul(&matrix_dev, &input_dev, &output_dev)?;
 
@@ -917,20 +922,20 @@ mod tests {
         let context = create_context()?;
 
         let output = vec![0.0; 24];
-        let output = TensorGpu::from_data(&context, None, Shape::new(4, 3, 2), output)?;
+        let output = TensorGpu::from_data(&context, Shape::new(4, 3, 2), &output)?;
 
-        let map = TensorGpu::init(&context, None, output.shape());
+        let map = TensorGpu::init(&context, output.shape());
 
         let offset_shape = Shape::new(4, 1, 1);
 
         let input: Vec<_> = (0..8).map(|x| x as f32).collect();
-        let input = TensorGpu::from_data(&context, None, Shape::new(4, 1, 2), input)?;
-        let offset = TensorGpu::from_data(&context, None, offset_shape, vec![0, 1, 0, 0])?;
+        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 2), &input)?;
+        let offset = TensorGpu::from_data(&context, offset_shape, &vec![0, 1, 0, 0])?;
         let blit_1 = TensorOp::blit(&offset, &input, &output)?;
 
         let input: Vec<_> = (8..12).map(|x| x as f32).collect();
-        let input = TensorGpu::from_data(&context, None, Shape::new(4, 1, 1), input)?;
-        let offset = TensorGpu::from_data(&context, None, offset_shape, vec![0, 2, 1, 0])?;
+        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &input)?;
+        let offset = TensorGpu::from_data(&context, offset_shape, &vec![0, 2, 1, 0])?;
         let blit_2 = TensorOp::blit(&offset, &input, &output)?;
 
         let mut encoder = context

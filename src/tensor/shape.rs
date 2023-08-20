@@ -289,7 +289,7 @@ mod tests {
     fn test_slice() -> Result<(), anyhow::Error> {
         let context = create_context()?;
 
-        let x: TensorCpu<f32, ReadWrite> = context.tensor_init(None, Shape::new(1024, 768, 3));
+        let x: TensorCpu<f32, ReadWrite> = context.init_tensor(Shape::new(1024, 768, 3));
 
         x.check_slice(12..42, 7..8, 1..=1)?;
         x.check_slice(.., .., ..)?;
@@ -306,15 +306,15 @@ mod tests {
 
         let shape = Shape::new(4, 2, 3);
         let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
-        let x: TensorCpu<_, ReadWrite> = TensorCpu::from_data(&context, None, shape, x)?;
+        let x: TensorCpu<_, ReadWrite> = TensorCpu::from_data(&context, shape, &x)?;
 
-        let y: Vec<_> = x.make_slice(None, .., 1..2, 1..2)?.into();
+        let y: Vec<_> = x.clone().into_slice(.., 1..2, 1..2)?.into();
         assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);
 
-        let y: Vec<_> = x.make_slice(None, .., .., 1..2)?.into();
+        let y: Vec<_> = x.clone().into_slice(.., .., 1..2)?.into();
         assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
 
-        let y: Vec<_> = x.make_slice(None, 2.., 1.., ..0)?.into();
+        let y: Vec<_> = x.into_slice(2.., 1.., ..0)?.into();
         assert_eq!(y, Vec::<f32>::new());
 
         Ok(())

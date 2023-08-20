@@ -4,7 +4,7 @@ use half::f16;
 
 use crate::{
     context::Context,
-    tensor::{ReadBack, ReadWrite, TensorCpu, TensorGpu},
+    tensor::{ReadBack, ReadWrite, Shape, TensorCpu, TensorError, TensorGpu, Uniform},
 };
 
 #[derive(Getters)]
@@ -118,6 +118,9 @@ struct Head<'a> {
 pub struct ModelBuffer<'a> {
     info: ModelInfo,
 
+    mask: TensorGpu<'a, f32, Uniform>,
+    emb_x: TensorGpu<'a, f32, ReadWrite>,
+
     att_x: TensorGpu<'a, f32, ReadWrite>,
     att_kx: TensorGpu<'a, f32, ReadWrite>,
     att_vx: TensorGpu<'a, f32, ReadWrite>,
@@ -129,7 +132,6 @@ pub struct ModelBuffer<'a> {
 
     ffn_x: TensorGpu<'a, f32, ReadWrite>,
     ffn_kx: TensorGpu<'a, f32, ReadWrite>,
-    ffn_vx: TensorGpu<'a, f32, ReadWrite>,
     ffn_rx: TensorGpu<'a, f32, ReadWrite>,
     ffn_k: TensorGpu<'a, f32, ReadWrite>,
     ffn_v: TensorGpu<'a, f32, ReadWrite>,
@@ -143,4 +145,68 @@ pub struct ModelBuffer<'a> {
     softmax_o: TensorGpu<'a, f32, ReadWrite>,
 
     map: TensorGpu<'a, f32, ReadBack>,
+}
+
+impl<'a> ModelBuffer<'a> {
+    pub fn new(
+        context: &'a Context,
+        info: ModelInfo,
+        input: TensorCpu<'a, f32, ReadWrite>,
+        mask: TensorCpu<'a, f32, Uniform>,
+    ) -> Result<Self, TensorError> {
+        let shape = input.shape();
+        let ffn_shape = Shape::new(shape[0] * 4, shape[1], shape[2]);
+        let head_shape = Shape::new(info.max_head_chunk, shape[1], shape[2]);
+        let out_shape = Shape::new(info.num_vocab, shape[1], shape[2]);
+
+        input.check_shape(Shape::new(info.num_emb, shape[1], shape[2]))?;
+
+        let mask = TensorGpu::from(mask);
+        let emb_x = TensorGpu::from(input);
+        let att_x = emb_x.clone();
+
+        let att_o: TensorGpu<_, _> = context.init_tensor(shape);
+        let ffn_x = att_o.clone();
+
+        let ffn_o: TensorGpu<_, _> = context.init_tensor(shape);
+        let head_x = ffn_o.clone();
+
+        let head_v = (0..(info.num_vocab + info.max_head_chunk - 1) / info.max_head_chunk)
+            .map(|_| context.init_tensor(head_shape))
+            .collect();
+
+        Ok(Self {
+            info,
+            mask,
+            emb_x,
+            att_x,
+            att_kx: context.init_tensor(shape),
+            att_vx: context.init_tensor(shape),
+            att_k: context.init_tensor(shape),
+            att_v: context.init_tensor(shape),
+            att_r: context.init_tensor(shape),
+            att_w: context.init_tensor(shape),
+            att_o,
+            ffn_x,
+            ffn_kx: context.init_tensor(shape),
+            ffn_rx: context.init_tensor(shape),
+            ffn_k: context.init_tensor(ffn_shape),
+            ffn_v: context.init_tensor(shape),
+            ffn_r: context.init_tensor(shape),
+            ffn_o,
+            head_x,
+            head_v,
+            head_o: context.init_tensor(out_shape),
+            softmax_o: context.init_tensor(out_shape),
+            map: context.init_tensor(out_shape),
+        })
+    }
+
+    pub fn num_tokens(&self) -> usize {
+        self.emb_x.shape()[1]
+    }
+
+    pub fn num_batches(&self) -> usize {
+        self.emb_x.shape()[2]
+    }
 }

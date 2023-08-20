@@ -113,7 +113,6 @@ pub struct Tensor<'a, D: Device, T: Scalar, K: Kind> {
     id: TensorId,
     context: &'a Context,
     shape: Shape,
-    name: Option<&'a str>,
     data: D::Data,
     phantom: std::marker::PhantomData<(D, T, K)>,
 }
@@ -122,18 +121,12 @@ pub type TensorCpu<'a, T, K> = Tensor<'a, Cpu<'a, T>, T, K>;
 pub type TensorGpu<'a, T, K> = Tensor<'a, Gpu, T, K>;
 
 pub trait TensorExt<'a, T: Scalar>: Sized + Clone {
-    fn from_data(
-        context: &'a Context,
-        name: Option<&'a str>,
-        shape: Shape,
-        data: Vec<T>,
-    ) -> Result<Self, TensorError>;
+    fn from_data(context: &'a Context, shape: Shape, data: &[T]) -> Result<Self, TensorError>;
 
-    fn init(context: &'a Context, name: Option<&'a str>, shape: Shape) -> Self;
+    fn init(context: &'a Context, shape: Shape) -> Self;
 
-    fn make_slice(
-        &'a self,
-        name: Option<&'a str>,
+    fn into_slice(
+        self,
         x: impl TensorSlice,
         y: impl TensorSlice,
         z: impl TensorSlice,
@@ -154,7 +147,6 @@ impl<D: Device, T: Scalar, K: Kind> Clone for Tensor<'_, D, T, K> {
             id: self.id,
             context: self.context,
             shape: self.shape,
-            name: self.name,
             data: self.data.clone(),
             phantom: Default::default(),
         }
@@ -180,6 +172,10 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
         index * T::size()
     }
 
+    pub fn id(&self) -> TensorId {
+        self.id
+    }
+
     pub fn context(&self) -> &Context {
         self.context
     }
@@ -188,22 +184,13 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
         self.shape
     }
 
-    pub fn name(&self) -> Option<&str> {
-        self.name
-    }
-
     pub fn data(&self) -> &D::Data {
         &self.data
     }
 }
 
 impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
-    fn from_data(
-        context: &'a Context,
-        name: Option<&'a str>,
-        shape: Shape,
-        data: Vec<T>,
-    ) -> Result<Self, TensorError> {
+    fn from_data(context: &'a Context, shape: Shape, data: &[T]) -> Result<Self, TensorError> {
         if shape.len() != data.len() {
             return Err(TensorError::Size(shape.len(), data.len()));
         }
@@ -211,19 +198,17 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
             id: TensorId::new(),
             context,
             shape,
-            name,
-            data: Cow::from(data),
+            data: Cow::from(data.to_owned()),
             phantom: Default::default(),
         })
     }
 
-    fn init(context: &'a Context, name: Option<&'a str>, shape: Shape) -> Self {
-        context.zeros(name, shape)
+    fn init(context: &'a Context, shape: Shape) -> Self {
+        context.zeros(shape)
     }
 
-    fn make_slice(
-        &'a self,
-        name: Option<&'a str>,
+    fn into_slice(
+        self,
         x: impl TensorSlice,
         y: impl TensorSlice,
         z: impl TensorSlice,
@@ -234,14 +219,13 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorCpu<'a, T, K> {
 
         let shape = self.slice_shape(x, y, z);
         let end = start + shape.len();
-        let data = Cow::Borrowed(&self.data[start..end]);
+        let data = self.data[start..end].to_owned();
 
         Ok(Self {
             id: TensorId::new(),
             context: self.context,
             shape,
-            name,
-            data,
+            data: Cow::from(data),
             phantom: Default::default(),
         })
     }
@@ -254,23 +238,17 @@ impl<T: Scalar, K: Kind> From<TensorCpu<'_, T, K>> for Vec<T> {
 }
 
 impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
-    fn from_data(
-        context: &'a Context,
-        name: Option<&'a str>,
-        shape: Shape,
-        data: Vec<T>,
-    ) -> Result<Self, TensorError> {
-        TensorCpu::from_data(context, name, shape, data).map(Into::into)
+    fn from_data(context: &'a Context, shape: Shape, data: &[T]) -> Result<Self, TensorError> {
+        TensorCpu::from_data(context, shape, data).map(Into::into)
     }
 
     /// Initialize a GPU tensor with a given shape.
-    fn init(context: &'a Context, name: Option<&'a str>, shape: Shape) -> Self {
-        let label = name;
+    fn init(context: &'a Context, shape: Shape) -> Self {
         let size = shape.len() as u64 * T::size() as u64;
         let buffer = context
             .device
             .create_buffer(&BufferDescriptor {
-                label,
+                label: None,
                 size,
                 usage: K::buffer_usages(),
                 mapped_at_creation: false,
@@ -287,7 +265,6 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
             id: TensorId::new(),
             context,
             shape,
-            name,
             data: TensorBuffer {
                 shape_buffer,
                 buffer,
@@ -297,9 +274,8 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
         }
     }
 
-    fn make_slice(
-        &'a self,
-        name: Option<&'a str>,
+    fn into_slice(
+        self,
         x: impl TensorSlice,
         y: impl TensorSlice,
         z: impl TensorSlice,
@@ -309,20 +285,15 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
         let offset = self.shape.shape_index(start);
 
         let shape = self.slice_shape(x, y, z);
-        let tensor = Self::from_other(self.clone(), name, shape, offset)?;
+        let tensor = Self::from_other(self, shape, offset)?;
         Ok(tensor)
     }
 }
 
 impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
-    /// Create a GPU tensor from another one with new name, shape and offset.
+    /// Create a GPU tensor from another one with new shape and offset.
     /// Fails if the buffer overflows.
-    pub fn from_other(
-        other: Self,
-        name: Option<&'a str>,
-        shape: Shape,
-        offset: usize,
-    ) -> Result<Self, TensorError> {
+    pub fn from_other(other: Self, shape: Shape, offset: usize) -> Result<Self, TensorError> {
         let Self { context, data, .. } = other;
         let buffer = data.buffer;
 
@@ -349,7 +320,6 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
             id: TensorId::new(),
             context,
             shape,
-            name,
             data: TensorBuffer {
                 shape_buffer,
                 buffer,
@@ -382,16 +352,14 @@ impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
             id,
             context,
             shape,
-            name,
             data,
             ..
         } = value;
-        let label = name;
         let contents = bytemuck::cast_slice(&data);
         let buffer = context
             .device
             .create_buffer_init(&BufferInitDescriptor {
-                label,
+                label: None,
                 contents,
                 usage: K::buffer_usages(),
             })
@@ -407,7 +375,6 @@ impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
             id,
             context,
             shape,
-            name,
             data: TensorBuffer {
                 shape_buffer,
                 buffer,
@@ -425,7 +392,6 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, T, ReadBa
             id,
             context,
             shape,
-            name,
             data: TensorBuffer { buffer, offset, .. },
             ..
         } = value;
@@ -445,7 +411,6 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, T, ReadBa
             id,
             context,
             shape,
-            name,
             data: Cow::from(data),
             phantom: Default::default(),
         }
@@ -453,39 +418,26 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, T, ReadBa
 }
 
 impl<'a> Context {
-    pub fn zeros<T: Scalar, Tensor: TensorExt<'a, T>>(
-        &'a self,
-        name: Option<&'a str>,
-        shape: Shape,
-    ) -> Tensor {
+    pub fn zeros<T: Scalar, Tensor: TensorExt<'a, T>>(&'a self, shape: Shape) -> Tensor {
         let data = vec![T::zero(); shape.len()];
-        Tensor::from_data(self, name, shape, data).unwrap()
+        Tensor::from_data(self, shape, &data).unwrap()
     }
 
-    pub fn ones<T: Scalar, Tensor: TensorExt<'a, T>>(
-        &'a self,
-        name: Option<&'a str>,
-        shape: Shape,
-    ) -> Tensor {
+    pub fn ones<T: Scalar, Tensor: TensorExt<'a, T>>(&'a self, shape: Shape) -> Tensor {
         let data = vec![T::one(); shape.len()];
-        Tensor::from_data(self, name, shape, data).unwrap()
+        Tensor::from_data(self, shape, &data).unwrap()
     }
 
     pub fn tensor_from_data<T: Scalar, Tensor: TensorExt<'a, T>>(
         &'a self,
-        name: Option<&'a str>,
         shape: Shape,
         data: Vec<T>,
     ) -> Result<Tensor, TensorError> {
-        Tensor::from_data(self, name, shape, data)
+        Tensor::from_data(self, shape, &data)
     }
 
-    pub fn tensor_init<T: Scalar, Tensor: TensorExt<'a, T>>(
-        &'a self,
-        name: Option<&'a str>,
-        shape: Shape,
-    ) -> Tensor {
-        Tensor::init(self, name, shape)
+    pub fn init_tensor<T: Scalar, Tensor: TensorExt<'a, T>>(&'a self, shape: Shape) -> Tensor {
+        Tensor::init(self, shape)
     }
 }
 

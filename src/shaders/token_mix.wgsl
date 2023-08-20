@@ -4,12 +4,13 @@
 @group(0) @binding(2) var<storage, read> time_decay: array<vec4<f32>>;      // (C)
 @group(0) @binding(3) var<storage, read> time_first: array<vec4<f32>>;      // (C)
 
-@group(0) @binding(4) var<storage, read> k: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(5) var<storage, read> v: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(6) var<storage, read> r: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(4) var<storage, read> x: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(5) var<storage, read> k: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(6) var<storage, read> v: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(7) var<storage, read> r: array<vec4<f32>>;               // (B, T, C)
 
-@group(0) @binding(7) var<storage, read_write> x: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(8) var<storage, read_write> state: array<vec4<f32>>;     // (B, 4, C)
+@group(0) @binding(8) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
+@group(0) @binding(9) var<storage, read_write> state: array<vec4<f32>>;     // (B, 4, C)
 
 const BLOCK_SIZE: u32 = 128u;
 
@@ -52,7 +53,7 @@ fn token_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         var e2 = exp(ww - q);
 
         let rr = 1.0 / (1.0 + exp(-r[bti]));
-        x[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
+        output[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
 
         ww = time_decay[index] + pp;
         q = max(ww, kk);
