@@ -4,7 +4,7 @@ use half::f16;
 
 use crate::{
     context::Context,
-    tensor::{ReadWrite, TensorCpu, TensorGpu},
+    tensor::{ReadBack, ReadWrite, TensorCpu, TensorGpu},
 };
 
 #[derive(Getters)]
@@ -56,10 +56,10 @@ enum Matrix<'a> {
     Fp16(TensorGpu<'a, f16, ReadWrite>),
     Int8 {
         w: Box<TensorGpu<'a, u8, ReadWrite>>,
-        mx: Box<TensorGpu<'a, f32, ReadWrite>>,
-        rx: Box<TensorGpu<'a, f32, ReadWrite>>,
-        my: Box<TensorGpu<'a, f32, ReadWrite>>,
-        ry: Box<TensorGpu<'a, f32, ReadWrite>>,
+        mx: Box<TensorGpu<'a, f16, ReadWrite>>,
+        rx: Box<TensorGpu<'a, f16, ReadWrite>>,
+        my: Box<TensorGpu<'a, f16, ReadWrite>>,
+        ry: Box<TensorGpu<'a, f16, ReadWrite>>,
     },
 }
 
@@ -118,9 +118,6 @@ struct Head<'a> {
 pub struct ModelBuffer<'a> {
     info: ModelInfo,
 
-    emb_x: TensorGpu<'a, f32, ReadWrite>,
-    emb_o: TensorGpu<'a, f32, ReadWrite>,
-
     att_x: TensorGpu<'a, f32, ReadWrite>,
     att_kx: TensorGpu<'a, f32, ReadWrite>,
     att_vx: TensorGpu<'a, f32, ReadWrite>,
@@ -129,4 +126,21 @@ pub struct ModelBuffer<'a> {
     att_r: TensorGpu<'a, f32, ReadWrite>,
     att_w: TensorGpu<'a, f32, ReadWrite>,
     att_o: TensorGpu<'a, f32, ReadWrite>,
+
+    ffn_x: TensorGpu<'a, f32, ReadWrite>,
+    ffn_kx: TensorGpu<'a, f32, ReadWrite>,
+    ffn_vx: TensorGpu<'a, f32, ReadWrite>,
+    ffn_rx: TensorGpu<'a, f32, ReadWrite>,
+    ffn_k: TensorGpu<'a, f32, ReadWrite>,
+    ffn_v: TensorGpu<'a, f32, ReadWrite>,
+    ffn_r: TensorGpu<'a, f32, ReadWrite>,
+    ffn_o: TensorGpu<'a, f32, ReadWrite>,
+
+    head_x: TensorGpu<'a, f32, ReadWrite>,
+    head_v: Vec<TensorGpu<'a, f32, ReadWrite>>,
+    head_o: TensorGpu<'a, f32, ReadWrite>,
+
+    softmax_o: TensorGpu<'a, f32, ReadWrite>,
+
+    map: TensorGpu<'a, f32, ReadBack>,
 }

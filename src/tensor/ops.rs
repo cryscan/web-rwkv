@@ -89,14 +89,10 @@ impl<'a> TensorOp<'a> {
         (x + Self::BLOCK_SIZE - 1) / Self::BLOCK_SIZE
     }
 
-    pub fn softmax(
-        x: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape;
-        x.check_shape(shape)?;
-
-        let context = output.context;
+    /// Softmax operator applied on `x`.
+    pub fn softmax(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+        let shape = x.shape;
+        let context = x.context;
         let pipeline = context
             .pipelines
             .get("softmax")
@@ -107,15 +103,11 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.shape_binding(),
+                    resource: x.shape_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
                     resource: x.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.binding(),
                 },
             ],
         })];
@@ -127,18 +119,17 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    /// Layer norm applied on `x`, with weight `w` and bias `b`.
     pub fn layer_norm(
-        x: &'a TensorGpu<f32, ReadWrite>,
         w: &'a TensorGpu<f16, ReadWrite>,
         b: &'a TensorGpu<f16, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
+        x: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let shape = output.shape;
-        x.check_shape(shape)?;
+        let shape = x.shape;
         w.check_shape(Shape::new(shape[0], 1, 1))?;
         b.check_shape(Shape::new(shape[0], 1, 1))?;
 
-        let context = output.context;
+        let context = x.context;
         let pipeline = context
             .pipelines
             .get("layer_norm")
@@ -149,23 +140,19 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.shape_binding(),
+                    resource: x.shape_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: x.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
                     resource: w.binding(),
                 },
                 BindGroupEntry {
-                    binding: 3,
+                    binding: 2,
                     resource: b.binding(),
                 },
                 BindGroupEntry {
-                    binding: 4,
-                    resource: output.binding(),
+                    binding: 3,
+                    resource: x.binding(),
                 },
             ],
         })];
@@ -177,6 +164,10 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    /// Fp16 matrix multiplication.
+    /// - `matrix` shape: `[C, R, 1]`.
+    /// - `input` shape: `[C, T, B]`.
+    /// - `output` shape: `[R, T, B]`.
     pub fn matmul(
         matrix: &'a TensorGpu<f16, ReadWrite>,
         input: &'a TensorGpu<f32, ReadWrite>,
@@ -225,12 +216,18 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    /// Int8 matrix multiplication.
+    /// - `matrix` shape: `[C, R, 1]`.
+    /// - `mx` and `rx` shape: `[C, 1, 1]`.
+    /// - `my` and `ry` shape: `[R, 1, 1]`.
+    /// - `input` shape: `[C, T, B]`.
+    /// - `output` shape: `[R, T, B]`.
     pub fn matmul_int8(
         matrix: &'a TensorGpu<u8, ReadWrite>,
-        mx: &'a TensorGpu<f32, ReadWrite>,
-        rx: &'a TensorGpu<f32, ReadWrite>,
-        my: &'a TensorGpu<f32, ReadWrite>,
-        ry: &'a TensorGpu<f32, ReadWrite>,
+        mx: &'a TensorGpu<f16, ReadWrite>,
+        rx: &'a TensorGpu<f16, ReadWrite>,
+        my: &'a TensorGpu<f16, ReadWrite>,
+        ry: &'a TensorGpu<f16, ReadWrite>,
         input: &'a TensorGpu<f32, ReadWrite>,
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
@@ -297,12 +294,13 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    /// Add `input` onto `output`.
     pub fn add(
-        x: &'a TensorGpu<f32, ReadWrite>,
+        input: &'a TensorGpu<f32, ReadWrite>,
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        x.check_shape(shape)?;
+        input.check_shape(shape)?;
 
         let context = output.context;
         let pipeline = context
@@ -319,7 +317,7 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: x.binding(),
+                    resource: input.binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
@@ -398,16 +396,14 @@ impl<'a> TensorOp<'a> {
         mask: &'a TensorGpu<u32, Uniform>,
         time_decay: &'a TensorGpu<f32, ReadWrite>,
         time_first: &'a TensorGpu<f32, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
         k: &'a TensorGpu<f32, ReadWrite>,
         v: &'a TensorGpu<f32, ReadWrite>,
         r: &'a TensorGpu<f32, ReadWrite>,
+        x: &'a TensorGpu<f32, ReadWrite>,
         state: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let shape = output.shape;
+        let shape = x.shape;
         mask.check_shape(Shape::new(1, 1, 1))?;
-        x.check_shape(shape)?;
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
@@ -415,7 +411,7 @@ impl<'a> TensorOp<'a> {
         time_first.check_shape(Shape::new(shape[0], 1, 1))?;
         state.check_shape(Shape::new(shape[0], 4, shape[2]))?;
 
-        let context = output.context;
+        let context = x.context;
         let pipeline = context
             .pipelines
             .get("token_mix")
@@ -426,7 +422,7 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.shape_binding(),
+                    resource: x.shape_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
@@ -442,27 +438,23 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: x.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
                     resource: k.binding(),
                 },
                 BindGroupEntry {
-                    binding: 6,
+                    binding: 5,
                     resource: v.binding(),
                 },
                 BindGroupEntry {
-                    binding: 7,
+                    binding: 6,
                     resource: r.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: x.binding(),
                 },
                 BindGroupEntry {
                     binding: 8,
                     resource: state.binding(),
-                },
-                BindGroupEntry {
-                    binding: 9,
-                    resource: output.binding(),
                 },
             ],
         })];
@@ -474,14 +466,9 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    pub fn squared_relu(
-        x: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape;
-        x.check_shape(shape)?;
-
-        let context = output.context;
+    pub fn squared_relu(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+        let shape = x.shape;
+        let context = x.context;
         let pipeline = context
             .pipelines
             .get("squared_relu")
@@ -492,15 +479,11 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.shape_binding(),
+                    resource: x.shape_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
                     resource: x.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.binding(),
                 },
             ],
         })];
@@ -518,20 +501,19 @@ impl<'a> TensorOp<'a> {
 
     pub fn channel_mix(
         mask: &'a TensorGpu<u32, Uniform>,
-        x: &'a TensorGpu<f32, ReadWrite>,
         r: &'a TensorGpu<f32, ReadWrite>,
         v: &'a TensorGpu<f32, ReadWrite>,
+        x: &'a TensorGpu<f32, ReadWrite>,
         state: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let shape = output.shape;
+        let shape = x.shape;
         mask.check_shape(Shape::new(1, 1, 1))?;
         x.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         state.check_shape(Shape::new(shape[0], 1, shape[2]))?;
 
-        let context = output.context;
+        let context = x.context;
         let pipeline = context
             .pipelines
             .get("channel_mix")
@@ -542,7 +524,7 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.shape_binding(),
+                    resource: x.shape_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
@@ -550,22 +532,75 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: x.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
                     resource: r.binding(),
                 },
                 BindGroupEntry {
-                    binding: 4,
+                    binding: 3,
                     resource: v.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: x.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
                     resource: state.binding(),
                 },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    /// Copy the content of `input` into `output`, given an `offset`.
+    pub fn blit(
+        offset: &'a TensorGpu<u32, Uniform>,
+        input: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = input.shape;
+        offset.check_shape(Shape::new(4, 1, 1))?;
+        output.check_shape_with(shape, |output, input| {
+            output
+                .partial_cmp(&input)
+                .is_some_and(|x| x != std::cmp::Ordering::Less)
+        })?;
+
+        let context = input.context;
+        let pipeline = context
+            .pipelines
+            .get("blit")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
                 BindGroupEntry {
-                    binding: 6,
+                    binding: 0,
+                    resource: input.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: output.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: offset.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
                     resource: output.binding(),
                 },
             ],
@@ -588,7 +623,7 @@ impl<'a> TensorOp<'a> {
         rx: &'a TensorGpu<f32, ReadWrite>,
         my: &'a TensorGpu<f32, ReadWrite>,
         ry: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<u8, ReadWrite>,
     ) -> Result<[Self; 5], TensorError> {
         let shape = output.shape;
         input.check_shape(shape)?;
@@ -657,6 +692,48 @@ impl<'a> TensorOp<'a> {
             Ok([mx, my, rx, ry, quantize])
         }
     }
+
+    pub fn quantize_vec_fp16(
+        input: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f16, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape;
+        input.check_shape(shape)?;
+
+        let context = output.context;
+        let pipeline = context
+            .pipelines
+            .get("quant_vec_fp16")
+            .ok_or(TensorError::PipelineError)?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.shape_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
 }
 
 #[cfg(test)]
@@ -724,10 +801,9 @@ mod tests {
         let shape = Shape::new(x.len() / 6, 3, 2);
 
         let x_dev: TensorGpu<_, _> = context.tensor_from_data(None, shape, x.clone())?;
-        let x_out = context.tensor_init(None, x_dev.shape());
         let x_map = context.tensor_init(None, x_dev.shape());
 
-        let softmax = TensorOp::softmax(&x_dev, &x_out)?;
+        let softmax = TensorOp::softmax(&x_dev)?;
 
         let mut encoder = context
             .device
@@ -737,7 +813,7 @@ mod tests {
         pass.execute_tensor_op(&softmax);
         drop(pass);
 
-        encoder.copy_tensor(&x_out, &x_map)?;
+        encoder.copy_tensor(&x_dev, &x_map)?;
         context.queue.submit(Some(encoder.finish()));
 
         let x_host = TensorCpu::from(x_map);
@@ -832,6 +908,53 @@ mod tests {
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_blit() -> Result<(), anyhow::Error> {
+        let context = create_context()?;
+
+        let output = vec![0.0; 24];
+        let output = TensorGpu::from_data(&context, None, Shape::new(4, 3, 2), output)?;
+
+        let map = TensorGpu::init(&context, None, output.shape());
+
+        let offset_shape = Shape::new(4, 1, 1);
+
+        let input: Vec<_> = (0..8).map(|x| x as f32).collect();
+        let input = TensorGpu::from_data(&context, None, Shape::new(4, 1, 2), input)?;
+        let offset = TensorGpu::from_data(&context, None, offset_shape, vec![0, 1, 0, 0])?;
+        let blit_1 = TensorOp::blit(&offset, &input, &output)?;
+
+        let input: Vec<_> = (8..12).map(|x| x as f32).collect();
+        let input = TensorGpu::from_data(&context, None, Shape::new(4, 1, 1), input)?;
+        let offset = TensorGpu::from_data(&context, None, offset_shape, vec![0, 2, 1, 0])?;
+        let blit_2 = TensorOp::blit(&offset, &input, &output)?;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&blit_1);
+        pass.execute_tensor_op(&blit_2);
+        drop(pass);
+
+        encoder.copy_tensor(&output, &map)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let output_host = TensorCpu::from(map);
+        let output_host = Vec::from(output_host);
+
+        assert_eq!(
+            output_host,
+            vec![
+                0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0
+            ]
+        );
 
         Ok(())
     }

@@ -1,9 +1,8 @@
 @group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, T, B]
 
-@group(0) @binding(1) var<storage, read> x: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(2) var<storage, read> w: array<vec2<u32>>;               // (C)
-@group(0) @binding(3) var<storage, read> b: array<vec2<u32>>;               // (C)
-@group(0) @binding(4) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
+@group(0) @binding(1) var<storage, read> w: array<vec2<u32>>;               // (C)
+@group(0) @binding(2) var<storage, read> b: array<vec2<u32>>;               // (C)
+@group(0) @binding(3) var<storage, read_write> x: array<vec4<f32>>;         // (B, T, C)
 
 const BLOCK_SIZE: u32 = 128u;
 
@@ -61,6 +60,6 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = (x[bb + i] - mean) * deviation;
-        output[bb + i] = fma(value, unpack4x16float(w[i]), unpack4x16float(b[i]));
+        x[bb + i] = fma(value, unpack4x16float(w[i]), unpack4x16float(b[i]));
     }
 }

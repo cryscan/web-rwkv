@@ -221,6 +221,7 @@ impl<'a> ContextBuilder<'a> {
             "softmax",
             None,
         )
+        .with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
     }
 
     pub fn with_quant_pipelines(self) -> Self {

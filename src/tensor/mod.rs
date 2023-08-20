@@ -276,7 +276,7 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
                 mapped_at_creation: false,
             })
             .into();
-        let shape_buffer = context.shape_cache.buffer(shape, || {
+        let shape_buffer = context.shape_cache.request(shape, || {
             context.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::cast_slice(&shape.to_u32_slice()),
@@ -306,10 +306,10 @@ impl<'a, T: Scalar, K: Kind> TensorExt<'a, T> for TensorGpu<'a, T, K> {
     ) -> Result<Self, TensorError> {
         self.check_slice(x.clone(), y.clone(), z.clone())?;
         let (start, _) = self.shape_bounds(x.clone(), y.clone(), z.clone());
-        let start = self.shape.shape_index(start);
+        let offset = self.shape.shape_index(start);
 
         let shape = self.slice_shape(x, y, z);
-        let tensor = Self::from_other(self.clone(), name, shape, start as u64)?;
+        let tensor = Self::from_other(self.clone(), name, shape, offset)?;
         Ok(tensor)
     }
 }
@@ -321,25 +321,30 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
         other: Self,
         name: Option<&'a str>,
         shape: Shape,
-        offset: BufferAddress,
+        offset: usize,
     ) -> Result<Self, TensorError> {
         let Self { context, data, .. } = other;
-        let size = shape.len() as u64 * T::size() as u64;
-        if data.offset + size >= data.buffer.size() {
+        let buffer = data.buffer;
+
+        let size = (shape.len() * T::size()) as BufferAddress;
+        let offset = (offset * T::size()) as BufferAddress + data.offset;
+
+        if offset + size >= buffer.size() {
             return Err(TensorError::Overflow {
-                buffer: data.buffer.size(),
-                offset: data.offset,
+                buffer: buffer.size(),
+                offset,
                 size,
             });
         }
 
-        let shape_buffer = context.shape_cache.buffer(shape, || {
+        let shape_buffer = context.shape_cache.request(shape, || {
             context.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::cast_slice(&shape.to_u32_slice()),
                 usage: BufferUsages::UNIFORM,
             })
         });
+
         Ok(Self {
             id: TensorId::new(),
             context,
@@ -347,7 +352,7 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
             name,
             data: TensorBuffer {
                 shape_buffer,
-                buffer: data.buffer,
+                buffer,
                 offset,
             },
             phantom: Default::default(),
@@ -388,10 +393,10 @@ impl<'a, T: Scalar, K: Kind> From<TensorCpu<'a, T, K>> for TensorGpu<'a, T, K> {
             .create_buffer_init(&BufferInitDescriptor {
                 label,
                 contents,
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+                usage: K::buffer_usages(),
             })
             .into();
-        let shape_buffer = context.shape_cache.buffer(shape, || {
+        let shape_buffer = context.shape_cache.request(shape, || {
             context.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: bytemuck::cast_slice(&shape.to_u32_slice()),

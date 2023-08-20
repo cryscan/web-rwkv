@@ -1,7 +1,7 @@
 @group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, T, B]
 
-@group(0) @binding(1) var<storage, read> x: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(2) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
+@group(0) @binding(1) var<storage, read_write> x: array<vec4<f32>>;         // (B, T, C)
+// @group(0) @binding(2) var<storage, read_write> output: array<vec4<f32>>; // (B, T, C)
 
 const BLOCK_SIZE: u32 = 128u;
 
@@ -81,6 +81,6 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = x[bb + i];
-        output[bb + i] = exp(value - maximum) / sum;
+        x[bb + i] = exp(value - maximum) / sum;
     }
 }

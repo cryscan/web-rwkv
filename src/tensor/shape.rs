@@ -1,6 +1,6 @@
-use core::ops::RangeBounds;
 use std::{
     cell::RefCell,
+    cmp::Ordering,
     collections::HashMap,
     hash::Hash,
     ops::Bound,
@@ -41,6 +41,25 @@ impl Shape {
     }
 }
 
+impl std::cmp::PartialOrd for Shape {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (
+            self[0].cmp(&other[0]),
+            self[1].cmp(&other[1]),
+            self[2].cmp(&other[2]),
+        ) {
+            (x, y, z) if x == y && y == z => Some(x),
+            (x, y, Ordering::Equal) if x == y => Some(x),
+            (x, Ordering::Equal, z) if x == z => Some(x),
+            (Ordering::Equal, y, z) if y == z => Some(y),
+            (x, Ordering::Equal, Ordering::Equal) => Some(x),
+            (Ordering::Equal, y, Ordering::Equal) => Some(y),
+            (Ordering::Equal, Ordering::Equal, z) => Some(z),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for Shape {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({}, {}, {})", self[0], self[1], self[2])
@@ -77,6 +96,18 @@ impl std::ops::Sub<Shape> for Shape {
     }
 }
 
+impl std::ops::AddAssign<Shape> for Shape {
+    fn add_assign(&mut self, rhs: Shape) {
+        *self = *self + rhs;
+    }
+}
+
+impl std::ops::SubAssign<Shape> for Shape {
+    fn sub_assign(&mut self, rhs: Shape) {
+        *self = *self - rhs;
+    }
+}
+
 #[derive(Debug, Default, Deref)]
 pub struct ShapeCache(RefCell<RwLock<HashMap<Shape, Arc<Buffer>>>>);
 
@@ -93,7 +124,7 @@ impl ShapeCache {
         map.get(&shape).cloned()
     }
 
-    pub fn buffer<F>(&self, shape: Shape, op: F) -> Arc<Buffer>
+    pub fn request<F>(&self, shape: Shape, op: F) -> Arc<Buffer>
     where
         F: FnOnce() -> Buffer,
     {
@@ -110,9 +141,9 @@ impl ShapeCache {
     }
 }
 
-pub trait TensorSlice: RangeBounds<usize> + Clone + PartialEq + Eq + Hash {}
+pub trait TensorSlice: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash {}
 
-impl<T> TensorSlice for T where T: RangeBounds<usize> + Clone + PartialEq + Eq + Hash {}
+impl<T> TensorSlice for T where T: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum SliceState {
@@ -165,6 +196,18 @@ fn check_slice_dim(
 impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
     pub fn check_shape(&self, shape: Shape) -> Result<(), TensorError> {
         if self.shape == shape {
+            Ok(())
+        } else {
+            Err(TensorError::Shape(self.shape, shape))
+        }
+    }
+
+    pub fn check_shape_with(
+        &self,
+        shape: Shape,
+        op: impl FnOnce(Shape, Shape) -> bool,
+    ) -> Result<(), TensorError> {
+        if op(self.shape, shape) {
             Ok(())
         } else {
             Err(TensorError::Shape(self.shape, shape))
