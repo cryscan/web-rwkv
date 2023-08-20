@@ -22,6 +22,14 @@ impl Shape {
         Self([x, y, z])
     }
 
+    pub fn from_slice(slice: &[usize]) -> Self {
+        let mut shape = Self::new(1, 1, 1);
+        for (index, &dim) in slice.iter().take(3).enumerate() {
+            shape[index] = dim;
+        }
+        shape
+    }
+
     pub fn len(&self) -> usize {
         self.0.into_iter().product()
     }

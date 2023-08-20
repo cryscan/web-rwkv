@@ -1,6 +1,8 @@
+use anyhow::Result;
 use bitflags::bitflags;
 use derive_getters::Getters;
 use half::f16;
+use safetensors::SafeTensors;
 use wgpu::CommandEncoderDescriptor;
 
 use crate::{
@@ -109,7 +111,7 @@ struct Layer<'a> {
 
 struct Embed<'a> {
     layer_norm: LayerNorm<'a>,
-    w: TensorCpu<'a, f16, ReadWrite>,
+    w: TensorCpu<'a, 'a, f16, ReadWrite>,
 }
 
 struct Head<'a> {
@@ -153,8 +155,8 @@ impl<'a> ModelBuffer<'a> {
     pub fn new(
         context: &'a Context,
         info: ModelInfo,
-        input: TensorCpu<'a, f32, ReadWrite>,
-        mask: TensorCpu<'a, f32, Uniform>,
+        input: TensorCpu<'a, '_, f32, ReadWrite>,
+        mask: TensorCpu<'a, '_, f32, Uniform>,
     ) -> Result<Self, TensorError> {
         let shape = input.shape();
         let ffn_shape = Shape::new(shape[0] * 4, shape[1], shape[2]);
@@ -320,5 +322,111 @@ impl<'a> From<ModelState<'a>> for BackedState<'a> {
             context,
             data,
         }
+    }
+}
+
+pub struct ModelBuilder<'a> {
+    context: &'a Context,
+    data: &'a [u8],
+    quant: Quantization,
+
+    max_head_chunk: usize,
+    max_batch_token_chunk: usize,
+}
+
+impl<'a> ModelBuilder<'a> {
+    pub fn new(context: &'a Context, data: &'a [u8]) -> Self {
+        Self {
+            context,
+            data,
+            quant: Quantization::None,
+            max_head_chunk: 4096,
+            max_batch_token_chunk: 32,
+        }
+    }
+
+    pub fn with_quant(self, quant: Quantization) -> Self {
+        Self { quant, ..self }
+    }
+
+    pub fn with_max_head_chunk(self, size: usize) -> Self {
+        Self {
+            max_head_chunk: size,
+            ..self
+        }
+    }
+
+    pub fn with_max_token_batch_chunk(self, size: usize) -> Self {
+        Self {
+            max_batch_token_chunk: size,
+            ..self
+        }
+    }
+
+    pub fn build(self) -> Result<Model<'a>> {
+        let Self {
+            context,
+            data,
+            quant,
+            max_head_chunk,
+            max_batch_token_chunk,
+        } = self;
+
+        let model = SafeTensors::deserialize(data)?;
+
+        let num_layers = {
+            let mut r: usize = 0;
+            for i in model.names() {
+                const PREFIX: &str = "blocks.";
+                if let Some(i) = i.strip_prefix(PREFIX) {
+                    let i = &i[..i.find('.').unwrap_or(0)];
+                    r = r.max(i.parse::<usize>()?)
+                }
+            }
+            r + 1
+        };
+        let (num_emb, num_vocab) = {
+            let emb = model.tensor("emb.weight")?;
+            let num_emb = emb.shape()[1];
+            let num_vocab = emb.shape()[0];
+            (num_emb, num_vocab)
+        };
+
+        let info = ModelInfo {
+            num_layers,
+            num_emb,
+            num_vocab,
+            max_head_chunk,
+            max_batch_token_chunk,
+        };
+
+        let load_tensor_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
+            let tensor = model.tensor(&name)?;
+            let data: Vec<_> = bytemuck::pod_collect_to_vec::<_, f16>(tensor.data())
+                .into_iter()
+                .map(f16::to_f32)
+                .collect();
+            let shape = Shape::from_slice(tensor.shape());
+            Ok(context.tensor_from_data(shape, data)?)
+        };
+
+        let load_tensor_exp_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
+            let tensor = model.tensor(&name)?;
+            let data: Vec<_> = bytemuck::pod_collect_to_vec::<_, f16>(tensor.data())
+                .into_iter()
+                .map(f16::to_f32)
+                .map(|x| -x.exp())
+                .collect();
+            let shape = Shape::from_slice(tensor.shape());
+            Ok(context.tensor_from_data(shape, data)?)
+        };
+
+        let load_tensor_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
+            let tensor = model.tensor(&name)?;
+            let shape = Shape::from_slice(tensor.shape());
+            Ok(context.tensor_from_slice(shape, bytemuck::cast_slice(tensor.data()))?)
+        };
+
+        todo!()
     }
 }
