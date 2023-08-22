@@ -1,5 +1,11 @@
+struct View {
+    stride: vec4<u32>,
+    offset: vec4<u32>,
+    shape: vec4<u32>,  
+};
+
 @group(0) @binding(0) var<uniform> dims: vec4<u32>;                         // [C, R]
-@group(0) @binding(1) var<uniform> shape: vec4<u32>;                        // [R, T, B]
+@group(0) @binding(1) var<uniform> view: View;                              // [R, T, B]
 
 @group(0) @binding(2) var<storage, read> matrix: array<vec2<u32>>;          // (R, C)
 @group(0) @binding(3) var<storage, read> input: array<vec4<f32>>;           // (B, T, C)
@@ -8,6 +14,10 @@
 const BLOCK_SIZE: u32 = 128u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
+
+fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
+    return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * view.stride.x / 4u + view.offset.x / 4u + index;
+}
 
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
@@ -28,11 +38,11 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
-    if token >= shape[1] || batch >= shape[2] {
+    if token >= view.shape[1] || batch >= view.shape[2] {
         return;
     }
 
-    let bb = (batch * shape[1] + token) * stride.x;
+    let bb = (batch * view.shape[1] + token) * stride.x;
     let cb = channel * 4u * stride.x;
 
     var local_sum = vec4<f32>(0.0);
@@ -64,6 +74,7 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     reduce_sum(index, 1u);
 
     if index == 0u {
-        output[(batch * shape[1] + token) * stride.y + channel] = sketch[0];
+        // output[(batch * shape[1] + token) * stride.y + channel] = sketch[0];
+        output[compute_index(view, batch, token, channel)] = sketch[0];
     }
 }

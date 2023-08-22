@@ -1,14 +1,25 @@
+struct View {
+    stride: vec4<u32>,
+    offset: vec4<u32>,
+    shape: vec4<u32>,  
+};
+
 @group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, T, B]
-@group(0) @binding(1) var<uniform> mask: u32;                               // [B]
+@group(0) @binding(1) var<uniform> view: View;                              // [C, 1, B] / [C, 5L, B]
+@group(0) @binding(2) var<uniform> mask: u32;                               // [B]
 
-@group(0) @binding(2) var<storage, read> x: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(3) var<storage, read> r: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(4) var<storage, read> v: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(3) var<storage, read> x: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(4) var<storage, read> r: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(5) var<storage, read> v: array<vec4<f32>>;               // (B, T, C)
 
-@group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
-@group(0) @binding(6) var<storage, read_write> state: array<vec4<f32>>;     // (B, C)
+@group(0) @binding(6) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
+@group(0) @binding(7) var<storage, read_write> state: array<vec4<f32>>;     // (B, C)
 
 const BLOCK_SIZE: u32 = 128u;
+
+fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
+    return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * view.stride.x / 4u + view.offset.x / 4u + index;
+}
 
 fn batch_masked(batch: u32) -> bool {
     return ((mask >> batch) & 1u) == 0u;
@@ -28,7 +39,7 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     let bti = (batch * shape[1] + token) * stride + index;
 
     if !batch_masked(batch) && token == shape[1] - 1u {
-        state[batch * stride + index] = x[bti];
+        state[compute_index(view, batch, 0u, index)] = x[bti];
     }
 
     let rr = 1.0 / (1.0 + exp(-r[bti]));

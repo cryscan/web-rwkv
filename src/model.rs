@@ -8,7 +8,7 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 use crate::{
     context::Context,
     tensor::{
-        ReadBack, ReadWrite, Shape, TensorCommand, TensorCpu, TensorError, TensorGpu, TensorOp,
+        ReadBack, ReadWrite, Shape, TensorCpu, TensorError, TensorExt, TensorGpu, TensorOp,
         TensorPass, Uniform,
     },
 };
@@ -28,9 +28,9 @@ pub struct ModelInfo {
     pub num_vocab: usize,
 
     /// The head matrix is too big for a storage buffer so it's divided into chunks.
-    pub max_head_chunk: usize,
+    pub head_chunk_size: usize,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
-    pub max_batch_token_chunk: usize,
+    pub max_batch_token_chunk_size: usize,
 }
 
 bitflags! {
@@ -161,12 +161,12 @@ impl<'a> ModelBuffer<'a> {
     ) -> Result<Self, TensorError> {
         let shape = input.shape();
         let ffn_shape = Shape::new(shape[0] * 4, shape[1], shape[2]);
-        let head_shape = Shape::new(info.max_head_chunk, shape[1], shape[2]);
+        let head_shape = Shape::new(info.head_chunk_size, shape[1], shape[2]);
         let out_shape = Shape::new(info.num_vocab, shape[1], shape[2]);
 
         input.check_shape(Shape::new(info.num_emb, shape[1], shape[2]))?;
 
-        let head_x = (0..(info.num_vocab + info.max_head_chunk - 1) / info.max_head_chunk)
+        let head_x = (0..(info.num_vocab + info.head_chunk_size - 1) / info.head_chunk_size)
             .map(|_| context.init_tensor(head_shape))
             .collect();
 
@@ -251,87 +251,12 @@ pub struct BackedState<'a> {
     pub data: Vec<f32>,
 }
 
-impl<'a> From<BackedState<'a>> for ModelState<'a> {
-    fn from(value: BackedState<'a>) -> Self {
-        let BackedState {
-            info,
-            context,
-            data,
-        } = value;
-
-        let layer_stride = info.num_emb * 5;
-        let batch_stride = info.num_layers * layer_stride;
-        let num_batch = data.len() / batch_stride;
-
-        let att_shape = Shape::new(info.num_emb, 4, num_batch);
-        let ffn_shape = Shape::new(info.num_emb, 1, num_batch);
-
-        let mut layers = vec![];
-        for batch in 0..num_batch {
-            for layer in 0..info.num_layers {
-                let index = batch * batch_stride + layer * layer_stride;
-                let att = data[index..index + 4 * info.num_emb].to_owned();
-                let ffn = data[index + 4 * info.num_emb..index + 5 * info.num_emb].to_owned();
-                layers.push((
-                    context.tensor_from_data(att_shape, att).unwrap(),
-                    context.tensor_from_data(ffn_shape, ffn).unwrap(),
-                ));
-            }
-        }
-
-        Self {
-            info,
-            context,
-            layers,
-        }
-    }
-}
-
-impl<'a> From<ModelState<'a>> for BackedState<'a> {
-    fn from(value: ModelState<'a>) -> Self {
-        let att_shape = value.att_shape();
-        let ffn_shape = value.ffn_shape();
-
-        let ModelState {
-            info,
-            context,
-            layers,
-        } = value;
-
-        let att_map = context.init_tensor(att_shape);
-        let ffn_map = context.init_tensor(ffn_shape);
-
-        let data = layers
-            .into_iter()
-            .map(|(att, ffn)| {
-                let mut encoder = context
-                    .device
-                    .create_command_encoder(&CommandEncoderDescriptor::default());
-                encoder.copy_tensor(&att, &att_map).unwrap();
-                encoder.copy_tensor(&ffn, &ffn_map).unwrap();
-                context.queue.submit(Some(encoder.finish()));
-
-                let att = Vec::from(TensorCpu::from(att_map.clone()));
-                let ffn = Vec::from(TensorCpu::from(ffn_map.clone()));
-                [att, ffn].concat()
-            })
-            .collect::<Vec<_>>()
-            .concat();
-
-        Self {
-            info,
-            context,
-            data,
-        }
-    }
-}
-
 pub struct ModelBuilder<'a, 'b> {
     context: &'a Context,
     data: &'b [u8],
     quant: Quantization,
-    max_head_chunk: usize,
-    max_batch_token_chunk: usize,
+    head_chunk_size: usize,
+    max_batch_token_chunk_size: usize,
 }
 
 impl<'a, 'b> ModelBuilder<'a, 'b> {
@@ -340,8 +265,8 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             context,
             data,
             quant: Quantization::None,
-            max_head_chunk: 4096,
-            max_batch_token_chunk: 32,
+            head_chunk_size: 4096,
+            max_batch_token_chunk_size: 32,
         }
     }
 
@@ -351,14 +276,14 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
 
     pub fn with_max_head_chunk(self, size: usize) -> Self {
         Self {
-            max_head_chunk: size,
+            head_chunk_size: size,
             ..self
         }
     }
 
     pub fn with_max_token_batch_chunk(self, size: usize) -> Self {
         Self {
-            max_batch_token_chunk: size,
+            max_batch_token_chunk_size: size,
             ..self
         }
     }
@@ -368,12 +293,12 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             context,
             data,
             quant,
-            max_head_chunk,
-            max_batch_token_chunk,
+            head_chunk_size,
+            max_batch_token_chunk_size,
         } = self;
 
         let model = SafeTensors::deserialize(data)?;
-        let emb = model.tensor("emb.weight")?;
+        let embed = model.tensor("emb.weight")?;
 
         let num_layers = {
             let mut r: usize = 0;
@@ -387,8 +312,8 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             r + 1
         };
         let (num_emb, num_vocab) = {
-            let num_emb = emb.shape()[1];
-            let num_vocab = emb.shape()[0];
+            let num_emb = embed.shape()[1];
+            let num_vocab = embed.shape()[0];
             (num_emb, num_vocab)
         };
 
@@ -396,8 +321,8 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             num_layers,
             num_emb,
             num_vocab,
-            max_head_chunk,
-            max_batch_token_chunk,
+            head_chunk_size,
+            max_batch_token_chunk_size,
         };
 
         let load_vector_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
@@ -423,13 +348,13 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             let tensor = model.tensor(&name)?;
             let data = bytemuck::cast_slice(tensor.data());
             let shape = Shape::new(data.len(), 1, 1);
-            Ok(context.tensor_from_slice(shape, data)?)
+            Ok(context.tensor_from_data(shape, data)?)
         };
         let load_matrix_f16 = |name: String| -> Result<Matrix<'_>> {
             let tensor = model.tensor(&name)?;
             let shape = tensor.shape();
             let shape = Shape::new(shape[1], shape[0], 1);
-            let w = context.tensor_from_slice(shape, bytemuck::cast_slice(tensor.data()))?;
+            let w = context.tensor_from_data(shape, bytemuck::cast_slice(tensor.data()))?;
             Ok(Matrix::Fp16(w))
         };
         let load_matrix_u8 = |name: String| -> Result<Matrix<'a>> {
@@ -437,7 +362,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             let shape = tensor.shape();
             let shape = Shape::new(shape[1], shape[0], 1);
             let matrix: TensorGpu<f16, _> =
-                context.tensor_from_slice(shape, bytemuck::cast_slice(tensor.data()))?;
+                context.tensor_from_data(shape, bytemuck::cast_slice(tensor.data()))?;
             let shape = matrix.shape();
 
             let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
@@ -447,7 +372,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
 
             let w = Box::new(context.init_tensor(matrix.shape()));
 
-            let mut quant_ops =
+            let mut ops =
                 TensorOp::quantize_mat_int8(&matrix, &mx_f32, &rx_f32, &my_f32, &ry_f32, &w)?;
 
             let mx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
@@ -455,17 +380,17 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             let my = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
             let ry = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
 
-            quant_ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
-            quant_ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
-            quant_ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
-            quant_ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
+            ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
+            ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
+            ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
+            ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
 
             let mut encoder = context
                 .device
                 .create_command_encoder(&CommandEncoderDescriptor::default());
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            quant_ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            ops.iter().for_each(|op| pass.execute_tensor_op(op));
             drop(pass);
 
             context.queue.submit(Some(encoder.finish()));
@@ -478,10 +403,38 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
                 w: load_vector_f16("blocks.0.ln0.weight".into())?,
                 b: load_vector_f16("blocks.0.ln0.bias".into())?,
             },
-            w: context.tensor_from_slice(
+            w: context.tensor_from_data(
                 Shape::new(num_emb, num_vocab, 1),
-                bytemuck::cast_slice(emb.data()),
+                bytemuck::cast_slice(embed.data()),
             )?,
+        };
+
+        let head = {
+            let tensor = model.tensor("head_weight")?;
+            let chunks = tensor.shape()[1] / info.head_chunk_size;
+
+            let shape = tensor.shape();
+            let shape = Shape::new(shape[1], shape[0], 1);
+            let data = bytemuck::cast_slice(tensor.data());
+
+            let w = (0..chunks)
+                .map(|chunk| {
+                    let start = (chunk * info.head_chunk_size) * shape[0];
+                    let end = start + info.head_chunk_size * shape[0];
+                    context.tensor_from_data(
+                        Shape::new(shape[0], info.head_chunk_size, 1),
+                        &data[start..end],
+                    )
+                })
+                .collect::<Result<Vec<_>, TensorError>>()?;
+
+            Head {
+                layer_norm: LayerNorm {
+                    w: load_vector_f16("ln_out.weight".into())?,
+                    b: load_vector_f16("ln_out.bias".into())?,
+                },
+                w,
+            }
         };
 
         todo!()

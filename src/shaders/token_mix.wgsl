@@ -1,18 +1,29 @@
+struct View {
+    stride: vec4<u32>,
+    offset: vec4<u32>,
+    shape: vec4<u32>,  
+};
+
 @group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, T, B]
-@group(0) @binding(1) var<uniform> mask: u32;                               // [B]
+@group(0) @binding(1) var<uniform> view: View;                              // [C, 4, B] / [C, 5L, B]
+@group(0) @binding(2) var<uniform> mask: u32;                               // [B]
 
-@group(0) @binding(2) var<storage, read> time_decay: array<vec4<f32>>;      // (C)
-@group(0) @binding(3) var<storage, read> time_first: array<vec4<f32>>;      // (C)
+@group(0) @binding(3) var<storage, read> time_decay: array<vec4<f32>>;      // (C)
+@group(0) @binding(4) var<storage, read> time_first: array<vec4<f32>>;      // (C)
 
-@group(0) @binding(4) var<storage, read> x: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(5) var<storage, read> k: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(6) var<storage, read> v: array<vec4<f32>>;               // (B, T, C)
-@group(0) @binding(7) var<storage, read> r: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(5) var<storage, read> x: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(6) var<storage, read> k: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(7) var<storage, read> v: array<vec4<f32>>;               // (B, T, C)
+@group(0) @binding(8) var<storage, read> r: array<vec4<f32>>;               // (B, T, C)
 
-@group(0) @binding(8) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
-@group(0) @binding(9) var<storage, read_write> state: array<vec4<f32>>;     // (B, 4, C)
+@group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
+@group(0) @binding(10) var<storage, read_write> state: array<vec4<f32>>;    // (B, 4, C)
 
 const BLOCK_SIZE: u32 = 128u;
+
+fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
+    return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * view.stride.x / 4u + view.offset.x / 4u + index;
+}
 
 fn batch_masked(batch: u32) -> bool {
     return ((mask >> batch) & 1u) == 0u;
@@ -29,10 +40,10 @@ fn token_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         return;
     }
 
-    let xi = (batch + 0u) * stride + index;
-    let ai = (batch + 1u) * stride + index;
-    let bi = (batch + 2u) * stride + index;
-    let pi = (batch + 3u) * stride + index;
+    let xi = compute_index(view, batch, 0u, index);
+    let ai = compute_index(view, batch, 1u, index);
+    let bi = compute_index(view, batch, 2u, index);
+    let pi = compute_index(view, batch, 3u, index);
 
     if !masked {
         state[xi] = x[(batch * shape[1] + (shape[1] - 1u)) * stride + index];

@@ -1,32 +1,54 @@
-use std::{borrow::Cow, marker::PhantomData, num::NonZeroU64, sync::Arc};
+use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
-use web_rwkv_derive::{Deref, Id, Kind};
+use web_rwkv_derive::Kind;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindingResource, Buffer, BufferAddress, BufferBinding, BufferDescriptor, BufferUsages, MapMode,
+    BindingResource, Buffer, BufferBinding, BufferDescriptor, BufferUsages, MapMode,
 };
 
 use crate::{context::Context, num::Scalar};
 pub use ops::{TensorCommand, TensorOp, TensorPass, TensorQueue};
-pub use shape::{Shape, ShapeCache};
-
-use self::shape::TensorSlice;
+pub use shape::{Shape, TensorSlice};
+pub use uniform::{IntoBytes, UniformCache};
 
 mod ops;
 mod shape;
+mod uniform;
 
 #[derive(Debug, Clone)]
 pub struct TensorBuffer {
-    pub shape_buffer: Arc<Buffer>,
+    pub meta: Arc<Buffer>,
     pub buffer: Arc<Buffer>,
-    pub offset: BufferAddress,
+}
+
+impl TensorBuffer {
+    #[inline]
+    pub fn meta_binding(&self) -> BindingResource {
+        BindingResource::Buffer(BufferBinding {
+            buffer: &self.meta,
+            offset: 0,
+            size: None,
+        })
+    }
+
+    #[inline]
+    pub fn binding(&self) -> BindingResource {
+        BindingResource::Buffer(BufferBinding {
+            buffer: &self.buffer,
+            offset: 0,
+            size: None,
+        })
+    }
 }
 
 pub trait Device: sealed::Sealed {
     type Data: Clone;
 }
 
+#[derive(Debug)]
 pub struct Cpu<'a, T>(&'a PhantomData<T>);
+
+#[derive(Debug)]
 pub struct Gpu;
 
 impl<'a, T: Scalar> Device for Cpu<'a, T> {
@@ -42,21 +64,21 @@ pub trait Kind: sealed::Sealed {
 }
 
 /// Tensor is a uniform buffer.
-#[derive(Kind)]
+#[derive(Debug, Kind)]
 #[usage(UNIFORM)]
 pub struct Uniform;
 
 /// Tensor is a storage buffer with can be copied to other buffers.
-#[derive(Kind)]
+#[derive(Debug, Kind)]
 #[usage(STORAGE, COPY_DST, COPY_SRC)]
 pub struct ReadWrite;
 
 /// Tensor is served as a read-back buffer.
-#[derive(Kind)]
+#[derive(Debug, Kind)]
 #[usage(MAP_READ, COPY_DST)]
 pub struct ReadBack;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TensorError {
     Size(usize, usize),
     Shape(Shape, Shape),
@@ -64,12 +86,6 @@ pub enum TensorError {
         dim: usize,
         start: usize,
         end: usize,
-    },
-    SliceNotContiguous,
-    Overflow {
-        buffer: BufferAddress,
-        offset: BufferAddress,
-        size: BufferAddress,
     },
     PipelineError,
     DeviceError,
@@ -85,18 +101,6 @@ impl std::fmt::Display for TensorError {
                 "Slice {}..{} out of range for dimension size {}",
                 start, end, dim
             ),
-            TensorError::SliceNotContiguous => write!(f, "Slice not yield contiguous"),
-            TensorError::Overflow {
-                buffer,
-                offset,
-                size,
-            } => write!(
-                f,
-                "Buffer of size {} overflowed with slice {}..{}",
-                buffer,
-                offset,
-                size + offset
-            ),
             TensorError::PipelineError => write!(f, "Pipeline not found"),
             TensorError::DeviceError => write!(f, "Tensor not on the same device"),
         }
@@ -105,38 +109,59 @@ impl std::fmt::Display for TensorError {
 
 impl std::error::Error for TensorError {}
 
-#[derive(Debug, Clone, Copy, Deref, Id, PartialEq, Eq, Hash)]
-pub struct TensorId(usize);
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct View {
+    pub stride: Shape,
+    pub offset: Shape,
+    pub shape: Shape,
+}
+
+impl IntoBytes for View {
+    fn into_bytes(self) -> Vec<u8> {
+        [
+            self.stride.into_bytes(),
+            self.offset.into_bytes(),
+            self.shape.into_bytes(),
+        ]
+        .concat()
+    }
+}
 
 #[derive(Debug)]
 pub struct Tensor<'a, D: Device, T: Scalar, K: Kind> {
-    id: TensorId,
     context: &'a Context,
     shape: Shape,
     data: D::Data,
-    phantom: std::marker::PhantomData<(D, T, K)>,
+    phantom: PhantomData<(D, T, K)>,
 }
 
 pub type TensorCpu<'a, 'b, T, K> = Tensor<'a, Cpu<'b, T>, T, K>;
 pub type TensorGpu<'a, T, K> = Tensor<'a, Gpu, T, K>;
 
 pub trait TensorExt<'a, 'b, T: Scalar>: Sized + Clone {
-    fn from_data(context: &'a Context, shape: Shape, data: Vec<T>) -> Result<Self, TensorError>;
-    fn from_slice(context: &'a Context, shape: Shape, data: &'b [T]) -> Result<Self, TensorError>;
+    fn from_data(
+        context: &'a Context,
+        shape: Shape,
+        data: impl Into<Cow<'b, [T]>>,
+    ) -> Result<Self, TensorError>;
 
     fn init(context: &'a Context, shape: Shape) -> Self;
 
-    fn into_slice(
-        self,
-        x: impl TensorSlice,
-        y: impl TensorSlice,
-        z: impl TensorSlice,
-    ) -> Result<Self, TensorError>;
+    fn shape(&self) -> Shape;
+
+    fn check_shape(&self, shape: Shape) -> Result<(), TensorError> {
+        if self.shape() == shape {
+            Ok(())
+        } else {
+            Err(TensorError::Shape(self.shape(), shape))
+        }
+    }
 }
 
 impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
     type Target = D::Data;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.data
     }
@@ -145,119 +170,92 @@ impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
 impl<D: Device, T: Scalar, K: Kind> Clone for Tensor<'_, D, T, K> {
     fn clone(&self) -> Self {
         Self {
-            id: self.id,
             context: self.context,
             shape: self.shape,
             data: self.data.clone(),
-            phantom: Default::default(),
+            phantom: PhantomData,
         }
     }
 }
 
 impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
+    #[inline]
     pub fn len(&self) -> usize {
         self.shape.len()
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.shape.is_empty()
     }
 
     /// Size of the tensor in bytes.
+    #[inline]
     pub fn size(&self) -> usize {
         self.len() * T::size()
     }
 
     /// The offset in bytes for a linear index.
+    #[inline]
     pub fn offset(index: usize) -> usize {
         index * T::size()
     }
 
-    pub fn id(&self) -> TensorId {
-        self.id
-    }
-
+    #[inline]
     pub fn context(&self) -> &Context {
         self.context
     }
 
-    pub fn shape(&self) -> Shape {
-        self.shape
-    }
-
+    #[inline]
     pub fn data(&self) -> &D::Data {
         &self.data
     }
 }
 
 impl<'a, 'b, T: Scalar, K: Kind> TensorExt<'a, 'b, T> for TensorCpu<'a, 'b, T, K> {
-    fn from_data(context: &'a Context, shape: Shape, data: Vec<T>) -> Result<Self, TensorError> {
+    fn from_data(
+        context: &'a Context,
+        shape: Shape,
+        data: impl Into<Cow<'b, [T]>>,
+    ) -> Result<Self, TensorError> {
+        let data = data.into();
         if shape.len() != data.len() {
             return Err(TensorError::Size(shape.len(), data.len()));
         }
         Ok(Self {
-            id: TensorId::new(),
             context,
             shape,
-            data: Cow::from(data),
-            phantom: Default::default(),
+            data,
+            phantom: PhantomData,
         })
     }
 
-    fn from_slice(context: &'a Context, shape: Shape, data: &'b [T]) -> Result<Self, TensorError> {
-        if shape.len() != data.len() {
-            return Err(TensorError::Size(shape.len(), data.len()));
-        }
-        Ok(Self {
-            id: TensorId::new(),
-            context,
-            shape,
-            data: Cow::Borrowed(data),
-            phantom: Default::default(),
-        })
-    }
-
+    #[inline]
     fn init(context: &'a Context, shape: Shape) -> Self {
         context.zeros(shape)
     }
 
-    fn into_slice(
-        self,
-        x: impl TensorSlice,
-        y: impl TensorSlice,
-        z: impl TensorSlice,
-    ) -> Result<Self, TensorError> {
-        self.check_slice(x.clone(), y.clone(), z.clone())?;
-        let (start, _) = self.shape_bounds(x.clone(), y.clone(), z.clone());
-        let start = self.shape.shape_index(start);
-
-        let shape = self.slice_shape(x, y, z);
-        let end = start + shape.len();
-        let data = self.data[start..end].to_owned();
-
-        Ok(Self {
-            id: TensorId::new(),
-            context: self.context,
-            shape,
-            data: Cow::from(data),
-            phantom: Default::default(),
-        })
+    #[inline]
+    fn shape(&self) -> Shape {
+        self.shape
     }
 }
 
 impl<T: Scalar, K: Kind> From<TensorCpu<'_, '_, T, K>> for Vec<T> {
+    #[inline]
     fn from(value: TensorCpu<'_, '_, T, K>) -> Self {
         Self::from(value.data)
     }
 }
 
 impl<'a, 'b, T: Scalar, K: Kind> TensorExt<'a, 'b, T> for TensorGpu<'a, T, K> {
-    fn from_data(context: &'a Context, shape: Shape, data: Vec<T>) -> Result<Self, TensorError> {
+    #[inline]
+    fn from_data(
+        context: &'a Context,
+        shape: Shape,
+        data: impl Into<Cow<'b, [T]>>,
+    ) -> Result<Self, TensorError> {
         TensorCpu::from_data(context, shape, data).map(Into::into)
-    }
-
-    fn from_slice(context: &'a Context, shape: Shape, data: &'b [T]) -> Result<Self, TensorError> {
-        TensorCpu::from_slice(context, shape, data).map(Into::into)
     }
 
     /// Initialize a GPU tensor with a given shape.
@@ -272,102 +270,27 @@ impl<'a, 'b, T: Scalar, K: Kind> TensorExt<'a, 'b, T> for TensorGpu<'a, T, K> {
                 mapped_at_creation: false,
             })
             .into();
-        let shape_buffer = context.shape_cache.request(shape, || {
-            context.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&shape.to_u32_slice()),
-                usage: BufferUsages::UNIFORM,
-            })
-        });
+
         Self {
-            id: TensorId::new(),
             context,
             shape,
             data: TensorBuffer {
-                shape_buffer,
+                meta: context.request_shape_uniform(shape),
                 buffer,
-                offset: 0,
             },
-            phantom: Default::default(),
+            phantom: PhantomData,
         }
     }
 
-    fn into_slice(
-        self,
-        x: impl TensorSlice,
-        y: impl TensorSlice,
-        z: impl TensorSlice,
-    ) -> Result<Self, TensorError> {
-        self.check_slice(x.clone(), y.clone(), z.clone())?;
-        let (start, _) = self.shape_bounds(x.clone(), y.clone(), z.clone());
-        let offset = self.shape.shape_index(start);
-
-        let shape = self.slice_shape(x, y, z);
-        let tensor = Self::from_other(self, shape, offset)?;
-        Ok(tensor)
-    }
-}
-
-impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
-    /// Create a GPU tensor from another one with new shape and offset.
-    /// Fails if the buffer overflows.
-    pub fn from_other(other: Self, shape: Shape, offset: usize) -> Result<Self, TensorError> {
-        let Self { context, data, .. } = other;
-        let buffer = data.buffer;
-
-        let size = (shape.len() * T::size()) as BufferAddress;
-        let offset = (offset * T::size()) as BufferAddress + data.offset;
-
-        if offset + size >= buffer.size() {
-            return Err(TensorError::Overflow {
-                buffer: buffer.size(),
-                offset,
-                size,
-            });
-        }
-
-        let shape_buffer = context.shape_cache.request(shape, || {
-            context.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&shape.to_u32_slice()),
-                usage: BufferUsages::UNIFORM,
-            })
-        });
-
-        Ok(Self {
-            id: TensorId::new(),
-            context,
-            shape,
-            data: TensorBuffer {
-                shape_buffer,
-                buffer,
-                offset,
-            },
-            phantom: Default::default(),
-        })
-    }
-
-    pub fn shape_binding(&self) -> BindingResource {
-        BindingResource::Buffer(BufferBinding {
-            buffer: &self.shape_buffer,
-            offset: self.offset,
-            size: NonZeroU64::new(16),
-        })
-    }
-
-    pub fn binding(&self) -> BindingResource {
-        BindingResource::Buffer(BufferBinding {
-            buffer: &self.buffer,
-            offset: self.offset,
-            size: NonZeroU64::new(self.size() as BufferAddress),
-        })
+    #[inline]
+    fn shape(&self) -> Shape {
+        self.shape
     }
 }
 
 impl<'a, 'b, T: Scalar, K: Kind> From<TensorCpu<'a, 'b, T, K>> for TensorGpu<'a, T, K> {
     fn from(value: TensorCpu<'a, 'b, T, K>) -> Self {
         let Tensor {
-            id,
             context,
             shape,
             data,
@@ -382,39 +305,29 @@ impl<'a, 'b, T: Scalar, K: Kind> From<TensorCpu<'a, 'b, T, K>> for TensorGpu<'a,
                 usage: K::buffer_usages(),
             })
             .into();
-        let shape_buffer = context.shape_cache.request(shape, || {
-            context.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: bytemuck::cast_slice(&shape.to_u32_slice()),
-                usage: BufferUsages::UNIFORM,
-            })
-        });
+
         Self {
-            id,
             context,
             shape,
             data: TensorBuffer {
-                shape_buffer,
+                meta: context.request_shape_uniform(shape),
                 buffer,
-                offset: 0,
             },
-            phantom: Default::default(),
+            phantom: PhantomData,
         }
     }
 }
 
 impl<'a, 'b, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T, ReadBack> {
     fn from(value: TensorGpu<'a, T, ReadBack>) -> Self {
-        let size = value.size() as u64;
         let Tensor {
-            id,
             context,
             shape,
-            data: TensorBuffer { buffer, offset, .. },
+            data: TensorBuffer { buffer, .. },
             ..
         } = value;
 
-        let slice = buffer.slice(offset..offset + size);
+        let slice = buffer.slice(..);
         slice.map_async(MapMode::Read, |_| ());
 
         context.device.poll(wgpu::MaintainBase::Wait);
@@ -426,42 +339,125 @@ impl<'a, 'b, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T
         buffer.unmap();
 
         Self {
-            id,
             context,
             shape,
             data: Cow::from(data),
-            phantom: Default::default(),
+            phantom: PhantomData,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TensorView<'a, T: Scalar> {
+    context: &'a Context,
+    view: View,
+    data: TensorBuffer,
+    phantom: PhantomData<T>,
+}
+
+impl<'a, T: Scalar> std::ops::Deref for TensorView<'a, T> {
+    type Target = TensorBuffer;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<'a, 'b, T: Scalar> TensorExt<'a, 'b, T> for TensorView<'a, T> {
+    #[inline]
+    fn from_data(
+        context: &'a Context,
+        shape: Shape,
+        data: impl Into<Cow<'b, [T]>>,
+    ) -> Result<Self, TensorError> {
+        TensorGpu::from_data(context, shape, data).map(|tensor| tensor.into_view((.., .., ..)))
+    }
+
+    #[inline]
+    fn init(context: &'a Context, shape: Shape) -> Self {
+        TensorGpu::init(context, shape).into_view((.., .., ..))
+    }
+
+    #[inline]
+    fn shape(&self) -> Shape {
+        self.view.shape
+    }
+}
+
+impl<'a, T: Scalar> TensorView<'a, T> {
+    #[inline]
+    pub fn context(&self) -> &Context {
+        self.context
+    }
+
+    #[inline]
+    pub fn data(&self) -> &TensorBuffer {
+        &self.data
+    }
+}
+
+impl<'a, T: Scalar> TensorGpu<'a, T, ReadWrite> {
+    pub fn as_view(&'a self, slice: impl TensorSlice) -> TensorView<'a, T> {
+        let (start, end) = slice.shape_bounds(self.shape);
+        let view = View {
+            stride: self.shape,
+            offset: start,
+            shape: end - start,
+        };
+        TensorView {
+            context: self.context,
+            view,
+            data: TensorBuffer {
+                meta: self.context.request_view_uniform(view),
+                buffer: self.buffer.clone(),
+            },
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn into_view(self, slice: impl TensorSlice) -> TensorView<'a, T> {
+        let (start, end) = slice.shape_bounds(self.shape);
+        let view = View {
+            stride: self.shape,
+            offset: start,
+            shape: end - start,
+        };
+        TensorView {
+            context: self.context,
+            view,
+            data: TensorBuffer {
+                meta: self.context.request_view_uniform(view),
+                buffer: self.buffer.clone(),
+            },
+            phantom: PhantomData,
         }
     }
 }
 
 impl<'a, 'b> Context {
+    #[inline]
     pub fn zeros<T: Scalar, Tensor: TensorExt<'a, 'b, T>>(&'a self, shape: Shape) -> Tensor {
         let data = vec![T::zero(); shape.len()];
         Tensor::from_data(self, shape, data).unwrap()
     }
 
+    #[inline]
     pub fn ones<T: Scalar, Tensor: TensorExt<'a, 'b, T>>(&'a self, shape: Shape) -> Tensor {
         let data = vec![T::one(); shape.len()];
         Tensor::from_data(self, shape, data).unwrap()
     }
 
+    #[inline]
     pub fn tensor_from_data<T: Scalar, Tensor: TensorExt<'a, 'b, T>>(
         &'a self,
         shape: Shape,
-        data: Vec<T>,
+        data: impl Into<Cow<'b, [T]>>,
     ) -> Result<Tensor, TensorError> {
         Tensor::from_data(self, shape, data)
     }
 
-    pub fn tensor_from_slice<T: Scalar, Tensor: TensorExt<'a, 'b, T>>(
-        &'a self,
-        shape: Shape,
-        data: &'b [T],
-    ) -> Result<Tensor, TensorError> {
-        Tensor::from_slice(self, shape, data)
-    }
-
+    #[inline]
     pub fn init_tensor<T: Scalar, Tensor: TensorExt<'a, 'b, T>>(&'a self, shape: Shape) -> Tensor {
         Tensor::init(self, shape)
     }
