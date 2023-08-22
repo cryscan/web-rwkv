@@ -1,6 +1,5 @@
 use anyhow::Result;
 use bitflags::bitflags;
-use derive_getters::Getters;
 use half::f16;
 use safetensors::SafeTensors;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
@@ -8,16 +7,14 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 use crate::{
     context::Context,
     tensor::{
-        ReadBack, ReadWrite, Shape, TensorCpu, TensorError, TensorExt, TensorGpu, TensorOp,
-        TensorPass, Uniform,
+        ReadBack, ReadWrite, Shape, TensorCommand, TensorCpu, TensorError, TensorExt, TensorGpu,
+        TensorOp, TensorPass, TensorView, Uniform,
     },
 };
 
-#[derive(Getters)]
 pub struct Model<'a, 'b> {
-    pub(crate) info: ModelInfo,
-    pub(crate) context: Context,
-    #[getter(skip)]
+    pub info: ModelInfo,
+    pub context: &'a Context,
     tensor: ModelTensor<'a, 'b>,
 }
 
@@ -96,7 +93,7 @@ struct Att<'a> {
 
 struct Ffn<'a> {
     time_mix_k: TensorGpu<'a, f16, ReadWrite>,
-    time_mix_v: TensorGpu<'a, f16, ReadWrite>,
+    time_mix_r: TensorGpu<'a, f16, ReadWrite>,
 
     w_k: Matrix<'a>,
     w_v: Matrix<'a>,
@@ -208,47 +205,94 @@ impl<'a> ModelBuffer<'a> {
 pub struct ModelState<'a> {
     pub info: ModelInfo,
     pub context: &'a Context,
-    pub layers: Vec<(TensorGpu<'a, f32, ReadWrite>, TensorGpu<'a, f32, ReadWrite>)>,
+    pub state: TensorGpu<'a, f32, ReadWrite>,
 }
 
 impl<'a> ModelState<'a> {
     pub fn new(context: &'a Context, info: ModelInfo, num_batches: usize) -> Self {
-        let layers = (0..info.num_layers)
+        let data = (0..num_batches)
             .map(|_| {
-                let data = [
-                    vec![0.0; info.num_emb],
-                    vec![0.0; info.num_emb],
-                    vec![0.0; info.num_emb],
-                    vec![-f32::MIN; info.num_emb],
-                ]
-                .concat();
-                let att = context
-                    .tensor_from_data(Shape::new(info.num_emb, 4, num_batches), data)
-                    .unwrap();
-                let ffn = context.zeros(Shape::new(info.num_emb, 1, num_batches));
-                (att, ffn)
+                (0..info.num_layers)
+                    .map(|_| {
+                        [
+                            vec![0.0; info.num_emb],
+                            vec![0.0; info.num_emb],
+                            vec![0.0; info.num_emb],
+                            vec![-f32::MIN; info.num_emb],
+                            vec![0.0; info.num_emb],
+                        ]
+                        .concat()
+                    })
+                    .collect::<Vec<_>>()
+                    .concat()
             })
-            .collect();
+            .collect::<Vec<_>>()
+            .concat();
+        let state = context
+            .tensor_from_data(
+                Shape::new(info.num_emb, 5 * info.num_layers, num_batches),
+                data,
+            )
+            .unwrap();
         Self {
             info,
             context,
-            layers,
+            state,
         }
     }
 
-    pub fn att_shape(&self) -> Shape {
-        self.layers[0].0.shape()
+    fn att(&self, layer: usize) -> TensorView<f32> {
+        let start = 5 * layer;
+        let end = start + 4;
+        self.state.as_view((.., start..end, ..))
     }
 
-    pub fn ffn_shape(&self) -> Shape {
-        self.layers[0].1.shape()
+    fn ffn(&self, layer: usize) -> TensorView<f32> {
+        let start = 5 * layer + 4;
+        self.state.as_view((.., start..=start, ..))
     }
 }
 
-pub struct BackedState<'a> {
+pub struct BackedState<'a, 'b> {
     pub info: ModelInfo,
     pub context: &'a Context,
-    pub data: Vec<f32>,
+    pub data: TensorCpu<'a, 'b, f32, ReadWrite>,
+}
+
+impl<'a, 'b> From<ModelState<'a>> for BackedState<'a, 'b> {
+    fn from(value: ModelState<'a>) -> Self {
+        let ModelState {
+            info,
+            context,
+            state,
+        } = value;
+        let map = context.init_tensor(state.shape());
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder.copy_tensor(&state, &map).unwrap();
+        Self {
+            info,
+            context,
+            data: TensorCpu::from(map),
+        }
+    }
+}
+
+impl<'a, 'b> From<BackedState<'a, 'b>> for ModelState<'a> {
+    fn from(value: BackedState<'a, 'b>) -> Self {
+        let BackedState {
+            info,
+            context,
+            data,
+        } = value;
+        let state = TensorGpu::from(data);
+        Self {
+            info,
+            context,
+            state,
+        }
+    }
 }
 
 pub struct ModelBuilder<'a, 'b> {
@@ -405,7 +449,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             },
             w: context.tensor_from_data(
                 Shape::new(num_emb, num_vocab, 1),
-                bytemuck::cast_slice(embed.data()),
+                bytemuck::pod_collect_to_vec(embed.data()),
             )?,
         };
 
@@ -437,6 +481,98 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             }
         };
 
-        todo!()
+        context.queue.submit(None);
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        let layers = (0..num_layers)
+            .map(|layer| {
+                let att_layer_norm = LayerNorm {
+                    w: load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
+                    b: load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
+                };
+
+                let att = format!("blocks.{layer}.att");
+                let time_decay = load_vector_exp_f32(format!("{att}.time_decay"))?;
+                let time_first = load_vector_f32(format!("{att}.time_first"))?;
+                let time_mix_k = load_vector_f16(format!("{att}.time_mix_k"))?;
+                let time_mix_v = load_vector_f16(format!("{att}.time_mix_v"))?;
+                let time_mix_r = load_vector_f16(format!("{att}.time_mix_r"))?;
+
+                let att = match quant {
+                    Quantization::Int8(x) if x.contains_layer(layer as u64) => Att {
+                        time_decay,
+                        time_first,
+                        time_mix_k,
+                        time_mix_v,
+                        time_mix_r,
+                        w_k: load_matrix_u8(format!("{att}.key,weight"))?,
+                        w_v: load_matrix_u8(format!("{att}.value.weight"))?,
+                        w_r: load_matrix_u8(format!("{att}.receptance.weight"))?,
+                        w_o: load_matrix_u8(format!("{att}.output.weight"))?,
+                    },
+                    _ => Att {
+                        time_decay,
+                        time_first,
+                        time_mix_k,
+                        time_mix_v,
+                        time_mix_r,
+                        w_k: load_matrix_f16(format!("{att}.key,weight"))?,
+                        w_v: load_matrix_f16(format!("{att}.value.weight"))?,
+                        w_r: load_matrix_f16(format!("{att}.receptance.weight"))?,
+                        w_o: load_matrix_f16(format!("{att}.output.weight"))?,
+                    },
+                };
+
+                let ffn_layer_norm = LayerNorm {
+                    w: load_vector_f16(format!("blocks.{layer}.ln2.weight"))?,
+                    b: load_vector_f16(format!("blocks.{layer}.ln2.bias"))?,
+                };
+
+                let ffn = format!("blocks.{layer}.ffn");
+                let time_mix_k = load_vector_f16(format!("{ffn}.time_mix_k"))?;
+                let time_mix_r = load_vector_f16(format!("{ffn}.time_mix_k"))?;
+
+                let ffn = match quant {
+                    Quantization::Int8(x) if x.contains_layer(layer as u64) => Ffn {
+                        time_mix_k,
+                        time_mix_r,
+                        w_k: load_matrix_u8(format!("{ffn}.key.weight"))?,
+                        w_v: load_matrix_u8(format!("{ffn}.value.weight"))?,
+                        w_r: load_matrix_u8(format!("{ffn}.receptance.weight"))?,
+                    },
+                    _ => Ffn {
+                        time_mix_k,
+                        time_mix_r,
+                        w_k: load_matrix_f16(format!("{ffn}.key.weight"))?,
+                        w_v: load_matrix_f16(format!("{ffn}.value.weight"))?,
+                        w_r: load_matrix_f16(format!("{ffn}.receptance.weight"))?,
+                    },
+                };
+
+                context.queue.submit(None);
+                context.device.poll(wgpu::MaintainBase::Wait);
+
+                Ok(Layer {
+                    att_layer_norm,
+                    ffn_layer_norm,
+                    att,
+                    ffn,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        context.queue.submit(None);
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        let tensor = ModelTensor {
+            embed,
+            head,
+            layers,
+        };
+        Ok(Model {
+            info,
+            context,
+            tensor,
+        })
     }
 }

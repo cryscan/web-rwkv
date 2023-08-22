@@ -14,7 +14,7 @@ exclude = ["assets"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-wgpu = "0.16.2"
+wgpu = "0.17"
 bytemuck = { version = "1.13", features = ["extern_crate_alloc"] }
 half = { version = "2.2", features = ["bytemuck"] }
 safetensors = "0.3.1"

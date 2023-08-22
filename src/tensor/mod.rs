@@ -318,7 +318,7 @@ impl<'a, 'b, T: Scalar, K: Kind> From<TensorCpu<'a, 'b, T, K>> for TensorGpu<'a,
     }
 }
 
-impl<'a, 'b, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T, ReadBack> {
+impl<'a, 'b, T: Scalar, K: Kind> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T, K> {
     fn from(value: TensorGpu<'a, T, ReadBack>) -> Self {
         let Tensor {
             context,

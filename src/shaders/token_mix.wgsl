@@ -22,7 +22,9 @@ struct View {
 const BLOCK_SIZE: u32 = 128u;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
-    return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * view.stride.x / 4u + view.offset.x / 4u + index;
+    let stride = view.stride.x / 4u;
+    let offset = view.offset.x / 4u;
+    return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * stride + offset + index;
 }
 
 fn batch_masked(batch: u32) -> bool {
