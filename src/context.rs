@@ -1,14 +1,15 @@
-use derive_getters::Getters;
 use std::{borrow::Cow, collections::HashMap, str::FromStr, sync::Arc};
+
 use web_rwkv_derive::{Deref, Id};
 use wgpu::{
-    Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, ComputePipeline,
-    ComputePipelineDescriptor, Device, DeviceDescriptor, Dx12Compiler, InstanceDescriptor,
-    PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
+    util::{BufferInitDescriptor, DeviceExt},
+    Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferUsages,
+    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Dx12Compiler,
+    InstanceDescriptor, PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
     ShaderModuleDescriptor, ShaderStages,
 };
 
-use crate::tensor::{Shape, UniformCache, View};
+use crate::tensor::{IntoBytes, ResourceCache, Shape, View};
 
 #[derive(Deref)]
 pub struct Instance(wgpu::Instance);
@@ -65,7 +66,7 @@ impl Instance {
 #[derive(Debug, Clone, Copy, Deref, Id, PartialEq, Eq, Hash)]
 pub struct ContextId(usize);
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct Context {
     pub id: ContextId,
     pub adapter: Adapter,
@@ -73,8 +74,8 @@ pub struct Context {
     pub queue: Queue,
     pub pipelines: HashMap<String, ComputePipeline>,
 
-    shape_cache: UniformCache<Shape>,
-    view_cache: UniformCache<View>,
+    shape_cache: ResourceCache<Shape, Buffer>,
+    view_cache: ResourceCache<View, Buffer>,
 }
 
 pub struct ContextBuilder<'a> {
@@ -326,16 +327,23 @@ impl PartialEq for Context {
 impl Eq for Context {}
 
 impl Context {
-    pub fn clear_caches(&self) {
-        self.shape_cache.clear();
-        self.view_cache.clear();
-    }
-
     pub fn request_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
-        self.shape_cache.request(self, shape)
+        self.shape_cache.request(shape, || {
+            self.device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: &shape.into_bytes(),
+                usage: BufferUsages::UNIFORM,
+            })
+        })
     }
 
     pub fn request_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.view_cache.request(self, view)
+        self.view_cache.request(view, || {
+            self.device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: &view.into_bytes(),
+                usage: BufferUsages::UNIFORM,
+            })
+        })
     }
 }

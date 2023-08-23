@@ -6,7 +6,11 @@ use std::{
 
 use web_rwkv_derive::Deref;
 
-use super::IntoBytes;
+use super::TensorError;
+
+pub trait IntoBytes {
+    fn into_bytes(self) -> Vec<u8>;
+}
 
 /// The shape of a [`Tensor`].
 /// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
@@ -116,7 +120,7 @@ impl std::ops::SubAssign<Shape> for Shape {
 }
 
 pub trait TensorSlice: Clone + PartialEq + Eq + Hash {
-    fn shape_bounds(self, shape: Shape) -> (Shape, Shape);
+    fn shape_bounds(self, shape: Shape) -> Result<(Shape, Shape), TensorError>;
 }
 
 impl<X, Y, Z> TensorSlice for (X, Y, Z)
@@ -125,8 +129,11 @@ where
     Y: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash,
     Z: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash,
 {
-    fn shape_bounds(self, shape: Shape) -> (Shape, Shape) {
-        fn convert_bounds(slice: impl RangeBounds<usize>, dim: usize) -> (usize, usize) {
+    fn shape_bounds(self, shape: Shape) -> Result<(Shape, Shape), TensorError> {
+        fn convert_bounds(
+            slice: impl RangeBounds<usize>,
+            dim: usize,
+        ) -> Result<(usize, usize), TensorError> {
             let start = match slice.start_bound() {
                 Bound::Included(&bound) => bound,
                 Bound::Excluded(&bound) => bound + 1,
@@ -137,15 +144,19 @@ where
                 Bound::Excluded(&bound) => bound,
                 Bound::Unbounded => dim,
             };
-            (start, end)
+            if start > end || start >= dim || end > dim {
+                Err(TensorError::SliceOutOfRange { dim, start, end })
+            } else {
+                Ok((start, end))
+            }
         }
 
         let mut start = Shape::default();
         let mut end = Shape::default();
-        (start[0], end[0]) = convert_bounds(self.0, shape[0]);
-        (start[1], end[1]) = convert_bounds(self.1, shape[1]);
-        (start[2], end[2]) = convert_bounds(self.2, shape[2]);
-        (start, end)
+        (start[0], end[0]) = convert_bounds(self.0, shape[0])?;
+        (start[1], end[1]) = convert_bounds(self.1, shape[1])?;
+        (start[2], end[2]) = convert_bounds(self.2, shape[2])?;
+        Ok((start, end))
     }
 }
 

@@ -7,13 +7,13 @@ use wgpu::{
 };
 
 use crate::{context::Context, num::Scalar};
+pub use cache::ResourceCache;
 pub use ops::{TensorCommand, TensorOp, TensorPass, TensorQueue};
-pub use shape::{Shape, TensorSlice};
-pub use uniform::{IntoBytes, UniformCache};
+pub use shape::{IntoBytes, Shape, TensorSlice};
 
+mod cache;
 mod ops;
 mod shape;
-mod uniform;
 
 #[derive(Debug, Clone)]
 pub struct TensorBuffer {
@@ -371,12 +371,14 @@ impl<'a, 'b, T: Scalar> TensorExt<'a, 'b, T> for TensorView<'a, T> {
         shape: Shape,
         data: impl Into<Cow<'b, [T]>>,
     ) -> Result<Self, TensorError> {
-        TensorGpu::from_data(context, shape, data).map(|tensor| tensor.into_view((.., .., ..)))
+        TensorGpu::from_data(context, shape, data).and_then(|tensor| tensor.into_view((.., .., ..)))
     }
 
     #[inline]
     fn init(context: &'a Context, shape: Shape) -> Self {
-        TensorGpu::init(context, shape).into_view((.., .., ..))
+        TensorGpu::init(context, shape)
+            .into_view((.., .., ..))
+            .unwrap()
     }
 
     #[inline]
@@ -398,14 +400,14 @@ impl<'a, T: Scalar> TensorView<'a, T> {
 }
 
 impl<'a, T: Scalar> TensorGpu<'a, T, ReadWrite> {
-    pub fn as_view(&'a self, slice: impl TensorSlice) -> TensorView<'a, T> {
-        let (start, end) = slice.shape_bounds(self.shape);
+    pub fn as_view(&'a self, slice: impl TensorSlice) -> Result<TensorView<'a, T>, TensorError> {
+        let (start, end) = slice.shape_bounds(self.shape)?;
         let view = View {
             stride: self.shape,
             offset: start,
             shape: end - start,
         };
-        TensorView {
+        Ok(TensorView {
             context: self.context,
             view,
             data: TensorBuffer {
@@ -413,17 +415,17 @@ impl<'a, T: Scalar> TensorGpu<'a, T, ReadWrite> {
                 buffer: self.buffer.clone(),
             },
             phantom: PhantomData,
-        }
+        })
     }
 
-    pub fn into_view(self, slice: impl TensorSlice) -> TensorView<'a, T> {
-        let (start, end) = slice.shape_bounds(self.shape);
+    pub fn into_view(self, slice: impl TensorSlice) -> Result<TensorView<'a, T>, TensorError> {
+        let (start, end) = slice.shape_bounds(self.shape)?;
         let view = View {
             stride: self.shape,
             offset: start,
             shape: end - start,
         };
-        TensorView {
+        Ok(TensorView {
             context: self.context,
             view,
             data: TensorBuffer {
@@ -431,7 +433,7 @@ impl<'a, T: Scalar> TensorGpu<'a, T, ReadWrite> {
                 buffer: self.buffer.clone(),
             },
             phantom: PhantomData,
-        }
+        })
     }
 }
 

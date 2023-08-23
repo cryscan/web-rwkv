@@ -1,5 +1,6 @@
 use anyhow::Result;
 use bitflags::bitflags;
+use derive_getters::Getters;
 use half::f16;
 use safetensors::SafeTensors;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
@@ -7,27 +8,32 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 use crate::{
     context::Context,
     tensor::{
-        ReadBack, ReadWrite, Shape, TensorCommand, TensorCpu, TensorError, TensorExt, TensorGpu,
-        TensorOp, TensorPass, TensorView, Uniform,
+        ReadBack, ReadWrite, ResourceCache, Shape, TensorCommand, TensorCpu, TensorError,
+        TensorExt, TensorGpu, TensorOp, TensorPass, TensorQueue, TensorView, Uniform,
     },
 };
 
+#[derive(Debug, Getters)]
 pub struct Model<'a, 'b> {
-    pub info: ModelInfo,
     pub context: &'a Context,
+
+    info: ModelInfo,
+    /// The head matrix is too big for a storage buffer so it's divided into chunks.
+    head_chunk_size: usize,
+    /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
+    max_batch_token_chunk_size: usize,
+
+    #[getter(skip)]
     tensor: ModelTensor<'a, 'b>,
+    #[getter(skip)]
+    buffer_cache: ResourceCache<usize, ModelBuffer<'a>>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModelInfo {
     pub num_layers: usize,
     pub num_emb: usize,
     pub num_vocab: usize,
-
-    /// The head matrix is too big for a storage buffer so it's divided into chunks.
-    pub head_chunk_size: usize,
-    /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
-    pub max_batch_token_chunk_size: usize,
 }
 
 bitflags! {
@@ -55,6 +61,7 @@ pub enum Quantization {
     Int8(LayerFlags),
 }
 
+#[derive(Debug)]
 enum Matrix<'a> {
     Fp16(TensorGpu<'a, f16, ReadWrite>),
     Int8 {
@@ -66,17 +73,20 @@ enum Matrix<'a> {
     },
 }
 
+#[derive(Debug)]
 struct ModelTensor<'a, 'b> {
     embed: Embed<'a, 'b>,
     head: Head<'a>,
     layers: Vec<Layer<'a>>,
 }
 
+#[derive(Debug)]
 struct LayerNorm<'a> {
     w: TensorGpu<'a, f16, ReadWrite>,
     b: TensorGpu<'a, f16, ReadWrite>,
 }
 
+#[derive(Debug)]
 struct Att<'a> {
     time_decay: TensorGpu<'a, f32, ReadWrite>,
     time_first: TensorGpu<'a, f32, ReadWrite>,
@@ -91,6 +101,7 @@ struct Att<'a> {
     w_o: Matrix<'a>,
 }
 
+#[derive(Debug)]
 struct Ffn<'a> {
     time_mix_k: TensorGpu<'a, f16, ReadWrite>,
     time_mix_r: TensorGpu<'a, f16, ReadWrite>,
@@ -100,6 +111,7 @@ struct Ffn<'a> {
     w_r: Matrix<'a>,
 }
 
+#[derive(Debug)]
 struct Layer<'a> {
     att_layer_norm: LayerNorm<'a>,
     ffn_layer_norm: LayerNorm<'a>,
@@ -107,17 +119,20 @@ struct Layer<'a> {
     ffn: Ffn<'a>,
 }
 
+#[derive(Debug)]
 struct Embed<'a, 'b> {
     layer_norm: LayerNorm<'a>,
     w: TensorCpu<'a, 'b, f16, ReadWrite>,
 }
 
+#[derive(Debug)]
 struct Head<'a> {
     layer_norm: LayerNorm<'a>,
     w: Vec<TensorGpu<'a, f16, ReadWrite>>,
 }
 
 /// Runtime buffers.
+#[derive(Debug)]
 pub struct ModelBuffer<'a> {
     info: ModelInfo,
 
@@ -141,9 +156,7 @@ pub struct ModelBuffer<'a> {
     ffn_r: TensorGpu<'a, f32, ReadWrite>,
     ffn_o: TensorGpu<'a, f32, ReadWrite>,
 
-    head_x: Vec<TensorGpu<'a, f32, ReadWrite>>,
-    head_o: TensorGpu<'a, f32, ReadWrite>,
-
+    head: TensorGpu<'a, f32, ReadWrite>,
     softmax: TensorGpu<'a, f32, ReadWrite>,
 
     map: TensorGpu<'a, f32, ReadBack>,
@@ -158,14 +171,9 @@ impl<'a> ModelBuffer<'a> {
     ) -> Result<Self, TensorError> {
         let shape = input.shape();
         let ffn_shape = Shape::new(shape[0] * 4, shape[1], shape[2]);
-        let head_shape = Shape::new(info.head_chunk_size, shape[1], shape[2]);
         let out_shape = Shape::new(info.num_vocab, shape[1], shape[2]);
 
         input.check_shape(Shape::new(info.num_emb, shape[1], shape[2]))?;
-
-        let head_x = (0..(info.num_vocab + info.head_chunk_size - 1) / info.head_chunk_size)
-            .map(|_| context.init_tensor(head_shape))
-            .collect();
 
         Ok(Self {
             info,
@@ -186,8 +194,7 @@ impl<'a> ModelBuffer<'a> {
             ffn_v: context.init_tensor(shape),
             ffn_r: context.init_tensor(shape),
             ffn_o: context.init_tensor(shape),
-            head_x,
-            head_o: context.init_tensor(out_shape),
+            head: context.init_tensor(out_shape),
             softmax: context.init_tensor(out_shape),
             map: context.init_tensor(out_shape),
         })
@@ -202,6 +209,7 @@ impl<'a> ModelBuffer<'a> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ModelState<'a> {
     pub info: ModelInfo,
     pub context: &'a Context,
@@ -241,18 +249,23 @@ impl<'a> ModelState<'a> {
         }
     }
 
-    fn att(&self, layer: usize) -> TensorView<f32> {
+    pub fn load(&self, backed: &BackedState<'a, '_>) -> Result<(), TensorError> {
+        self.context.queue.write_tensor(&backed.data, &self.state)
+    }
+
+    fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer;
         let end = start + 4;
         self.state.as_view((.., start..end, ..))
     }
 
-    fn ffn(&self, layer: usize) -> TensorView<f32> {
+    fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer + 4;
         self.state.as_view((.., start..=start, ..))
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct BackedState<'a, 'b> {
     pub info: ModelInfo,
     pub context: &'a Context,
@@ -365,8 +378,6 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             num_layers,
             num_emb,
             num_vocab,
-            head_chunk_size,
-            max_batch_token_chunk_size,
         };
 
         let load_vector_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
@@ -455,7 +466,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
 
         let head = {
             let tensor = model.tensor("head_weight")?;
-            let chunks = tensor.shape()[1] / info.head_chunk_size;
+            let chunks = tensor.shape()[1] / head_chunk_size;
 
             let shape = tensor.shape();
             let shape = Shape::new(shape[1], shape[0], 1);
@@ -463,10 +474,10 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
 
             let w = (0..chunks)
                 .map(|chunk| {
-                    let start = (chunk * info.head_chunk_size) * shape[0];
-                    let end = start + info.head_chunk_size * shape[0];
+                    let start = (chunk * head_chunk_size) * shape[0];
+                    let end = start + head_chunk_size * shape[0];
                     context.tensor_from_data(
-                        Shape::new(shape[0], info.head_chunk_size, 1),
+                        Shape::new(shape[0], head_chunk_size, 1),
                         &data[start..end],
                     )
                 })
@@ -570,9 +581,12 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             layers,
         };
         Ok(Model {
-            info,
             context,
+            info,
+            head_chunk_size,
+            max_batch_token_chunk_size,
             tensor,
+            buffer_cache: Default::default(),
         })
     }
 }

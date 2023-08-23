@@ -32,7 +32,7 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
 
 pub trait TensorQueue<T: Scalar, K: Kind> {
     fn write_tensor(
-        &mut self,
+        &self,
         host: &TensorCpu<T, K>,
         device: &TensorGpu<T, K>,
     ) -> Result<(), TensorError>;
@@ -40,7 +40,7 @@ pub trait TensorQueue<T: Scalar, K: Kind> {
 
 impl<T: Scalar, K: Kind> TensorQueue<T, K> for Queue {
     fn write_tensor(
-        &mut self,
+        &self,
         host: &TensorCpu<T, K>,
         device: &TensorGpu<T, K>,
     ) -> Result<(), TensorError> {
@@ -865,7 +865,7 @@ mod tests {
         let output_dev = TensorGpu::init(&context, Shape::new(R * 2, T, B));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
-        let matmul = TensorOp::matmul(&matrix_dev, &input_dev, output_dev.as_view((R.., .., ..)))?;
+        let matmul = TensorOp::matmul(&matrix_dev, &input_dev, output_dev.as_view((R.., .., ..))?)?;
 
         let mut encoder = context
             .device
@@ -920,13 +920,13 @@ mod tests {
         let input: Vec<_> = (0..8).map(|x| x as f32).collect();
         let input = TensorGpu::from_data(&context, Shape::new(4, 1, 2), input)?;
         ops.push(TensorOp::blit(
-            input.as_view((.., .., ..)),
-            output.as_view((.., 1..=1, ..)),
+            input.as_view((.., .., ..))?,
+            output.as_view((.., 1..=1, ..))?,
         )?);
 
         let input: Vec<_> = (8..12).map(|x| x as f32).collect();
         let input = TensorView::from_data(&context, Shape::new(4, 1, 1), input)?;
-        ops.push(TensorOp::blit(input, output.as_view((.., 2.., 1..2)))?);
+        ops.push(TensorOp::blit(input, output.as_view((.., 2.., 1..2))?)?);
 
         let mut encoder = context
             .device
