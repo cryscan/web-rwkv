@@ -120,7 +120,21 @@ impl std::ops::SubAssign<Shape> for Shape {
 }
 
 pub trait TensorSlice: Clone + PartialEq + Eq + Hash {
+    fn convert_bounds(
+        slice: impl RangeBounds<usize>,
+        dim: usize,
+    ) -> Result<(usize, usize), TensorError>;
+
     fn shape_bounds(self, shape: Shape) -> Result<(Shape, Shape), TensorError>;
+    fn contiguous_bounds(self, shape: Shape) -> Result<(usize, usize), TensorError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SliceState {
+    Zero,
+    One,
+    NotFull,
+    Full,
 }
 
 impl<X, Y, Z> TensorSlice for (X, Y, Z)
@@ -129,84 +143,68 @@ where
     Y: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash,
     Z: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash,
 {
-    fn shape_bounds(self, shape: Shape) -> Result<(Shape, Shape), TensorError> {
-        fn convert_bounds(
-            slice: impl RangeBounds<usize>,
-            dim: usize,
-        ) -> Result<(usize, usize), TensorError> {
-            let start = match slice.start_bound() {
-                Bound::Included(&bound) => bound,
-                Bound::Excluded(&bound) => bound + 1,
-                Bound::Unbounded => 0,
-            };
-            let end = match slice.end_bound() {
-                Bound::Included(&bound) => bound + 1,
-                Bound::Excluded(&bound) => bound,
-                Bound::Unbounded => dim,
-            };
-            if start > end || start >= dim || end > dim {
-                Err(TensorError::SliceOutOfRange { dim, start, end })
-            } else {
-                Ok((start, end))
-            }
+    fn convert_bounds(
+        slice: impl RangeBounds<usize>,
+        dim: usize,
+    ) -> Result<(usize, usize), TensorError> {
+        let start = match slice.start_bound() {
+            Bound::Included(&bound) => bound,
+            Bound::Excluded(&bound) => bound + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match slice.end_bound() {
+            Bound::Included(&bound) => bound + 1,
+            Bound::Excluded(&bound) => bound,
+            Bound::Unbounded => dim,
+        };
+        if start > end || start >= dim || end > dim {
+            Err(TensorError::SliceOutOfRange { dim, start, end })
+        } else {
+            Ok((start, end))
         }
+    }
 
+    fn shape_bounds(self, shape: Shape) -> Result<(Shape, Shape), TensorError> {
         let mut start = Shape::default();
         let mut end = Shape::default();
-        (start[0], end[0]) = convert_bounds(self.0, shape[0])?;
-        (start[1], end[1]) = convert_bounds(self.1, shape[1])?;
-        (start[2], end[2]) = convert_bounds(self.2, shape[2])?;
+        (start[0], end[0]) = Self::convert_bounds(self.0, shape[0])?;
+        (start[1], end[1]) = Self::convert_bounds(self.1, shape[1])?;
+        (start[2], end[2]) = Self::convert_bounds(self.2, shape[2])?;
         Ok((start, end))
     }
+
+    fn contiguous_bounds(self, shape: Shape) -> Result<(usize, usize), TensorError> {
+        let mut state = SliceState::Full;
+
+        let mut check_slice_dim = |start, end, dim| {
+            let current_state = match (start, end) {
+                (start, end) if start == end => SliceState::Zero,
+                (start, end) if end == start + 1 => SliceState::One,
+                (0, end) if end == dim => SliceState::Full,
+                _ => SliceState::NotFull,
+            };
+
+            let previous_state = state;
+            state = current_state;
+
+            match previous_state {
+                SliceState::NotFull => current_state < previous_state,
+                _ => current_state <= previous_state,
+            }
+            .then_some(())
+            .ok_or(TensorError::SliceNotContiguous)
+        };
+
+        let (start, end) = self.shape_bounds(shape)?;
+        check_slice_dim(start[0], end[0], shape[0])
+            .and(check_slice_dim(start[1], end[1], shape[1]))
+            .and(check_slice_dim(start[2], end[2], shape[2]))?;
+
+        let len = (end - start).len();
+        let start = shape.shape_index(start);
+        Ok((start, start + len))
+    }
 }
-
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-// enum SliceState {
-//     Zero,
-//     One,
-//     NotFull,
-//     Full,
-// }
-
-// fn slice_to_dim(slice: impl TensorSlice, dim: usize) -> (usize, usize) {
-//     let start = match slice.start_bound() {
-//         Bound::Included(&bound) => bound,
-//         Bound::Excluded(&bound) => bound + 1,
-//         Bound::Unbounded => 0,
-//     };
-//     let end = match slice.end_bound() {
-//         Bound::Included(&bound) => bound + 1,
-//         Bound::Excluded(&bound) => bound,
-//         Bound::Unbounded => dim,
-//     };
-//     (start, end)
-// }
-
-// fn check_slice_dim(
-//     slice: impl TensorSlice,
-//     dim: usize,
-//     state: &mut SliceState,
-// ) -> Result<(), TensorError> {
-//     let (start, end) = slice_to_dim(slice, dim);
-//     let current_state = match (start, end) {
-//         (start, end) if start >= dim => Err(TensorError::SliceOutOfRange { dim, start, end }),
-//         (start, end) if end > dim => Err(TensorError::SliceOutOfRange { dim, start, end }),
-//         (start, end) if start >= end => Ok(SliceState::Zero),
-//         (start, end) if end == start + 1 => Ok(SliceState::One),
-//         (0, end) if end == dim => Ok(SliceState::Full),
-//         _ => Ok(SliceState::NotFull),
-//     }?;
-
-//     let previous_state = *state;
-//     *state = current_state;
-
-//     match previous_state {
-//         SliceState::NotFull => current_state < previous_state,
-//         _ => current_state <= previous_state,
-//     }
-//     .then_some(())
-//     .ok_or(TensorError::SliceNotContiguous)
-// }
 
 #[cfg(test)]
 mod tests {

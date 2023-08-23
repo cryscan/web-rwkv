@@ -122,7 +122,7 @@ struct Layer<'a> {
 #[derive(Debug)]
 struct Embed<'a, 'b> {
     layer_norm: LayerNorm<'a>,
-    w: TensorCpu<'a, 'b, f16, ReadWrite>,
+    w: TensorCpu<'a, 'b, f16>,
 }
 
 #[derive(Debug)]
@@ -166,8 +166,8 @@ impl<'a> ModelBuffer<'a> {
     pub fn new(
         context: &'a Context,
         info: ModelInfo,
-        input: TensorCpu<'a, '_, f32, ReadWrite>,
-        mask: TensorCpu<'a, '_, f32, Uniform>,
+        input: TensorCpu<'a, '_, f32>,
+        mask: TensorCpu<'a, '_, f32>,
     ) -> Result<Self, TensorError> {
         let shape = input.shape();
         let ffn_shape = Shape::new(shape[0] * 4, shape[1], shape[2]);
@@ -269,7 +269,7 @@ impl<'a> ModelState<'a> {
 pub struct BackedState<'a, 'b> {
     pub info: ModelInfo,
     pub context: &'a Context,
-    pub data: TensorCpu<'a, 'b, f32, ReadWrite>,
+    pub data: TensorCpu<'a, 'b, f32>,
 }
 
 impl<'a, 'b> From<ModelState<'a>> for BackedState<'a, 'b> {
@@ -590,3 +590,5 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
         })
     }
 }
+
+impl<'a, 'b> Model<'a, 'b> {}

@@ -46,16 +46,16 @@ pub trait Device: sealed::Sealed {
 }
 
 #[derive(Debug)]
-pub struct Cpu<'a, T>(&'a PhantomData<T>);
+pub struct Cpu<'a, T: Scalar>(&'a PhantomData<T>);
 
 #[derive(Debug)]
-pub struct Gpu;
+pub struct Gpu<K: Kind>(PhantomData<K>);
 
 impl<'a, T: Scalar> Device for Cpu<'a, T> {
     type Data = Cow<'a, [T]>;
 }
 
-impl Device for Gpu {
+impl<K: Kind> Device for Gpu<K> {
     type Data = TensorBuffer;
 }
 
@@ -87,6 +87,7 @@ pub enum TensorError {
         start: usize,
         end: usize,
     },
+    SliceNotContiguous,
     PipelineError,
     DeviceError,
 }
@@ -101,6 +102,7 @@ impl std::fmt::Display for TensorError {
                 "Slice {}..{} out of range for dimension size {}",
                 start, end, dim
             ),
+            TensorError::SliceNotContiguous => write!(f, "Slice not contiguous"),
             TensorError::PipelineError => write!(f, "Pipeline not found"),
             TensorError::DeviceError => write!(f, "Tensor not on the same device"),
         }
@@ -128,15 +130,15 @@ impl IntoBytes for View {
 }
 
 #[derive(Debug)]
-pub struct Tensor<'a, D: Device, T: Scalar, K: Kind> {
+pub struct Tensor<'a, D: Device, T: Scalar> {
     context: &'a Context,
     shape: Shape,
     data: D::Data,
-    phantom: PhantomData<(D, T, K)>,
+    phantom: PhantomData<(D, T)>,
 }
 
-pub type TensorCpu<'a, 'b, T, K> = Tensor<'a, Cpu<'b, T>, T, K>;
-pub type TensorGpu<'a, T, K> = Tensor<'a, Gpu, T, K>;
+pub type TensorCpu<'a, 'b, T> = Tensor<'a, Cpu<'b, T>, T>;
+pub type TensorGpu<'a, T, K> = Tensor<'a, Gpu<K>, T>;
 
 pub trait TensorExt<'a, 'b, T: Scalar>: Sized + Clone {
     fn from_data(
@@ -158,7 +160,7 @@ pub trait TensorExt<'a, 'b, T: Scalar>: Sized + Clone {
     }
 }
 
-impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
+impl<D: Device, T: Scalar> std::ops::Deref for Tensor<'_, D, T> {
     type Target = D::Data;
 
     #[inline]
@@ -167,7 +169,7 @@ impl<D: Device, T: Scalar, K: Kind> std::ops::Deref for Tensor<'_, D, T, K> {
     }
 }
 
-impl<D: Device, T: Scalar, K: Kind> Clone for Tensor<'_, D, T, K> {
+impl<D: Device, T: Scalar> Clone for Tensor<'_, D, T> {
     fn clone(&self) -> Self {
         Self {
             context: self.context,
@@ -178,7 +180,7 @@ impl<D: Device, T: Scalar, K: Kind> Clone for Tensor<'_, D, T, K> {
     }
 }
 
-impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
+impl<D: Device, T: Scalar> Tensor<'_, D, T> {
     #[inline]
     pub fn len(&self) -> usize {
         self.shape.len()
@@ -212,7 +214,7 @@ impl<D: Device, T: Scalar, K: Kind> Tensor<'_, D, T, K> {
     }
 }
 
-impl<'a, 'b, T: Scalar, K: Kind> TensorExt<'a, 'b, T> for TensorCpu<'a, 'b, T, K> {
+impl<'a, 'b, T: Scalar> TensorExt<'a, 'b, T> for TensorCpu<'a, 'b, T> {
     fn from_data(
         context: &'a Context,
         shape: Shape,
@@ -241,9 +243,9 @@ impl<'a, 'b, T: Scalar, K: Kind> TensorExt<'a, 'b, T> for TensorCpu<'a, 'b, T, K
     }
 }
 
-impl<T: Scalar, K: Kind> From<TensorCpu<'_, '_, T, K>> for Vec<T> {
+impl<T: Scalar> From<TensorCpu<'_, '_, T>> for Vec<T> {
     #[inline]
-    fn from(value: TensorCpu<'_, '_, T, K>) -> Self {
+    fn from(value: TensorCpu<'_, '_, T>) -> Self {
         Self::from(value.data)
     }
 }
@@ -288,8 +290,8 @@ impl<'a, 'b, T: Scalar, K: Kind> TensorExt<'a, 'b, T> for TensorGpu<'a, T, K> {
     }
 }
 
-impl<'a, 'b, T: Scalar, K: Kind> From<TensorCpu<'a, 'b, T, K>> for TensorGpu<'a, T, K> {
-    fn from(value: TensorCpu<'a, 'b, T, K>) -> Self {
+impl<'a, 'b, T: Scalar, K: Kind> From<TensorCpu<'a, 'b, T>> for TensorGpu<'a, T, K> {
+    fn from(value: TensorCpu<'a, 'b, T>) -> Self {
         let Tensor {
             context,
             shape,
@@ -318,7 +320,7 @@ impl<'a, 'b, T: Scalar, K: Kind> From<TensorCpu<'a, 'b, T, K>> for TensorGpu<'a,
     }
 }
 
-impl<'a, 'b, T: Scalar, K: Kind> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T, K> {
+impl<'a, 'b, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T> {
     fn from(value: TensorGpu<'a, T, ReadBack>) -> Self {
         let Tensor {
             context,
@@ -466,12 +468,13 @@ impl<'a, 'b> Context {
 }
 
 mod sealed {
-    use super::{Cpu, Gpu, ReadBack, ReadWrite, Uniform};
+    use super::{Cpu, Gpu, Kind, ReadBack, ReadWrite, Uniform};
+    use crate::num::Scalar;
 
     pub trait Sealed {}
 
-    impl<T> Sealed for Cpu<'_, T> {}
-    impl Sealed for Gpu {}
+    impl<T: Scalar> Sealed for Cpu<'_, T> {}
+    impl<K: Kind> Sealed for Gpu<K> {}
 
     impl Sealed for Uniform {}
     impl Sealed for ReadWrite {}

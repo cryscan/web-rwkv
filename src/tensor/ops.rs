@@ -33,7 +33,7 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
 pub trait TensorQueue<T: Scalar, K: Kind> {
     fn write_tensor(
         &self,
-        host: &TensorCpu<T, K>,
+        host: &TensorCpu<T>,
         device: &TensorGpu<T, K>,
     ) -> Result<(), TensorError>;
 }
@@ -41,7 +41,7 @@ pub trait TensorQueue<T: Scalar, K: Kind> {
 impl<T: Scalar, K: Kind> TensorQueue<T, K> for Queue {
     fn write_tensor(
         &self,
-        host: &TensorCpu<T, K>,
+        host: &TensorCpu<T>,
         device: &TensorGpu<T, K>,
     ) -> Result<(), TensorError> {
         host.check_shape(device.shape())?;
@@ -746,7 +746,7 @@ mod tests {
     use super::{TensorOp, TensorPass};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{ReadBack, Shape, TensorCommand, TensorCpu, TensorExt, TensorGpu, TensorView},
+        tensor::{Shape, TensorCommand, TensorCpu, TensorExt, TensorGpu, TensorView},
     };
 
     fn is_approx(a: f32, b: f32) -> bool {
@@ -787,7 +787,7 @@ mod tests {
         encoder.copy_tensor(&x_device, &x_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = TensorCpu::<_, ReadBack>::from(x_map);
+        let x_host = TensorCpu::from(x_map);
         let x_host = Vec::from(x_host);
 
         assert_eq!(x, x_host);
@@ -817,7 +817,7 @@ mod tests {
         encoder.copy_tensor(&x_dev, &x_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = TensorCpu::<_, ReadBack>::from(x_map);
+        let x_host = TensorCpu::from(x_map);
         let x_host = Vec::from(x_host);
 
         let mut ans = vec![];
@@ -878,7 +878,7 @@ mod tests {
         encoder.copy_tensor(&output_dev, &output_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = TensorCpu::<_, ReadBack>::from(output_map);
+        let output_host = TensorCpu::from(output_map);
         let output_host = Vec::from(output_host);
 
         let mut ans = vec![0.0; output_host.len()];
@@ -939,7 +939,7 @@ mod tests {
         encoder.copy_tensor(&output, &map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = TensorCpu::<_, ReadBack>::from(map);
+        let output_host = TensorCpu::from(map);
         let output_host = Vec::from(output_host);
 
         assert_eq!(
