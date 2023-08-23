@@ -1,12 +1,10 @@
 use half::f16;
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BufferAddress, CommandEncoder, ComputePass,
-    ComputePipeline, Queue,
+    ComputePipeline,
 };
 
-use super::{
-    Kind, ReadWrite, Shape, TensorCpu, TensorError, TensorExt, TensorGpu, TensorView, Uniform,
-};
+use super::{Kind, ReadWrite, Shape, TensorError, TensorExt, TensorGpu, TensorView, Uniform};
 use crate::num::Scalar;
 
 pub trait TensorCommand<T: Scalar, K: Kind> {
@@ -26,26 +24,6 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
         source.check_shape(destination.shape())?;
         let size = source.size() as BufferAddress;
         self.copy_buffer_to_buffer(&source.buffer, 0, &destination.buffer, 0, size);
-        Ok(())
-    }
-}
-
-pub trait TensorQueue<T: Scalar, K: Kind> {
-    fn write_tensor(
-        &self,
-        host: &TensorCpu<T>,
-        device: &TensorGpu<T, K>,
-    ) -> Result<(), TensorError>;
-}
-
-impl<T: Scalar, K: Kind> TensorQueue<T, K> for Queue {
-    fn write_tensor(
-        &self,
-        host: &TensorCpu<T>,
-        device: &TensorGpu<T, K>,
-    ) -> Result<(), TensorError> {
-        host.check_shape(device.shape())?;
-        self.write_buffer(&device.buffer, 0, bytemuck::cast_slice(&host.data));
         Ok(())
     }
 }

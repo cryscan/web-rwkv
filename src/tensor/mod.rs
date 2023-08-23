@@ -8,7 +8,7 @@ use wgpu::{
 
 use crate::{context::Context, num::Scalar};
 pub use cache::ResourceCache;
-pub use ops::{TensorCommand, TensorOp, TensorPass, TensorQueue};
+pub use ops::{TensorCommand, TensorOp, TensorPass};
 pub use shape::{IntoBytes, Shape, TensorSlice};
 
 mod cache;
@@ -349,17 +349,40 @@ impl<'a, 'b, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T
     }
 }
 
+impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
+    pub fn load(&self, host: &TensorCpu<'a, '_, T>) -> Result<(), TensorError> {
+        self.check_shape(host.shape)?;
+        self.context
+            .queue
+            .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&host.data));
+
+        Ok(())
+    }
+}
+
+impl<'a, 'b, T: Scalar> std::ops::Index<(usize, usize, usize)> for TensorCpu<'a, 'b, T> {
+    type Output = T;
+
+    fn index(&self, (x, y, z): (usize, usize, usize)) -> &Self::Output {
+        &self.data[self.shape.shape_index(Shape::new(x, y, z))]
+    }
+}
+
 impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
-    pub fn as_slice(&'b self, slice: impl TensorSlice) -> Result<Self, TensorError> {
+    pub fn as_slice(&self, slice: impl TensorSlice) -> Result<TensorCpu<'a, 'b, T>, TensorError> {
         let (start, end) = slice.clone().shape_bounds(self.shape)?;
         let shape = end - start;
 
         let (start, end) = slice.contiguous_bounds(self.shape)?;
+        let data = match &self.data {
+            Cow::Borrowed(data) => Cow::Borrowed(&data[start..end]),
+            Cow::Owned(data) => Cow::Owned(data[start..end].to_owned()),
+        };
 
         Ok(Self {
             context: self.context,
             shape,
-            data: Cow::from(&self.data[start..end]),
+            data,
             phantom: PhantomData,
         })
     }

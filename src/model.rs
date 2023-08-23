@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use bitflags::bitflags;
 use derive_getters::Getters;
@@ -9,7 +11,7 @@ use crate::{
     context::Context,
     tensor::{
         ReadBack, ReadWrite, ResourceCache, Shape, TensorCommand, TensorCpu, TensorError,
-        TensorExt, TensorGpu, TensorOp, TensorPass, TensorQueue, TensorView, Uniform,
+        TensorExt, TensorGpu, TensorOp, TensorPass, TensorView, Uniform,
     },
 };
 
@@ -21,7 +23,7 @@ pub struct Model<'a, 'b> {
     /// The head matrix is too big for a storage buffer so it's divided into chunks.
     head_chunk_size: usize,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
-    max_batch_token_chunk_size: usize,
+    token_chunk_size: usize,
 
     #[getter(skip)]
     tensor: ModelTensor<'a, 'b>,
@@ -38,8 +40,7 @@ pub struct ModelInfo {
 
 bitflags! {
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-    pub struct LayerFlags: u64 {
-    }
+    pub struct LayerFlags: u64 {}
 }
 
 impl LayerFlags {
@@ -136,7 +137,7 @@ struct Head<'a> {
 pub struct ModelBuffer<'a> {
     info: ModelInfo,
 
-    mask: TensorGpu<'a, f32, Uniform>,
+    mask: TensorGpu<'a, u32, Uniform>,
     input: TensorGpu<'a, f32, ReadWrite>,
 
     att_x: TensorGpu<'a, f32, ReadWrite>,
@@ -163,22 +164,16 @@ pub struct ModelBuffer<'a> {
 }
 
 impl<'a> ModelBuffer<'a> {
-    pub fn new(
-        context: &'a Context,
-        info: ModelInfo,
-        input: TensorCpu<'a, '_, f32>,
-        mask: TensorCpu<'a, '_, f32>,
-    ) -> Result<Self, TensorError> {
-        let shape = input.shape();
-        let ffn_shape = Shape::new(shape[0] * 4, shape[1], shape[2]);
-        let out_shape = Shape::new(info.num_vocab, shape[1], shape[2]);
+    pub fn new(context: &'a Context, info: ModelInfo, num_token: usize, num_batch: usize) -> Self {
+        let shape = Shape::new(info.num_emb, num_token, num_batch);
+        let mask_shape = Shape::new(1, 1, 1);
+        let ffn_shape = Shape::new(info.num_emb * 4, num_token, num_batch);
+        let out_shape = Shape::new(info.num_vocab, 1, num_batch);
 
-        input.check_shape(Shape::new(info.num_emb, shape[1], shape[2]))?;
-
-        Ok(Self {
+        Self {
             info,
-            mask: TensorGpu::from(mask),
-            input: TensorGpu::from(input),
+            mask: context.init_tensor(mask_shape),
+            input: context.init_tensor(shape),
             att_x: context.init_tensor(shape),
             att_kx: context.init_tensor(shape),
             att_vx: context.init_tensor(shape),
@@ -197,7 +192,22 @@ impl<'a> ModelBuffer<'a> {
             head: context.init_tensor(out_shape),
             softmax: context.init_tensor(out_shape),
             map: context.init_tensor(out_shape),
-        })
+        }
+    }
+
+    pub fn load_input(&self, input: &TensorCpu<'a, '_, f32>) -> Result<(), TensorError> {
+        self.input.check_shape(input.shape())?;
+        self.input.load(input)
+    }
+
+    pub fn load_mask(&self, mask: &TensorCpu<'a, '_, u32>) -> Result<(), TensorError> {
+        self.mask.check_shape(mask.shape())?;
+        self.mask.load(mask)
+    }
+
+    pub fn load_softmax(&self, softmax: &TensorCpu<'a, '_, f32>) -> Result<(), TensorError> {
+        self.softmax.check_shape(softmax.shape())?;
+        self.softmax.load(softmax)
     }
 
     pub fn num_tokens(&self) -> usize {
@@ -250,7 +260,7 @@ impl<'a> ModelState<'a> {
     }
 
     pub fn load(&self, backed: &BackedState<'a, '_>) -> Result<(), TensorError> {
-        self.context.queue.write_tensor(&backed.data, &self.state)
+        self.state.load(&backed.data)
     }
 
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
@@ -313,7 +323,7 @@ pub struct ModelBuilder<'a, 'b> {
     data: &'b [u8],
     quant: Quantization,
     head_chunk_size: usize,
-    max_batch_token_chunk_size: usize,
+    token_chunk_size: usize,
 }
 
 impl<'a, 'b> ModelBuilder<'a, 'b> {
@@ -323,7 +333,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             data,
             quant: Quantization::None,
             head_chunk_size: 4096,
-            max_batch_token_chunk_size: 32,
+            token_chunk_size: 32,
         }
     }
 
@@ -331,16 +341,16 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
         Self { quant, ..self }
     }
 
-    pub fn with_max_head_chunk(self, size: usize) -> Self {
+    pub fn with_head_chunk_size(self, size: usize) -> Self {
         Self {
             head_chunk_size: size,
             ..self
         }
     }
 
-    pub fn with_max_token_batch_chunk(self, size: usize) -> Self {
+    pub fn with_token_chunk_size(self, size: usize) -> Self {
         Self {
-            max_batch_token_chunk_size: size,
+            token_chunk_size: size,
             ..self
         }
     }
@@ -351,7 +361,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             data,
             quant,
             head_chunk_size,
-            max_batch_token_chunk_size,
+            token_chunk_size,
         } = self;
 
         let model = SafeTensors::deserialize(data)?;
@@ -584,11 +594,142 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             context,
             info,
             head_chunk_size,
-            max_batch_token_chunk_size,
+            token_chunk_size,
             tensor,
             buffer_cache: Default::default(),
         })
     }
 }
 
-impl<'a, 'b> Model<'a, 'b> {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModelError {
+    BatchSize(usize),
+}
+
+impl std::fmt::Display for ModelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModelError::BatchSize(batch) => write!(f, "Batch size {batch} too large (maximum 32)"),
+        }
+    }
+}
+
+impl std::error::Error for ModelError {}
+
+impl<'a, 'b> Model<'a, 'b> {
+    fn request_buffer(&self, num_batch: usize) -> Arc<ModelBuffer> {
+        self.buffer_cache.request(num_batch, || {
+            ModelBuffer::new(self.context, self.info, 1, num_batch)
+        })
+    }
+
+    /// Softmax of the input tensor.
+    /// - `input` shape: `[C, 1, B]`.
+    pub fn softmax(&'a self, input: &TensorCpu<'a, 'b, f32>) -> Result<TensorCpu<'a, 'b, f32>> {
+        let num_batch = input.shape()[2];
+        let buffer = self.request_buffer(num_batch);
+        buffer.load_input(input)?;
+
+        let op = TensorOp::softmax(&buffer.softmax)?;
+
+        let mut encoder = self
+            .context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
+        encoder.copy_tensor(&buffer.softmax, &buffer.map)?;
+        self.context.queue.submit(Some(encoder.finish()));
+
+        let host = TensorCpu::from(buffer.map.clone());
+        Ok(host)
+    }
+
+    /// Run the model for a batch of tokens as input.
+    /// - `tokens` shape: `[B, T, 1]`.
+    pub fn run(
+        &'a self,
+        tokens: &TensorCpu<'a, 'b, u16>,
+        mask: &TensorCpu<'a, 'b, u32>,
+        state: &ModelState<'a>,
+    ) -> Result<TensorCpu<'a, 'b, f32>> {
+        let num_token = tokens.shape()[1];
+        let num_batch = tokens.shape()[0];
+        let num_vocab = self.info.num_vocab;
+        tokens.check_shape(Shape::new(num_batch, num_token, 1))?;
+
+        if num_batch > 32 {
+            return Err(ModelError::BatchSize(num_batch).into());
+        }
+
+        if tokens.is_empty() {
+            return Ok(self
+                .context
+                .init_tensor(Shape::new(num_vocab, 1, num_batch)));
+        }
+
+        let buffer = self.request_buffer(num_batch);
+
+        // shrink the token chunk size which growth of the batch size
+        let batch_chunk_size = num_batch.next_power_of_two();
+        let token_chunk_size = 1.max(self.token_chunk_size / batch_chunk_size);
+        let num_chunk = (num_token + token_chunk_size - 1) / token_chunk_size;
+
+        for chunk in 0..num_chunk {
+            let start = chunk * token_chunk_size;
+            let end = num_token.min(start + token_chunk_size);
+            let tokens = tokens.as_slice((.., start..end, ..))?;
+            self.run_internal(&tokens, mask, state, &buffer, chunk == num_chunk)?;
+            self.context.device.poll(wgpu::MaintainBase::Wait);
+        }
+
+        Ok(TensorCpu::from(buffer.map.clone()))
+    }
+
+    fn run_internal(
+        &'a self,
+        tokens: &TensorCpu<'a, 'b, u16>,
+        mask: &TensorCpu<'a, 'b, u32>,
+        state: &ModelState<'a>,
+        buffer: &ModelBuffer,
+        output: bool,
+    ) -> Result<(), TensorError> {
+        let num_emb = self.info.num_emb;
+        let num_token = tokens.shape()[1];
+        let num_batch = tokens.shape()[0];
+
+        let context = self.context;
+
+        let shape = Shape::new(num_emb, num_token, num_batch);
+        let mut input = vec![0.0; shape.len()];
+        for batch in 0..num_batch {
+            for token in 0..num_token {
+                let token = tokens[(batch, token, 0)] as usize;
+                let mut slice = self
+                    .tensor
+                    .embed
+                    .w
+                    .as_slice((.., token..=token, ..))?
+                    .iter()
+                    .map(|x| x.to_f32())
+                    .collect();
+                input.append(&mut slice);
+            }
+        }
+
+        let input = context.tensor_from_data(shape, input)?;
+        buffer.load_input(&input)?;
+        buffer.load_mask(mask)?;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        encoder.copy_tensor(&buffer.head, &buffer.map)?;
+        context.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+}

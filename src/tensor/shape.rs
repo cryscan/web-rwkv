@@ -178,9 +178,9 @@ where
 
         let mut check_slice_dim = |start, end, dim| {
             let current_state = match (start, end) {
-                (start, end) if start == end => SliceState::Zero,
-                (start, end) if end == start + 1 => SliceState::One,
                 (0, end) if end == dim => SliceState::Full,
+                (start, end) if end == start + 1 => SliceState::One,
+                (start, end) if start == end => SliceState::Zero,
                 _ => SliceState::NotFull,
             };
 
@@ -243,26 +243,23 @@ mod tests {
         let context = create_context()?;
 
         let x: TensorCpu<f32> = context.init_tensor(Shape::new(1024, 768, 3));
-
         assert_eq!(
             (12..42, 7..8, 1..=1).contiguous_bounds(x.shape)?,
             (793612, 793642)
         );
-
-        assert!((.., 42..56, 0..2).contiguous_bounds(x.shape).is_err());
-        assert!((0..1, 0..2, 1..2).contiguous_bounds(x.shape).is_err());
-
-        // x.check_slice(12..42, 7..8, 1..=1)?;
-        // x.check_slice(.., .., ..)?;
-        // x.check_slice(.., 42..56, 2..3)?;
-        // x.check_slice(0..1, 0..1, 0..1)?;
-
-        // assert!(x.check_slice(.., 42..56, 0..2).is_err());
-        // assert!(x.check_slice(0..1, 0..2, 1..2).is_err());
-
         assert_eq!(
             (.., 42..56, 2..=2).shape_bounds(x.shape)?,
             (Shape::new(0, 42, 2), Shape::new(1024, 56, 3))
+        );
+        assert!((.., 42..56, 2..3).contiguous_bounds(x.shape).is_ok());
+        assert!((0..1, 0..1, 0..1).contiguous_bounds(x.shape).is_ok());
+        assert!((.., 42..56, 0..2).contiguous_bounds(x.shape).is_err());
+        assert!((0..1, 0..2, 1..2).contiguous_bounds(x.shape).is_err());
+
+        let x: TensorCpu<f32> = context.init_tensor(Shape::new(1, 1024, 6));
+        assert_eq!(
+            (.., 0..256, 3..=3).contiguous_bounds(x.shape)?,
+            (3072, 3328)
         );
 
         let shape = Shape::new(4, 2, 3);
@@ -275,7 +272,7 @@ mod tests {
         let y: Vec<_> = x.as_slice((.., .., 1..2))?.into();
         assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
 
-        let y: Vec<_> = x.clone().into_slice((2.., 1.., ..0))?.into();
+        let y: Vec<_> = x.into_slice((2.., 1.., ..0))?.into();
         assert_eq!(y, Vec::<f32>::new());
 
         Ok(())
