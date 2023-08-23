@@ -210,10 +210,13 @@ where
 mod tests {
     use wgpu::PowerPreference;
 
-    use super::Shape;
-    use crate::context::{Context, ContextBuilder, Instance};
+    use super::{Shape, TensorSlice};
+    use crate::{
+        context::{Context, ContextBuilder, Instance},
+        tensor::{TensorCpu, TensorExt},
+    };
 
-    fn _create_context() -> Result<Context, anyhow::Error> {
+    fn create_context() -> Result<Context, anyhow::Error> {
         let adapter = pollster::block_on(async {
             let instance = Instance::new();
             instance.adapter(PowerPreference::HighPerformance).await
@@ -235,38 +238,46 @@ mod tests {
         assert_eq!(index, 35 + 42 * 1024 + 9 * 1024 * 768);
     }
 
-    // #[test]
-    // fn test_slice() -> Result<(), anyhow::Error> {
-    //     let context = create_context()?;
+    #[test]
+    fn test_slice() -> Result<(), anyhow::Error> {
+        let context = create_context()?;
 
-    //     let x: TensorCpu<f32, ReadWrite> = context.init_tensor(Shape::new(1024, 768, 3));
+        let x: TensorCpu<f32> = context.init_tensor(Shape::new(1024, 768, 3));
 
-    //     x.check_slice(12..42, 7..8, 1..=1)?;
-    //     x.check_slice(.., .., ..)?;
-    //     x.check_slice(.., 42..56, 2..3)?;
-    //     x.check_slice(0..1, 0..1, 0..1)?;
+        assert_eq!(
+            (12..42, 7..8, 1..=1).contiguous_bounds(x.shape)?,
+            (793612, 793642)
+        );
 
-    //     assert!(x.check_slice(.., 42..56, 0..2).is_err());
-    //     assert!(x.check_slice(0..1, 0..2, 1..2).is_err());
+        assert!((.., 42..56, 0..2).contiguous_bounds(x.shape).is_err());
+        assert!((0..1, 0..2, 1..2).contiguous_bounds(x.shape).is_err());
 
-    //     assert_eq!(
-    //         x.shape_bounds(.., 42..56, 2..=2),
-    //         (Shape::new(0, 42, 2), Shape::new(1024, 56, 3))
-    //     );
+        // x.check_slice(12..42, 7..8, 1..=1)?;
+        // x.check_slice(.., .., ..)?;
+        // x.check_slice(.., 42..56, 2..3)?;
+        // x.check_slice(0..1, 0..1, 0..1)?;
 
-    //     let shape = Shape::new(4, 2, 3);
-    //     let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
-    //     let x: TensorCpu<_, ReadWrite> = TensorCpu::from_data(&context, shape, x)?;
+        // assert!(x.check_slice(.., 42..56, 0..2).is_err());
+        // assert!(x.check_slice(0..1, 0..2, 1..2).is_err());
 
-    //     let y: Vec<_> = x.clone().into_slice(.., 1..2, 1..2)?.into();
-    //     assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);
+        assert_eq!(
+            (.., 42..56, 2..=2).shape_bounds(x.shape)?,
+            (Shape::new(0, 42, 2), Shape::new(1024, 56, 3))
+        );
 
-    //     let y: Vec<_> = x.clone().into_slice(.., .., 1..2)?.into();
-    //     assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
+        let shape = Shape::new(4, 2, 3);
+        let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
+        let x = TensorCpu::from_data(&context, shape, x)?;
 
-    //     let y: Vec<_> = x.into_slice(2.., 1.., ..0)?.into();
-    //     assert_eq!(y, Vec::<f32>::new());
+        let y: Vec<_> = x.as_slice((.., 1..2, 1..2))?.into();
+        assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);
 
-    //     Ok(())
-    // }
+        let y: Vec<_> = x.as_slice((.., .., 1..2))?.into();
+        assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
+
+        let y: Vec<_> = x.clone().into_slice((2.., 1.., ..0))?.into();
+        assert_eq!(y, Vec::<f32>::new());
+
+        Ok(())
+    }
 }

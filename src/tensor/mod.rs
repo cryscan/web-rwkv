@@ -349,6 +349,40 @@ impl<'a, 'b, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T
     }
 }
 
+impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
+    pub fn as_slice(&'b self, slice: impl TensorSlice) -> Result<Self, TensorError> {
+        let (start, end) = slice.clone().shape_bounds(self.shape)?;
+        let shape = end - start;
+
+        let (start, end) = slice.contiguous_bounds(self.shape)?;
+
+        Ok(Self {
+            context: self.context,
+            shape,
+            data: Cow::from(&self.data[start..end]),
+            phantom: PhantomData,
+        })
+    }
+
+    pub fn into_slice(self, slice: impl TensorSlice) -> Result<Self, TensorError> {
+        let (start, end) = slice.clone().shape_bounds(self.shape)?;
+        let shape = end - start;
+
+        let (start, end) = slice.contiguous_bounds(self.shape)?;
+        let data = match self.data {
+            Cow::Borrowed(data) => Cow::Borrowed(&data[start..end]),
+            Cow::Owned(data) => Cow::Owned(data[start..end].to_owned()),
+        };
+
+        Ok(Self {
+            context: self.context,
+            shape,
+            data,
+            phantom: PhantomData,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TensorView<'a, T: Scalar> {
     context: &'a Context,
