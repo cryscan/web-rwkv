@@ -88,23 +88,21 @@ pub enum TensorError {
         end: usize,
     },
     SliceNotContiguous,
-    PipelineError,
-    DeviceError,
+    PipelineError(&'static str),
 }
 
 impl std::fmt::Display for TensorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TensorError::Size(a, b) => write!(f, "Data size not match: {} vs. {}", a, b),
-            TensorError::Shape(a, b) => write!(f, "Tensor shape not match: {} vs. {}", a, b),
+            TensorError::Size(a, b) => write!(f, "data size not match: {} vs. {}", a, b),
+            TensorError::Shape(a, b) => write!(f, "tensor shape not match: {} vs. {}", a, b),
             TensorError::SliceOutOfRange { dim, start, end } => write!(
                 f,
-                "Slice {}..{} out of range for dimension size {}",
+                "slice {}..{} out of range for dimension size {}",
                 start, end, dim
             ),
-            TensorError::SliceNotContiguous => write!(f, "Slice not contiguous"),
-            TensorError::PipelineError => write!(f, "Pipeline not found"),
-            TensorError::DeviceError => write!(f, "Tensor not on the same device"),
+            TensorError::SliceNotContiguous => write!(f, "slice not contiguous"),
+            TensorError::PipelineError(name) => write!(f, "pipeline {} not found", name),
         }
     }
 }

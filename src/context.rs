@@ -9,7 +9,7 @@ use wgpu::{
     ShaderModuleDescriptor, ShaderStages,
 };
 
-use crate::tensor::{IntoBytes, ResourceCache, Shape, View};
+use crate::tensor::{IntoBytes, ResourceCache, Shape, TensorError, View};
 
 #[derive(Deref)]
 pub struct Instance(wgpu::Instance);
@@ -72,10 +72,10 @@ pub struct Context {
     pub adapter: Adapter,
     pub device: Device,
     pub queue: Queue,
-    pub pipelines: HashMap<String, ComputePipeline>,
 
-    shape_cache: ResourceCache<Shape, Buffer>,
-    view_cache: ResourceCache<View, Buffer>,
+    pipelines: HashMap<String, ComputePipeline>,
+    shapes: ResourceCache<Shape, Buffer>,
+    views: ResourceCache<View, Buffer>,
 }
 
 pub struct ContextBuilder<'a> {
@@ -155,8 +155,8 @@ impl<'a> ContextBuilder<'a> {
             device,
             queue,
             pipelines,
-            shape_cache: Default::default(),
-            view_cache: Default::default(),
+            shapes: Default::default(),
+            views: Default::default(),
         })
     }
 
@@ -327,8 +327,14 @@ impl PartialEq for Context {
 impl Eq for Context {}
 
 impl Context {
+    pub fn pipeline(&self, name: &'static str) -> Result<&ComputePipeline, TensorError> {
+        self.pipelines
+            .get(name)
+            .ok_or(TensorError::PipelineError(name))
+    }
+
     pub fn request_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
-        self.shape_cache.request(shape, || {
+        self.shapes.request(shape, || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &shape.into_bytes(),
@@ -338,7 +344,7 @@ impl Context {
     }
 
     pub fn request_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.view_cache.request(view, || {
+        self.views.request(view, || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &view.into_bytes(),

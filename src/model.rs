@@ -702,14 +702,13 @@ impl<'a, 'b> Model<'a, 'b> {
         let num_batch = tokens.shape()[0];
 
         let context = self.context;
+        let tensor = &self.tensor;
 
-        let shape = Shape::new(num_emb, num_token, num_batch);
-        let mut input = vec![0.0; shape.len()];
+        let mut input = vec![];
         for batch in 0..num_batch {
             for token in 0..num_token {
                 let token = tokens[(batch, token, 0)] as usize;
-                let mut slice = self
-                    .tensor
+                let mut slice = tensor
                     .embed
                     .w
                     .as_slice((.., token..=token, ..))?
@@ -720,6 +719,7 @@ impl<'a, 'b> Model<'a, 'b> {
             }
         }
 
+        let shape = Shape::new(num_emb, num_token, num_batch);
         let input = context.tensor_from_data(shape, input)?;
         buffer.load_input(&input)?;
         buffer.load_mask(mask)?;
@@ -727,6 +727,15 @@ impl<'a, 'b> Model<'a, 'b> {
         let mut encoder = context
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let op = TensorOp::layer_norm(
+            &tensor.embed.layer_norm.w,
+            &tensor.embed.layer_norm.b,
+            &buffer.input,
+        )?;
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
 
         encoder.copy_tensor(&buffer.head, &buffer.map)?;
         context.queue.submit(Some(encoder.finish()));

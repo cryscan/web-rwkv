@@ -63,10 +63,7 @@ impl<'a> TensorOp<'a> {
     pub fn softmax(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape();
         let context = x.context();
-        let pipeline = context
-            .pipelines
-            .get("softmax")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("softmax")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -100,10 +97,7 @@ impl<'a> TensorOp<'a> {
         b.check_shape(Shape::new(shape[0], 1, 1))?;
 
         let context = x.context;
-        let pipeline = context
-            .pipelines
-            .get("layer_norm")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("layer_norm")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -148,10 +142,7 @@ impl<'a> TensorOp<'a> {
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
 
         let context = output.context;
-        let pipeline = context
-            .pipelines
-            .get("matmul")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("matmul")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -210,10 +201,7 @@ impl<'a> TensorOp<'a> {
         ry.check_shape(Shape::new(matrix.shape[1], 1, 1))?;
 
         let context = output.context;
-        let pipeline = context
-            .pipelines
-            .get("matmul_int8")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("matmul_int8")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -273,10 +261,7 @@ impl<'a> TensorOp<'a> {
         input.check_shape(shape)?;
 
         let context = output.context;
-        let pipeline = context
-            .pipelines
-            .get("add")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("add")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -319,10 +304,7 @@ impl<'a> TensorOp<'a> {
         sx.check_shape(Shape::new(shape[0], 1, shape[2]))?;
 
         let context = output.context;
-        let pipeline = context
-            .pipelines
-            .get("token_shift")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("token_shift")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -384,10 +366,7 @@ impl<'a> TensorOp<'a> {
         state.check_shape(Shape::new(shape[0], 4, shape[2]))?;
 
         let context = output.context;
-        let pipeline = context
-            .pipelines
-            .get("token_mix")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("token_mix")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -449,10 +428,7 @@ impl<'a> TensorOp<'a> {
     pub fn squared_relu(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape;
         let context = x.context;
-        let pipeline = context
-            .pipelines
-            .get("squared_relu")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("squared_relu")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -495,10 +471,7 @@ impl<'a> TensorOp<'a> {
         state.check_shape(Shape::new(shape[0], 1, shape[2]))?;
 
         let context = output.context;
-        let pipeline = context
-            .pipelines
-            .get("channel_mix")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("channel_mix")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -558,10 +531,7 @@ impl<'a> TensorOp<'a> {
         input.check_shape(shape)?;
 
         let context = input.context;
-        let pipeline = context
-            .pipelines
-            .get("blit")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("blit")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -642,11 +612,8 @@ impl<'a> TensorOp<'a> {
                 resource: output.binding(),
             },
         ];
-        let create_op = |name: &str, dispatch| -> Result<Self, TensorError> {
-            let pipeline = context
-                .pipelines
-                .get(name)
-                .ok_or(TensorError::PipelineError)?;
+        let create_op = |name: &'static str, dispatch| -> Result<Self, TensorError> {
+            let pipeline = context.pipeline(name)?;
             let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
                 label: None,
                 layout: &pipeline.get_bind_group_layout(0),
@@ -680,10 +647,7 @@ impl<'a> TensorOp<'a> {
         input.check_shape(shape)?;
 
         let context = output.context;
-        let pipeline = context
-            .pipelines
-            .get("quant_vec_fp16")
-            .ok_or(TensorError::PipelineError)?;
+        let pipeline = context.pipeline("quant_vec_fp16")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -776,8 +740,14 @@ mod tests {
     fn test_softmax() -> Result<(), anyhow::Error> {
         let context = create_context()?;
 
-        let x = [(); 6000].map(|_| 10.0 * (fastrand::f32() - 0.5)).to_vec();
-        let shape = Shape::new(x.len() / 6, 3, 2);
+        const C: usize = 1000;
+        const T: usize = 3;
+        const B: usize = 2;
+
+        let x = [(); C * T * B]
+            .map(|_| 10.0 * (fastrand::f32() - 0.5))
+            .to_vec();
+        let shape = Shape::new(C, T, B);
 
         let x_dev: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
         let x_map = context.init_tensor(x_dev.shape());
@@ -799,7 +769,7 @@ mod tests {
         let x_host = Vec::from(x_host);
 
         let mut ans = vec![];
-        for x in &x.into_iter().chunks(1000) {
+        for x in &x.into_iter().chunks(C) {
             let x: Vec<_> = x.collect();
             let x = x.into_iter();
             let max = x.clone().reduce(f32::max).unwrap_or_default();
@@ -812,6 +782,82 @@ mod tests {
         for (index, (a, b)) in Iterator::zip(x_host.into_iter(), ans.into_iter()).enumerate() {
             assert!(
                 is_approx(a, b),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_layer_norm() -> Result<(), anyhow::Error> {
+        let context = create_context()?;
+
+        const C: usize = 1000;
+        const T: usize = 3;
+        const B: usize = 2;
+
+        let x = [(); C * T * B]
+            .map(|_| 10.0 * (fastrand::f32() - 0.5))
+            .to_vec();
+        let w = [(); C]
+            .map(|_| f16::from_f32(fastrand::f32() - 0.5))
+            .repeat(T * B)
+            .to_vec();
+        let b = [(); C]
+            .map(|_| f16::from_f32(fastrand::f32() - 0.5))
+            .repeat(T * B)
+            .to_vec();
+
+        let shape = Shape::new(C, T, B);
+        let x_dev = TensorGpu::from_data(&context, shape, &x)?;
+        let x_map = context.init_tensor(shape);
+
+        let shape = Shape::new(C, 1, 1);
+        let w_dev = TensorGpu::from_data(&context, shape, &w[..1000])?;
+        let b_dev = TensorGpu::from_data(&context, shape, &b[..1000])?;
+
+        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev)?;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&layer_norm);
+        drop(pass);
+
+        encoder.copy_tensor(&x_dev, &x_map)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let x_host = TensorCpu::from(x_map);
+        let x_host = Vec::from(x_host);
+
+        let mut ans = vec![];
+        for chunk in &x
+            .into_iter()
+            .zip(w.into_iter())
+            .zip(b.into_iter())
+            .chunks(C)
+        {
+            let chunk: Vec<_> = chunk.collect();
+            let x = chunk.iter().map(|((x, _), _)| x).copied();
+            let sum: f32 = x.clone().sum();
+            let squared_sum: f32 = x.clone().map(|x| x.powi(2)).sum();
+
+            let mean = sum / C as f32;
+            let deviation = ((squared_sum / C as f32) - mean.powi(2)).sqrt();
+
+            let mut x: Vec<_> = chunk
+                .into_iter()
+                .map(|((x, w), b)| (x - mean) / deviation * w.to_f32() + b.to_f32())
+                .collect();
+            ans.append(&mut x);
+        }
+
+        for (index, (a, b)) in Iterator::zip(x_host.into_iter(), ans.into_iter()).enumerate() {
+            assert!(
+                is_approx_eps(a, b, 1.0e-3),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }
