@@ -134,11 +134,11 @@ impl<'a> TensorOp<'a> {
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul(
         matrix: &'a TensorGpu<f16, ReadWrite>,
-        input: &'a TensorGpu<f32, ReadWrite>,
+        input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape[0], shape[0], 1))?;
+        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1))?;
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
 
         let context = output.context;
@@ -153,18 +153,22 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: output.meta_binding(),
+                    resource: input.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: matrix.binding(),
+                    resource: output.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: input.binding(),
+                    resource: matrix.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
                     resource: output.binding(),
                 },
             ],
@@ -189,11 +193,11 @@ impl<'a> TensorOp<'a> {
         rx: &'a TensorGpu<f16, ReadWrite>,
         my: &'a TensorGpu<f16, ReadWrite>,
         ry: &'a TensorGpu<f16, ReadWrite>,
-        input: &'a TensorGpu<f32, ReadWrite>,
+        input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape[0], shape[0], 1))?;
+        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1))?;
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
         mx.check_shape(Shape::new(matrix.shape[0], 1, 1))?;
         rx.check_shape(Shape::new(matrix.shape[0], 1, 1))?;
@@ -212,34 +216,38 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: output.meta_binding(),
+                    resource: input.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: matrix.binding(),
+                    resource: output.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: mx.binding(),
+                    resource: matrix.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: rx.binding(),
+                    resource: mx.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: my.binding(),
+                    resource: rx.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
-                    resource: ry.binding(),
+                    resource: my.binding(),
                 },
                 BindGroupEntry {
                     binding: 7,
-                    resource: input.binding(),
+                    resource: ry.binding(),
                 },
                 BindGroupEntry {
                     binding: 8,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 9,
                     resource: output.binding(),
                 },
             ],
@@ -894,7 +902,11 @@ mod tests {
         let output_dev = TensorGpu::init(&context, Shape::new(R * 2, T, B));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
-        let matmul = TensorOp::matmul(&matrix_dev, &input_dev, output_dev.as_view((R.., .., ..))?)?;
+        let matmul = TensorOp::matmul(
+            &matrix_dev,
+            input_dev.clone().into(),
+            output_dev.as_view((R.., .., ..))?,
+        )?;
 
         let mut encoder = context
             .device

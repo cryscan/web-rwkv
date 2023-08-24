@@ -30,10 +30,10 @@ pub struct Model<'a, 'b> {
     #[getter(skip)]
     tensor: ModelTensor<'a, 'b>,
     #[getter(skip)]
-    buffer_cache: ResourceCache<usize, ModelBuffer<'a>>,
+    buffer_cache: ResourceCache<(usize, usize), ModelBuffer<'a>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelInfo {
     pub num_layers: usize,
     pub num_emb: usize,
@@ -79,7 +79,7 @@ enum Matrix<'a> {
 impl<'a, 'b> Matrix<'a> {
     pub fn matmul_op(
         &'b self,
-        input: &'b TensorGpu<'a, f32, ReadWrite>,
+        input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'b>, TensorError> {
         match self {
@@ -180,7 +180,7 @@ pub struct ModelBuffer<'a> {
 }
 
 impl<'a> ModelBuffer<'a> {
-    pub fn new(context: &'a Context, info: ModelInfo, num_token: usize, num_batch: usize) -> Self {
+    pub fn new(context: &'a Context, info: &ModelInfo, num_token: usize, num_batch: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, num_batch);
         let mask_shape = Shape::new(1, 1, 1);
         let ffn_shape = Shape::new(info.num_emb * 4, num_token, num_batch);
@@ -237,13 +237,12 @@ impl<'a> ModelBuffer<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ModelState<'a> {
-    pub info: ModelInfo,
     pub context: &'a Context,
     pub state: TensorGpu<'a, f32, ReadWrite>,
 }
 
 impl<'a> ModelState<'a> {
-    pub fn new(context: &'a Context, info: ModelInfo, num_batches: usize) -> Self {
+    pub fn new(context: &'a Context, info: &ModelInfo, num_batches: usize) -> Self {
         let data = (0..num_batches)
             .map(|_| {
                 (0..info.num_layers)
@@ -252,7 +251,7 @@ impl<'a> ModelState<'a> {
                             vec![0.0; info.num_emb],
                             vec![0.0; info.num_emb],
                             vec![0.0; info.num_emb],
-                            vec![-f32::MIN; info.num_emb],
+                            vec![f32::MIN; info.num_emb],
                             vec![0.0; info.num_emb],
                         ]
                         .concat()
@@ -268,15 +267,12 @@ impl<'a> ModelState<'a> {
                 data,
             )
             .unwrap();
-        Self {
-            info,
-            context,
-            state,
-        }
+        Self { context, state }
     }
 
-    pub fn load(&self, backed: &BackedState<'a, '_>) -> Result<(), TensorError> {
-        self.state.load(&backed.data)
+    pub fn load(&self, backed: &BackedState<'a>) -> Result<(), TensorError> {
+        let tensor = self.context.tensor_from_data(backed.shape, &backed.data)?;
+        self.state.load(&tensor)
     }
 
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
@@ -292,45 +288,42 @@ impl<'a> ModelState<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct BackedState<'a, 'b> {
-    pub info: ModelInfo,
+pub struct BackedState<'a> {
     pub context: &'a Context,
-    pub data: TensorCpu<'a, 'b, f32>,
+    pub shape: Shape,
+    pub data: Vec<f32>,
 }
 
-impl<'a, 'b> From<ModelState<'a>> for BackedState<'a, 'b> {
+impl<'a> From<ModelState<'a>> for BackedState<'a> {
     fn from(value: ModelState<'a>) -> Self {
-        let ModelState {
-            info,
-            context,
-            state,
-        } = value;
+        let ModelState { context, state } = value;
         let map = context.init_tensor(state.shape());
         let mut encoder = context
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
         encoder.copy_tensor(&state, &map).unwrap();
+        context.queue.submit(Some(encoder.finish()));
+
+        let data = TensorCpu::from(map);
         Self {
-            info,
             context,
-            data: TensorCpu::from(map),
+            shape: data.shape(),
+            data: data.into(),
         }
     }
 }
 
-impl<'a, 'b> From<BackedState<'a, 'b>> for ModelState<'a> {
-    fn from(value: BackedState<'a, 'b>) -> Self {
+impl<'a> TryFrom<BackedState<'a>> for ModelState<'a> {
+    type Error = TensorError;
+
+    fn try_from(value: BackedState<'a>) -> Result<Self, Self::Error> {
         let BackedState {
-            info,
             context,
+            shape,
             data,
         } = value;
-        let state = TensorGpu::from(data);
-        Self {
-            info,
-            context,
-            state,
-        }
+        let state = context.tensor_from_data(shape, data)?;
+        Ok(Self { context, state })
     }
 }
 
@@ -371,7 +364,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
         }
     }
 
-    pub fn build(self) -> Result<Model<'a, 'b>> {
+    pub fn build<'c>(self) -> Result<Model<'a, 'c>> {
         let Self {
             context,
             data,
@@ -491,11 +484,10 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
         };
 
         let head = {
-            let tensor = model.tensor("head_weight")?;
-            let chunks = tensor.shape()[1] / head_chunk_size;
-
+            let tensor = model.tensor("head.weight")?;
             let shape = tensor.shape();
             let shape = Shape::new(shape[1], shape[0], 1);
+            let chunks = shape[1] / head_chunk_size;
             let data = bytemuck::cast_slice(tensor.data());
 
             let w = (0..chunks)
@@ -542,7 +534,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
                         time_mix_k,
                         time_mix_v,
                         time_mix_r,
-                        w_k: load_matrix_u8(format!("{att}.key,weight"))?,
+                        w_k: load_matrix_u8(format!("{att}.key.weight"))?,
                         w_v: load_matrix_u8(format!("{att}.value.weight"))?,
                         w_r: load_matrix_u8(format!("{att}.receptance.weight"))?,
                         w_o: load_matrix_u8(format!("{att}.output.weight"))?,
@@ -553,7 +545,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
                         time_mix_k,
                         time_mix_v,
                         time_mix_r,
-                        w_k: load_matrix_f16(format!("{att}.key,weight"))?,
+                        w_k: load_matrix_f16(format!("{att}.key.weight"))?,
                         w_v: load_matrix_f16(format!("{att}.value.weight"))?,
                         w_r: load_matrix_f16(format!("{att}.receptance.weight"))?,
                         w_o: load_matrix_f16(format!("{att}.output.weight"))?,
@@ -634,18 +626,26 @@ impl std::fmt::Display for ModelError {
 impl std::error::Error for ModelError {}
 
 impl<'a, 'b> Model<'a, 'b> {
-    fn request_buffer(&self, num_batch: usize) -> Arc<ModelBuffer> {
-        self.buffer_cache.request(num_batch, || {
-            ModelBuffer::new(self.context, self.info, 1, num_batch)
+    fn request_buffer(&self, num_token: usize, num_batch: usize) -> Arc<ModelBuffer> {
+        self.buffer_cache.request((num_token, num_batch), || {
+            ModelBuffer::new(self.context, &self.info, num_token, num_batch)
         })
+    }
+
+    pub fn input_shape(&self, num_token: usize, num_batch: usize) -> Shape {
+        Shape::new(num_batch, num_token, 1)
+    }
+
+    pub fn head_shape(&self, num_batch: usize) -> Shape {
+        Shape::new(self.info.num_vocab, 1, num_batch)
     }
 
     /// Softmax of the input tensor.
     /// - `input` shape: `[C, 1, B]`.
     pub fn softmax(&'a self, input: &TensorCpu<'a, 'b, f32>) -> Result<TensorCpu<'a, 'b, f32>> {
         let num_batch = input.shape()[2];
-        let buffer = self.request_buffer(num_batch);
-        buffer.load_input(input)?;
+        let buffer = self.request_buffer(1, num_batch);
+        buffer.load_softmax(input)?;
 
         let op = TensorOp::softmax(&buffer.softmax)?;
 
@@ -688,20 +688,27 @@ impl<'a, 'b> Model<'a, 'b> {
                 .init_tensor(Shape::new(num_vocab, 1, num_batch)));
         }
 
-        let buffer = self.request_buffer(num_batch);
-
         // shrink the token chunk size which growth of the batch size
         let batch_chunk_size = num_batch.next_power_of_two();
         let token_chunk_size = 1.max(self.token_chunk_size / batch_chunk_size);
         let num_chunk = (num_token + token_chunk_size - 1) / token_chunk_size;
 
-        for chunk in 0..num_chunk {
+        let mut chunk = 0;
+        let buffer = loop {
             let start = chunk * token_chunk_size;
             let end = num_token.min(start + token_chunk_size);
             let tokens = tokens.as_slice((.., start..end, ..))?;
-            self.run_internal(&tokens, mask, state, &buffer, chunk == num_chunk)?;
+            let buffer = self.request_buffer(end - start, num_batch);
+
+            self.run_internal(&tokens, mask, state, &buffer, chunk == num_chunk - 1)?;
             self.context.device.poll(wgpu::MaintainBase::Wait);
-        }
+
+            if chunk == num_chunk - 1 {
+                break buffer;
+            }
+
+            chunk += 1;
+        };
 
         Ok(TensorCpu::from(buffer.map.clone()))
     }
@@ -784,15 +791,15 @@ impl<'a, 'b> Model<'a, 'b> {
                 layer
                     .att
                     .w_k
-                    .matmul_op(&buffer.att_kx, buffer.att_k.clone().into())?,
+                    .matmul_op(buffer.att_kx.clone().into(), buffer.att_k.clone().into())?,
                 layer
                     .att
                     .w_v
-                    .matmul_op(&buffer.att_vx, buffer.att_v.clone().into())?,
+                    .matmul_op(buffer.att_vx.clone().into(), buffer.att_v.clone().into())?,
                 layer
                     .att
                     .w_r
-                    .matmul_op(&buffer.att_rx, buffer.att_r.clone().into())?,
+                    .matmul_op(buffer.att_rx.clone().into(), buffer.att_r.clone().into())?,
                 TensorOp::token_mix(
                     &buffer.mask,
                     &layer.att.time_decay,
@@ -807,7 +814,7 @@ impl<'a, 'b> Model<'a, 'b> {
                 layer
                     .att
                     .w_o
-                    .matmul_op(&buffer.att_w, buffer.att_o.clone().into())?,
+                    .matmul_op(buffer.att_w.clone().into(), buffer.att_o.clone().into())?,
                 TensorOp::add(&buffer.input, &buffer.att_o)?,
             ];
 
@@ -838,16 +845,16 @@ impl<'a, 'b> Model<'a, 'b> {
                 layer
                     .ffn
                     .w_k
-                    .matmul_op(&buffer.ffn_kx, buffer.ffn_k.clone().into())?,
+                    .matmul_op(buffer.ffn_kx.clone().into(), buffer.ffn_k.clone().into())?,
                 TensorOp::squared_relu(&buffer.ffn_k)?,
                 layer
                     .ffn
                     .w_v
-                    .matmul_op(&buffer.ffn_k, buffer.ffn_v.clone().into())?,
+                    .matmul_op(buffer.ffn_k.clone().into(), buffer.ffn_v.clone().into())?,
                 layer
                     .ffn
                     .w_r
-                    .matmul_op(&buffer.ffn_rx, buffer.ffn_r.clone().into())?,
+                    .matmul_op(buffer.ffn_rx.clone().into(), buffer.ffn_r.clone().into())?,
                 TensorOp::channel_mix(
                     &buffer.mask,
                     &buffer.ffn_x,
@@ -877,8 +884,9 @@ impl<'a, 'b> Model<'a, 'b> {
             for (chunk, matrix) in tensor.head.w.iter().enumerate() {
                 let start = chunk * self.head_chunk_size;
                 let end = start + self.head_chunk_size;
+                let input = buffer.ffn_o.as_view((.., num_token - 1.., ..))?;
                 let output = buffer.head.as_view((start..end, .., ..))?;
-                ops.push(TensorOp::matmul(matrix, &buffer.ffn_o, output)?);
+                ops.push(TensorOp::matmul(matrix, input, output)?);
             }
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());

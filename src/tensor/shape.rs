@@ -130,9 +130,13 @@ pub trait TensorSlice: Clone + PartialEq + Eq + Hash {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum SliceState {
+enum SliceQuantState {
     Zero,
     One,
+    Multi,
+}
+
+enum SliceFillState {
     NotFull,
     Full,
 }
@@ -174,31 +178,33 @@ where
     }
 
     fn contiguous_bounds(self, shape: Shape) -> Result<(usize, usize), TensorError> {
-        let mut state = SliceState::Full;
+        let quant_state = |start, end| match end - start {
+            0 => SliceQuantState::Zero,
+            1 => SliceQuantState::One,
+            _ => SliceQuantState::Multi,
+        };
 
-        let mut check_slice_dim = |start, end, dim| {
-            let current_state = match (start, end) {
-                (0, end) if end == dim => SliceState::Full,
-                (start, end) if end == start + 1 => SliceState::One,
-                (start, end) if start == end => SliceState::Zero,
-                _ => SliceState::NotFull,
-            };
-
-            let previous_state = state;
-            state = current_state;
-
-            match previous_state {
-                SliceState::NotFull => current_state < previous_state,
-                _ => current_state <= previous_state,
-            }
-            .then_some(())
-            .ok_or(TensorError::SliceNotContiguous)
+        let fill_state = |start, end, dim| match (start, end) {
+            (0, end) if end == dim => SliceFillState::Full,
+            (start, end) if start == end => SliceFillState::Full,
+            _ => SliceFillState::NotFull,
         };
 
         let (start, end) = self.shape_bounds(shape)?;
-        check_slice_dim(start[0], end[0], shape[0])
-            .and(check_slice_dim(start[1], end[1], shape[1]))
-            .and(check_slice_dim(start[2], end[2], shape[2]))?;
+        let (_, valid) = start.iter().zip(end.iter()).zip(shape.iter()).fold(
+            (SliceFillState::Full, true),
+            |(state, valid), ((&start, &end), &dim)| match (state, valid) {
+                (SliceFillState::Full, valid) => (fill_state(start, end, dim), valid),
+                (SliceFillState::NotFull, true) => (
+                    SliceFillState::NotFull,
+                    quant_state(start, end) < SliceQuantState::Multi,
+                ),
+                (SliceFillState::NotFull, false) => (SliceFillState::NotFull, false),
+            },
+        );
+        if !valid {
+            return Err(TensorError::SliceNotContiguous);
+        }
 
         let len = (end - start).len();
         let start = shape.shape_index(start);
@@ -261,6 +267,12 @@ mod tests {
             (.., 0..256, 3..=3).contiguous_bounds(x.shape)?,
             (3072, 3328)
         );
+
+        let x: TensorCpu<f32> = context.init_tensor(Shape::new(1024, 768, 1));
+        assert!((.., 0..=256, ..).contiguous_bounds(x.shape).is_ok());
+
+        let x: TensorCpu<f32> = context.init_tensor(Shape::new(1, 768, 1));
+        assert!((.., 256..=512, ..).contiguous_bounds(x.shape).is_ok());
 
         let shape = Shape::new(4, 2, 3);
         let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();

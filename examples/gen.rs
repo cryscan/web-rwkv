@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+#[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use itertools::Itertools;
 use memmap2::Mmap;
@@ -9,7 +10,12 @@ use std::{
     path::PathBuf,
     time::Instant,
 };
-use web_rwkv::{Context, Instance, LayerFlags, Model, ModelBuilder, Quantization, Tokenizer};
+use web_rwkv::{
+    context::{Context, ContextBuilder, Instance},
+    model::{LayerFlags, Model, ModelBuilder, ModelState, Quantization},
+    tensor::Shape,
+    tokenizer::Tokenizer,
+};
 
 fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
     let sorted = probs
@@ -39,15 +45,25 @@ fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
 
 async fn create_context() -> Result<Context> {
     let instance = Instance::new();
-    let adapters = instance.adapters();
-    let selection = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Please select an adapter")
-        .default(0)
-        .items(&adapters)
-        .interact()?;
-
-    let adapter = instance.select_adapter(selection)?;
-    let context = Context::new(adapter).await?;
+    #[cfg(not(debug_assertions))]
+    let adapter = {
+        let adapters = instance.adapters();
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Please select an adapter")
+            .default(0)
+            .items(&adapters)
+            .interact()?;
+        instance.select_adapter(selection)?
+    };
+    #[cfg(debug_assertions)]
+    let adapter = instance
+        .adapter(wgpu::PowerPreference::HighPerformance)
+        .await?;
+    let context = ContextBuilder::new(adapter)
+        .with_default_pipelines()
+        .with_quant_pipelines()
+        .build()
+        .await?;
     println!("{:#?}", context.adapter.get_info());
     Ok(context)
 }
@@ -60,15 +76,13 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(context: Context, model: PathBuf, quant: Option<u64>) -> Result<Model> {
+fn load_model(context: &Context, model: PathBuf, quant: Option<u64>) -> Result<Model<'_, '_>> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
-    let quantization = quant
+    let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(context, &map)
-        .with_quantization(quantization)
-        .build()?;
+    let model = ModelBuilder::new(context, &map).with_quant(quant).build()?;
     println!("{:#?}", model.info());
     Ok(model)
 }
@@ -80,19 +94,25 @@ async fn run(cli: Cli) -> Result<()> {
     let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-    let model = load_model(context, model, cli.quant)?;
+    let model = load_model(&context, model, cli.quant)?;
 
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = tokenizer.encode(prompt.as_bytes())?;
     print!("{}", prompt);
 
-    let state = model.create_state();
+    let state = ModelState::new(&context, model.info(), 1);
 
     let mut start = Instant::now();
     let num_tokens = 100;
     for index in 0..=num_tokens {
-        let logits = model.run(&tokens, &state)?;
-        let probs = model.softmax(&logits)?;
+        let mask = context.tensor_from_data(Shape::new(1, 1, 1), vec![u32::MAX])?;
+        let shape = model.input_shape(tokens.len(), 1);
+        let logits = model.run(
+            &context.tensor_from_data(shape, tokens.clone())?,
+            &mask,
+            &state,
+        )?;
+        let probs = model.softmax(&logits)?.to_vec();
         let token = sample(probs, 0.5);
         let word = String::from_utf8(tokenizer.decode(&[token])?)?;
         print!("{}", word);

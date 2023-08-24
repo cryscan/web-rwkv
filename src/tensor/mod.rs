@@ -65,7 +65,7 @@ pub trait Kind: sealed::Sealed {
 
 /// Tensor is a uniform buffer.
 #[derive(Debug, Kind)]
-#[usage(UNIFORM)]
+#[usage(UNIFORM, COPY_DST)]
 pub struct Uniform;
 
 /// Tensor is a storage buffer with can be copied to other buffers.
@@ -352,8 +352,7 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
         self.check_shape(host.shape)?;
         self.context
             .queue
-            .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&host.data));
-
+            .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&host.data[..]));
         Ok(())
     }
 }

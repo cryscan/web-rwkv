@@ -1,6 +1,7 @@
 use ahash::{HashMap, HashMapExt};
 use anyhow::Result;
 use clap::{Args, Parser};
+#[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use itertools::Itertools;
 use memmap2::Mmap;
@@ -9,7 +10,12 @@ use std::{
     io::{BufReader, Read, Write},
     path::PathBuf,
 };
-use web_rwkv::{Context, Instance, LayerFlags, Model, ModelBuilder, Quantization, Tokenizer};
+use web_rwkv::{
+    context::{Context, ContextBuilder, Instance},
+    model::{LayerFlags, Model, ModelBuilder, ModelState, Quantization},
+    tensor::Shape,
+    tokenizer::Tokenizer,
+};
 
 #[derive(Debug, Clone, Args)]
 struct Sampler {
@@ -62,15 +68,25 @@ impl Sampler {
 
 async fn create_context() -> Result<Context> {
     let instance = Instance::new();
-    let adapters = instance.adapters();
-    let selection = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Please select an adapter")
-        .default(0)
-        .items(&adapters)
-        .interact()?;
-
-    let adapter = instance.select_adapter(selection)?;
-    let context = Context::new(adapter).await?;
+    #[cfg(not(debug_assertions))]
+    let adapter = {
+        let adapters = instance.adapters();
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Please select an adapter")
+            .default(0)
+            .items(&adapters)
+            .interact()?;
+        instance.select_adapter(selection)?
+    };
+    #[cfg(debug_assertions)]
+    let adapter = instance
+        .adapter(wgpu::PowerPreference::HighPerformance)
+        .await?;
+    let context = ContextBuilder::new(adapter)
+        .with_default_pipelines()
+        .with_quant_pipelines()
+        .build()
+        .await?;
     println!("{:#?}", context.adapter.get_info());
     Ok(context)
 }
@@ -83,14 +99,18 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(context: Context, model: PathBuf, quant: Option<u64>) -> Result<Model> {
+fn load_model<'a>(
+    context: &'a Context,
+    model: PathBuf,
+    quant: Option<u64>,
+) -> Result<Model<'a, '_>> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
-    let quantization = quant
+    let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(context, &map)
-        .with_quantization(quantization)
+    let model = ModelBuilder::new(&context, &map)
+        .with_quant(quant)
         .build()?;
     println!("{:#?}", model.info());
     Ok(model)
@@ -103,7 +123,7 @@ async fn run(cli: Cli) -> Result<()> {
     let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-    let model = load_model(context, model, cli.quant)?;
+    let model = load_model(&context, model, cli.quant)?;
     let sampler = cli.sampler;
 
     let user = "User";
@@ -115,11 +135,18 @@ async fn run(cli: Cli) -> Result<()> {
     print!("{}", prompt);
     std::io::stdout().flush()?;
 
-    let state = model.create_state();
-    let _ = model.run(&tokens, &state);
+    let mask = context.tensor_from_data(Shape::new(1, 1, 1), vec![u32::MAX])?;
+
+    let state = ModelState::new(&context, model.info(), 1);
+    let shape = model.input_shape(tokens.len(), 1);
+    let _ = model.run(
+        &context.tensor_from_data(shape, tokens.clone())?,
+        &mask,
+        &state,
+    )?;
     tokens.clear();
 
-    let mut backed_state = state.back()?;
+    let mut backed_state = state.clone().into();
     let mut last_user_text = String::from("Hi!");
     let mut last_tokens = vec![];
 
@@ -143,7 +170,7 @@ async fn run(cli: Cli) -> Result<()> {
             user_text = last_user_text.clone();
             tokens = last_tokens.clone();
         } else {
-            backed_state = state.back()?;
+            backed_state = state.clone().into();
             last_user_text = user_text.clone();
             last_tokens = tokens.clone();
         }
@@ -155,14 +182,24 @@ async fn run(cli: Cli) -> Result<()> {
         tokens.append(&mut tokenizer.encode(prompt.as_bytes())?);
 
         loop {
-            let mut logits = model.run(&tokens, &state)?;
+            let shape = model.input_shape(tokens.len(), 1);
+            let mut logits = model
+                .run(
+                    &context.tensor_from_data(shape, tokens.clone())?,
+                    &mask,
+                    &state,
+                )?
+                .to_vec();
             logits[0] = f32::NEG_INFINITY;
             for (&token, &count) in occurrences.iter() {
                 let penalty = sampler.presence_penalty + count as f32 * sampler.frequency_penalty;
                 logits[token as usize] -= penalty;
             }
 
-            let probs = model.softmax(&logits)?;
+            let shape = model.head_shape(1);
+            let probs = model
+                .softmax(&context.tensor_from_data(shape, logits.clone())?)?
+                .to_vec();
             let token = sampler.sample(probs);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;
 
