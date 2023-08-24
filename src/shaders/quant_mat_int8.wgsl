@@ -1,4 +1,4 @@
-@group(0) @binding(0) var<uniform> dims: vec2<u32>;                         // [C, R]
+@group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, R]
 @group(0) @binding(1) var<storage, read_write> input: array<vec2<u32>>;     // (R, C)
 
 @group(0) @binding(2) var<storage, read_write> mx: array<vec4<f32>>;        // (C)
@@ -40,7 +40,7 @@ fn reduce_max(index: u32, stride: u32) {
 fn compute_my(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
-    let stride = vec2<u32>(dims.x / 4u, dims.y);
+    let stride = vec2<u32>(shape.x / 4u, shape.y);
 
     sketch[index] = vec4<f32>(1.0e30);
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
@@ -76,7 +76,7 @@ fn compute_my(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 fn compute_mx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
-    let stride = vec2<u32>(dims.x / 4u, dims.y);
+    let stride = vec2<u32>(shape.x / 4u, shape.y);
 
     sketch[index] = vec4<f32>(1.0e30);
     for (var j = index; j < stride.y; j += BLOCK_SIZE) {
@@ -109,7 +109,7 @@ fn compute_mx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 fn compute_ry(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
-    let stride = vec2<u32>(dims.x / 4u, dims.y);
+    let stride = vec2<u32>(shape.x / 4u, shape.y);
 
     sketch[index] = vec4<f32>(-1.0e30);
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
@@ -145,7 +145,7 @@ fn compute_ry(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 fn compute_rx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
-    let stride = vec2<u32>(dims.x / 4u, dims.y);
+    let stride = vec2<u32>(shape.x / 4u, shape.y);
 
     sketch[index] = vec4<f32>(-1.0e30);
     for (var j = index; j < stride.y; j += BLOCK_SIZE) {
@@ -178,10 +178,12 @@ fn compute_rx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 fn quantize(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
-    let stride = vec2<u32>(dims.x / 4u, dims.y);
+    let stride = vec2<u32>(shape.x / 4u, shape.y);
 
-    for (var i = index; i < stride.x; i += BLOCK_SIZE) {
-        let value = unpack4x16float(input[stride.x * batch + i]);
-        output[stride.x * batch + i] = pack4x8unorm(value);
+    if index >= stride.x || batch >= stride.y {
+        return;
     }
+
+    let value = unpack4x16float(input[stride.x * batch + index]);
+    output[stride.x * batch + index] = pack4x8unorm(value);
 }

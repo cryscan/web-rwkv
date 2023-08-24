@@ -1,11 +1,7 @@
-mod context;
-mod model;
-mod tensor;
-mod tokenizer;
+pub mod context;
+pub mod model;
+pub mod num;
+pub mod tensor;
+pub mod tokenizer;
 
-pub use context::{Context, CreateEnvironmentError, Instance};
-pub use model::{
-    BackedState, LayerFlags, Model, ModelBuffer, ModelBuilder, ModelState, Quantization,
-};
-pub use tensor::{DataType, Tensor, TensorError, TensorInfo};
-pub use tokenizer::{Tokenizer, TokenizerError};
+pub use wgpu;
