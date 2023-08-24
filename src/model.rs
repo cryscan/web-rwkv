@@ -20,6 +20,8 @@ pub struct Model<'a, 'b> {
     pub context: &'a Context,
 
     info: ModelInfo,
+    quant: Quantization,
+
     /// The head matrix is too big for a storage buffer so it's divided into chunks.
     head_chunk_size: usize,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
@@ -72,6 +74,21 @@ enum Matrix<'a> {
         my: Box<TensorGpu<'a, f16, ReadWrite>>,
         ry: Box<TensorGpu<'a, f16, ReadWrite>>,
     },
+}
+
+impl<'a, 'b> Matrix<'a> {
+    pub fn matmul_op(
+        &'b self,
+        input: &'b TensorGpu<'a, f32, ReadWrite>,
+        output: TensorView<'a, f32>,
+    ) -> Result<TensorOp<'b>, TensorError> {
+        match self {
+            Matrix::Fp16(matrix) => TensorOp::matmul(matrix, input, output),
+            Matrix::Int8 { w, mx, rx, my, ry } => {
+                TensorOp::matmul_int8(w, mx, rx, my, ry, input, output)
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -135,14 +152,13 @@ struct Head<'a> {
 /// Runtime buffers.
 #[derive(Debug)]
 pub struct ModelBuffer<'a> {
-    info: ModelInfo,
-
     mask: TensorGpu<'a, u32, Uniform>,
     input: TensorGpu<'a, f32, ReadWrite>,
 
     att_x: TensorGpu<'a, f32, ReadWrite>,
     att_kx: TensorGpu<'a, f32, ReadWrite>,
     att_vx: TensorGpu<'a, f32, ReadWrite>,
+    att_rx: TensorGpu<'a, f32, ReadWrite>,
     att_k: TensorGpu<'a, f32, ReadWrite>,
     att_v: TensorGpu<'a, f32, ReadWrite>,
     att_r: TensorGpu<'a, f32, ReadWrite>,
@@ -171,12 +187,12 @@ impl<'a> ModelBuffer<'a> {
         let out_shape = Shape::new(info.num_vocab, 1, num_batch);
 
         Self {
-            info,
             mask: context.init_tensor(mask_shape),
             input: context.init_tensor(shape),
             att_x: context.init_tensor(shape),
             att_kx: context.init_tensor(shape),
             att_vx: context.init_tensor(shape),
+            att_rx: context.init_tensor(shape),
             att_k: context.init_tensor(shape),
             att_v: context.init_tensor(shape),
             att_r: context.init_tensor(shape),
@@ -593,6 +609,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
         Ok(Model {
             context,
             info,
+            quant,
             head_chunk_size,
             token_chunk_size,
             tensor,
@@ -737,7 +754,140 @@ impl<'a, 'b> Model<'a, 'b> {
         pass.execute_tensor_op(&op);
         drop(pass);
 
-        encoder.copy_tensor(&buffer.head, &buffer.map)?;
+        for (index, layer) in tensor.layers.iter().enumerate() {
+            encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
+
+            let ops = vec![
+                TensorOp::layer_norm(
+                    &layer.att_layer_norm.w,
+                    &layer.att_layer_norm.b,
+                    &buffer.att_x,
+                )?,
+                TensorOp::token_shift(
+                    &layer.att.time_mix_k,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_kx,
+                )?,
+                TensorOp::token_shift(
+                    &layer.att.time_mix_v,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_vx,
+                )?,
+                TensorOp::token_shift(
+                    &layer.att.time_mix_r,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_rx,
+                )?,
+                layer
+                    .att
+                    .w_k
+                    .matmul_op(&buffer.att_kx, buffer.att_k.clone().into())?,
+                layer
+                    .att
+                    .w_v
+                    .matmul_op(&buffer.att_vx, buffer.att_v.clone().into())?,
+                layer
+                    .att
+                    .w_r
+                    .matmul_op(&buffer.att_rx, buffer.att_r.clone().into())?,
+                TensorOp::token_mix(
+                    &buffer.mask,
+                    &layer.att.time_decay,
+                    &layer.att.time_first,
+                    &buffer.att_x,
+                    &buffer.att_k,
+                    &buffer.att_v,
+                    &buffer.att_r,
+                    &buffer.att_w,
+                    state.att(index)?,
+                )?,
+                layer
+                    .att
+                    .w_o
+                    .matmul_op(&buffer.att_w, buffer.att_o.clone().into())?,
+                TensorOp::add(&buffer.input, &buffer.att_o)?,
+            ];
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            drop(pass);
+
+            encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
+
+            let ops = vec![
+                TensorOp::layer_norm(
+                    &layer.ffn_layer_norm.w,
+                    &layer.ffn_layer_norm.b,
+                    &buffer.ffn_x,
+                )?,
+                TensorOp::token_shift(
+                    &layer.ffn.time_mix_k,
+                    &buffer.ffn_x,
+                    state.ffn(index)?,
+                    &buffer.ffn_kx,
+                )?,
+                TensorOp::token_shift(
+                    &layer.ffn.time_mix_r,
+                    &buffer.ffn_x,
+                    state.ffn(index)?,
+                    &buffer.ffn_rx,
+                )?,
+                layer
+                    .ffn
+                    .w_k
+                    .matmul_op(&buffer.ffn_kx, buffer.ffn_k.clone().into())?,
+                TensorOp::squared_relu(&buffer.ffn_k)?,
+                layer
+                    .ffn
+                    .w_v
+                    .matmul_op(&buffer.ffn_k, buffer.ffn_v.clone().into())?,
+                layer
+                    .ffn
+                    .w_r
+                    .matmul_op(&buffer.ffn_rx, buffer.ffn_r.clone().into())?,
+                TensorOp::channel_mix(
+                    &buffer.mask,
+                    &buffer.ffn_x,
+                    &buffer.ffn_r,
+                    &buffer.ffn_v,
+                    &buffer.ffn_o,
+                    state.ffn(index)?,
+                )?,
+                TensorOp::add(&buffer.att_o, &buffer.ffn_o)?,
+            ];
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            drop(pass);
+
+            if index != self.info.num_layers - 1 {
+                encoder.copy_tensor(&buffer.ffn_o, &buffer.input)?;
+            }
+        }
+
+        if output {
+            let mut ops = vec![TensorOp::layer_norm(
+                &tensor.head.layer_norm.w,
+                &tensor.head.layer_norm.b,
+                &buffer.ffn_o,
+            )?];
+            for (chunk, matrix) in tensor.head.w.iter().enumerate() {
+                let start = chunk * self.head_chunk_size;
+                let end = start + self.head_chunk_size;
+                let output = buffer.head.as_view((start..end, .., ..))?;
+                ops.push(TensorOp::matmul(matrix, &buffer.ffn_o, output)?);
+            }
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            drop(pass);
+
+            encoder.copy_tensor(&buffer.head, &buffer.map)?;
+        }
+
         context.queue.submit(Some(encoder.finish()));
         Ok(())
     }

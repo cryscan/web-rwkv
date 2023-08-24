@@ -295,13 +295,14 @@ impl<'a> TensorOp<'a> {
     pub fn token_shift(
         time_mix: &'a TensorGpu<f16, ReadWrite>,
         x: &'a TensorGpu<f32, ReadWrite>,
-        sx: &'a TensorGpu<f32, ReadWrite>,
+        sx: TensorView<'a, f32>,
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        x.check_shape(shape)?;
         time_mix.check_shape(Shape::new(shape[0], 1, 1))?;
-        sx.check_shape(Shape::new(shape[0], 1, shape[2]))?;
+        x.check_shape(shape)?;
+        sx.check_shape(Shape::new(shape[0], 1, shape[2]))
+            .or(sx.check_shape(Shape::new(shape[0], 4, shape[2])))?;
 
         let context = output.context;
         let pipeline = context.pipeline("token_shift")?;
@@ -315,18 +316,22 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: time_mix.binding(),
+                    resource: sx.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: x.binding(),
+                    resource: time_mix.binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: sx.binding(),
+                    resource: x.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
+                    resource: sx.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
                     resource: output.binding(),
                 },
             ],

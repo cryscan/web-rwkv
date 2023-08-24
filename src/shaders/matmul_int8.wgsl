@@ -20,7 +20,7 @@ const BLOCK_SIZE: u32 = 128u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 
-fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
+fn compute_index(batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x / 4u;
     let offset = view.offset.x / 4u;
     return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * stride + offset + index;
@@ -88,6 +88,6 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if index == 0u {
         // output[(batch * shape[1] + token) * stride.y + channel] = sketch[0];
-        output[compute_index(view, batch, token, channel)] = sketch[0];
+        output[compute_index(batch, token, channel)] = sketch[0];
     }
 }

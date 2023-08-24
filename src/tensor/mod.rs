@@ -456,6 +456,12 @@ impl<'a, T: Scalar> TensorView<'a, T> {
     }
 }
 
+impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadWrite>> for TensorView<'a, T> {
+    fn from(value: TensorGpu<'a, T, ReadWrite>) -> Self {
+        value.into_view((.., .., ..)).unwrap()
+    }
+}
+
 impl<'a, T: Scalar> TensorGpu<'a, T, ReadWrite> {
     pub fn as_view(&'a self, slice: impl TensorSlice) -> Result<TensorView<'a, T>, TensorError> {
         let (start, end) = slice.shape_bounds(self.shape)?;

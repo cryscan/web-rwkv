@@ -17,7 +17,7 @@ struct View {
 
 const BLOCK_SIZE: u32 = 128u;
 
-fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
+fn compute_index(batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x / 4u;
     let offset = view.offset.x / 4u;
     return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * stride + offset + index;
@@ -41,7 +41,7 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     let bti = (batch * shape[1] + token) * stride + index;
 
     if !batch_masked(batch) && token == shape[1] - 1u {
-        state[compute_index(view, batch, 0u, index)] = x[bti];
+        state[compute_index(batch, 0u, index)] = x[bti];
     }
 
     let rr = 1.0 / (1.0 + exp(-r[bti]));
