@@ -9,7 +9,7 @@ use wgpu::{
 use crate::{context::Context, num::Scalar};
 pub use cache::ResourceCache;
 pub use ops::{TensorCommand, TensorOp, TensorPass};
-pub use shape::{IntoBytes, Shape, TensorSlice};
+pub use shape::{Axis, IntoBytes, Shape, TensorSlice};
 
 mod cache;
 mod ops;
@@ -367,7 +367,7 @@ impl<'a, 'b, T: Scalar> std::ops::Index<(usize, usize, usize)> for TensorCpu<'a,
 
 impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
     pub fn as_slice(&self, slice: impl TensorSlice) -> Result<TensorCpu<'a, 'b, T>, TensorError> {
-        let (start, end) = slice.clone().shape_bounds(self.shape)?;
+        let (start, end) = slice.shape_bounds(self.shape)?;
         let shape = end - start;
 
         let (start, end) = slice.contiguous_bounds(self.shape)?;
@@ -385,7 +385,7 @@ impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
     }
 
     pub fn into_slice(self, slice: impl TensorSlice) -> Result<Self, TensorError> {
-        let (start, end) = slice.clone().shape_bounds(self.shape)?;
+        let (start, end) = slice.shape_bounds(self.shape)?;
         let shape = end - start;
 
         let (start, end) = slice.contiguous_bounds(self.shape)?;

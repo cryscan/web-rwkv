@@ -10,7 +10,7 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 use crate::{
     context::Context,
     tensor::{
-        ReadBack, ReadWrite, ResourceCache, Shape, TensorCommand, TensorCpu, TensorError,
+        Axis, ReadBack, ReadWrite, ResourceCache, Shape, TensorCommand, TensorCpu, TensorError,
         TensorExt, TensorGpu, TensorOp, TensorPass, TensorView, Uniform,
     },
 };
@@ -270,9 +270,8 @@ impl<'a> ModelState<'a> {
         Self { context, state }
     }
 
-    pub fn load(&self, backed: &BackedState<'a>) -> Result<(), TensorError> {
-        let tensor = self.context.tensor_from_data(backed.shape, &backed.data)?;
-        self.state.load(&tensor)
+    pub fn load(&self, backed: &BackedState<'a, '_>) -> Result<(), TensorError> {
+        self.state.load(&backed.state)
     }
 
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
@@ -288,13 +287,35 @@ impl<'a> ModelState<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub struct BackedState<'a> {
+pub struct BackedState<'a, 'b> {
     pub context: &'a Context,
-    pub shape: Shape,
-    pub data: Vec<f32>,
+    pub state: TensorCpu<'a, 'b, f32>,
 }
 
-impl<'a> From<ModelState<'a>> for BackedState<'a> {
+impl<'a, 'b> BackedState<'a, 'b> {
+    pub fn repeat_batch(self, repeat: usize) -> Self {
+        let BackedState { context, state } = self;
+        let shape = state.shape();
+        let shape = Shape::new(shape[0], shape[1], shape[2] * repeat);
+
+        let data = state.to_vec();
+        let data = vec![data; repeat].concat();
+        let state = context.tensor_from_data(shape, data).unwrap();
+
+        Self { context, state }
+    }
+
+    pub fn take(self, batch: usize) -> Result<Self, TensorError> {
+        let state = self.state.into_slice((.., .., Axis(batch)))?;
+        Ok(Self { state, ..self })
+    }
+
+    pub fn split(self) -> Vec<Self> {
+        todo!()
+    }
+}
+
+impl<'a> From<ModelState<'a>> for BackedState<'a, '_> {
     fn from(value: ModelState<'a>) -> Self {
         let ModelState { context, state } = value;
         let map = context.init_tensor(state.shape());
@@ -304,26 +325,16 @@ impl<'a> From<ModelState<'a>> for BackedState<'a> {
         encoder.copy_tensor(&state, &map).unwrap();
         context.queue.submit(Some(encoder.finish()));
 
-        let data = TensorCpu::from(map);
-        Self {
-            context,
-            shape: data.shape(),
-            data: data.into(),
-        }
+        let state = TensorCpu::from(map);
+        Self { context, state }
     }
 }
 
-impl<'a> TryFrom<BackedState<'a>> for ModelState<'a> {
-    type Error = TensorError;
-
-    fn try_from(value: BackedState<'a>) -> Result<Self, Self::Error> {
-        let BackedState {
-            context,
-            shape,
-            data,
-        } = value;
-        let state = context.tensor_from_data(shape, data)?;
-        Ok(Self { context, state })
+impl<'a> From<BackedState<'a, '_>> for ModelState<'a> {
+    fn from(value: BackedState<'a, '_>) -> Self {
+        let BackedState { context, state } = value;
+        let state = TensorGpu::from(state);
+        Self { context, state }
     }
 }
 

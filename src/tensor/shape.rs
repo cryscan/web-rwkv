@@ -1,8 +1,4 @@
-use std::{
-    cmp::Ordering,
-    hash::Hash,
-    ops::{Bound, RangeBounds},
-};
+use std::{cmp::Ordering, hash::Hash, ops::Bound};
 
 use web_rwkv_derive::Deref;
 
@@ -119,14 +115,50 @@ impl std::ops::SubAssign<Shape> for Shape {
     }
 }
 
-pub trait TensorSlice: Clone + PartialEq + Eq + Hash {
-    fn convert_bounds(
-        slice: impl RangeBounds<usize>,
-        dim: usize,
-    ) -> Result<(usize, usize), TensorError>;
+pub trait TensorSlice {
+    fn shape_bounds(&self, shape: Shape) -> Result<(Shape, Shape), TensorError>;
+    fn contiguous_bounds(&self, shape: Shape) -> Result<(usize, usize), TensorError>;
+}
 
-    fn shape_bounds(self, shape: Shape) -> Result<(Shape, Shape), TensorError>;
-    fn contiguous_bounds(self, shape: Shape) -> Result<(usize, usize), TensorError>;
+pub trait TensorSliceAxis {
+    fn bounds(&self, dim: usize) -> Result<(usize, usize), TensorError>;
+}
+
+impl<T: std::ops::RangeBounds<usize>> TensorSliceAxis for T {
+    fn bounds(&self, dim: usize) -> Result<(usize, usize), TensorError> {
+        let start = match self.start_bound() {
+            Bound::Included(&bound) => bound,
+            Bound::Excluded(&bound) => bound + 1,
+            Bound::Unbounded => 0,
+        };
+        let end = match self.end_bound() {
+            Bound::Included(&bound) => bound + 1,
+            Bound::Excluded(&bound) => bound,
+            Bound::Unbounded => dim,
+        };
+        if start > end || start >= dim || end > dim {
+            Err(TensorError::SliceOutOfRange { dim, start, end })
+        } else {
+            Ok((start, end))
+        }
+    }
+}
+
+#[derive(Debug, Default, Deref, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Axis(pub usize);
+
+impl TensorSliceAxis for Axis {
+    fn bounds(&self, dim: usize) -> Result<(usize, usize), TensorError> {
+        if self.0 >= dim {
+            Err(TensorError::SliceOutOfRange {
+                dim,
+                start: self.0,
+                end: self.0 + 1,
+            })
+        } else {
+            Ok((self.0, self.0 + 1))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -143,41 +175,20 @@ enum SliceFillState {
 
 impl<X, Y, Z> TensorSlice for (X, Y, Z)
 where
-    X: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash,
-    Y: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash,
-    Z: std::ops::RangeBounds<usize> + Clone + PartialEq + Eq + Hash,
+    X: TensorSliceAxis + Clone + PartialEq + Eq + Hash,
+    Y: TensorSliceAxis + Clone + PartialEq + Eq + Hash,
+    Z: TensorSliceAxis + Clone + PartialEq + Eq + Hash,
 {
-    fn convert_bounds(
-        slice: impl RangeBounds<usize>,
-        dim: usize,
-    ) -> Result<(usize, usize), TensorError> {
-        let start = match slice.start_bound() {
-            Bound::Included(&bound) => bound,
-            Bound::Excluded(&bound) => bound + 1,
-            Bound::Unbounded => 0,
-        };
-        let end = match slice.end_bound() {
-            Bound::Included(&bound) => bound + 1,
-            Bound::Excluded(&bound) => bound,
-            Bound::Unbounded => dim,
-        };
-        if start > end || start >= dim || end > dim {
-            Err(TensorError::SliceOutOfRange { dim, start, end })
-        } else {
-            Ok((start, end))
-        }
-    }
-
-    fn shape_bounds(self, shape: Shape) -> Result<(Shape, Shape), TensorError> {
+    fn shape_bounds(&self, shape: Shape) -> Result<(Shape, Shape), TensorError> {
         let mut start = Shape::default();
         let mut end = Shape::default();
-        (start[0], end[0]) = Self::convert_bounds(self.0, shape[0])?;
-        (start[1], end[1]) = Self::convert_bounds(self.1, shape[1])?;
-        (start[2], end[2]) = Self::convert_bounds(self.2, shape[2])?;
+        (start[0], end[0]) = self.0.bounds(shape[0])?;
+        (start[1], end[1]) = self.1.bounds(shape[1])?;
+        (start[2], end[2]) = self.2.bounds(shape[2])?;
         Ok((start, end))
     }
 
-    fn contiguous_bounds(self, shape: Shape) -> Result<(usize, usize), TensorError> {
+    fn contiguous_bounds(&self, shape: Shape) -> Result<(usize, usize), TensorError> {
         let quant_state = |start, end| match end - start {
             0 => SliceQuantState::Zero,
             1 => SliceQuantState::One,
@@ -219,7 +230,7 @@ mod tests {
     use super::{Shape, TensorSlice};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{TensorCpu, TensorExt},
+        tensor::{shape::Axis, TensorCpu, TensorExt},
     };
 
     fn create_context() -> Result<Context, anyhow::Error> {
@@ -253,7 +264,7 @@ mod tests {
 
         let x: TensorCpu<f32> = context.init_tensor(Shape::new(1024, 768, 3));
         assert_eq!(
-            (12..42, 7..8, 1..=1).contiguous_bounds(x.shape)?,
+            (12..42, 7..8, Axis(1)).contiguous_bounds(x.shape)?,
             (793612, 793642)
         );
         assert_eq!(
@@ -263,7 +274,7 @@ mod tests {
         assert!((.., 42..56, 2..3).contiguous_bounds(x.shape).is_ok());
         assert!((0..1, 0..1, 0..1).contiguous_bounds(x.shape).is_ok());
         assert!((.., 42..56, 0..2).contiguous_bounds(x.shape).is_err());
-        assert!((0..1, 0..2, 1..2).contiguous_bounds(x.shape).is_err());
+        assert!((Axis(0), 0..2, 1..2).contiguous_bounds(x.shape).is_err());
 
         let x: TensorCpu<f32> = context.init_tensor(Shape::new(1, 1024, 6));
         assert_eq!(
@@ -272,10 +283,10 @@ mod tests {
         );
 
         let x: TensorCpu<f32> = context.init_tensor(Shape::new(1024, 768, 1));
-        assert!((.., 0..=256, ..).contiguous_bounds(x.shape).is_ok());
+        assert!((.., 0..256, ..).contiguous_bounds(x.shape).is_ok());
 
         let x: TensorCpu<f32> = context.init_tensor(Shape::new(1, 768, 1));
-        assert!((.., 256..=512, ..).contiguous_bounds(x.shape).is_ok());
+        assert!((.., 256..512, ..).contiguous_bounds(x.shape).is_ok());
 
         let shape = Shape::new(4, 2, 3);
         let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
