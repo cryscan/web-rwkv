@@ -366,6 +366,36 @@ impl<'a, 'b, T: Scalar> std::ops::Index<(usize, usize, usize)> for TensorCpu<'a,
 }
 
 impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
+    pub fn repeat(self, axis: usize, repeat: usize) -> Self {
+        let Self {
+            context,
+            mut shape,
+            data,
+            ..
+        } = self;
+        let data = data.to_vec();
+        let num_chunk: usize = shape.iter().skip(axis + 1).product();
+        let chunk_size = data.len() / num_chunk;
+
+        let data = (0..num_chunk)
+            .map(|chunk| {
+                let start = chunk * chunk_size;
+                let end = start + chunk_size;
+                let chunk = data[start..end].to_vec();
+                chunk.repeat(repeat)
+            })
+            .collect::<Vec<_>>()
+            .concat()
+            .into();
+        shape[axis] *= repeat;
+        Self {
+            context,
+            shape,
+            data,
+            phantom: PhantomData,
+        }
+    }
+
     pub fn as_slice(&self, slice: impl TensorSlice) -> Result<TensorCpu<'a, 'b, T>, TensorError> {
         let (start, end) = slice.shape_bounds(self.shape)?;
         let shape = end - start;
@@ -539,4 +569,61 @@ mod sealed {
     impl Sealed for Uniform {}
     impl Sealed for ReadWrite {}
     impl Sealed for ReadBack {}
+}
+
+#[cfg(test)]
+mod tests {
+    use wgpu::PowerPreference;
+
+    use super::Shape;
+    use crate::{
+        context::{Context, ContextBuilder, Instance},
+        tensor::{TensorCpu, TensorExt},
+    };
+
+    fn create_context() -> Result<Context, anyhow::Error> {
+        let adapter = pollster::block_on(async {
+            let instance = Instance::new();
+            instance.adapter(PowerPreference::HighPerformance).await
+        })?;
+        let context = pollster::block_on(async {
+            ContextBuilder::new(adapter)
+                .with_default_pipelines()
+                .build()
+                .await
+        })?;
+        Ok(context)
+    }
+
+    #[test]
+    fn test_repeat() -> Result<(), anyhow::Error> {
+        let context = match create_context() {
+            Ok(context) => context,
+            Err(_) => return Ok(()),
+        };
+
+        let shape = Shape::new(5, 1, 2);
+        let x: Vec<_> = (0..10).map(|x| x as f32).collect();
+        let x = TensorCpu::from_data(&context, shape, x)?;
+
+        let y = x.clone().repeat(1, 3);
+        let ans = [
+            vec![0.0, 1.0, 2.0, 3.0, 4.0].repeat(3),
+            vec![5.0, 6.0, 7.0, 8.0, 9.0].repeat(3),
+        ]
+        .concat();
+        y.check_shape(Shape::new(5, 3, 2))?;
+        assert_eq!(y.to_vec(), ans);
+
+        let y = x.clone().repeat(0, 3);
+        y.check_shape(Shape::new(15, 1, 2))?;
+        assert_eq!(y.to_vec(), ans);
+
+        let y = x.repeat(2, 3);
+        let ans = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].repeat(3);
+        y.check_shape(Shape::new(5, 1, 6))?;
+        assert_eq!(y.to_vec(), ans);
+
+        Ok(())
+    }
 }

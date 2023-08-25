@@ -293,15 +293,9 @@ pub struct BackedState<'a, 'b> {
 }
 
 impl<'a, 'b> BackedState<'a, 'b> {
-    pub fn repeat_batch(self, repeat: usize) -> Self {
+    pub fn repeat(self, repeat: usize) -> Self {
         let BackedState { context, state } = self;
-        let shape = state.shape();
-        let shape = Shape::new(shape[0], shape[1], shape[2] * repeat);
-
-        let data = state.to_vec();
-        let data = vec![data; repeat].concat();
-        let state = context.tensor_from_data(shape, data).unwrap();
-
+        let state = state.repeat(2, repeat);
         Self { context, state }
     }
 
@@ -311,7 +305,15 @@ impl<'a, 'b> BackedState<'a, 'b> {
     }
 
     pub fn split(self) -> Vec<Self> {
-        todo!()
+        (0..self.state.shape()[2])
+            .map(|batch| {
+                let state = self.state.as_slice((.., .., Axis(batch))).unwrap();
+                Self {
+                    context: self.context,
+                    state,
+                }
+            })
+            .collect()
     }
 }
 
