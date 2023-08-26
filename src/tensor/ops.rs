@@ -32,10 +32,7 @@ pub trait TensorPass<'a> {
     fn execute_tensor_op(&mut self, op: &'a TensorOp);
 }
 
-impl<'a, 'b> TensorPass<'a> for ComputePass<'b>
-where
-    'a: 'b,
-{
+impl<'b, 'a: 'b> TensorPass<'a> for ComputePass<'b> {
     fn execute_tensor_op(&mut self, op: &'a TensorOp) {
         self.set_pipeline(op.pipeline);
         op.bindings
@@ -701,7 +698,9 @@ mod tests {
     use super::{TensorOp, TensorPass};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{Shape, TensorCommand, TensorCpu, TensorExt, TensorGpu, TensorView},
+        tensor::{
+            ops::TensorCommand, shape::Axis, Shape, TensorCpu, TensorExt, TensorGpu, TensorView,
+        },
     };
 
     fn is_approx(a: f32, b: f32) -> bool {
@@ -977,7 +976,7 @@ mod tests {
         let input = TensorGpu::from_data(&context, Shape::new(4, 1, 2), input)?;
         ops.push(TensorOp::blit(
             input.as_view((.., .., ..))?,
-            output.as_view((.., 1..=1, ..))?,
+            output.as_view((.., Axis(1), ..))?,
         )?);
 
         let input: Vec<_> = (8..12).map(|x| x as f32).collect();

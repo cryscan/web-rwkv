@@ -6,14 +6,13 @@ use itertools::Itertools;
 use memmap2::Mmap;
 use std::{
     fs::File,
-    io::{BufReader, Read, Write},
+    io::{BufReader, Read},
     path::PathBuf,
-    time::Instant,
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{LayerFlags, Model, ModelBuilder, ModelState, Quantization},
-    tensor::shape::Shape,
+    tensor::{shape::Shape, TensorCpu, TensorExt},
     tokenizer::Tokenizer,
 };
 
@@ -97,39 +96,52 @@ async fn run(cli: Cli) -> Result<()> {
     let model = load_model(&context, model, cli.quant)?;
 
     let prompt = "The Eiffel Tower is located in the city of";
-    let mut tokens = tokenizer.encode(prompt.as_bytes())?;
+    let tokens = tokenizer.encode(prompt.as_bytes())?;
     print!("{}", prompt);
 
-    let state = ModelState::new(&context, model.info(), 1);
+    let state = ModelState::new(&context, model.info(), cli.batch);
     let mask = context.tensor_from_data(Shape::new(1, 1, 1), vec![u32::MAX])?;
 
-    let mut start = Instant::now();
-    let num_tokens = 100;
-    for index in 0..=num_tokens {
-        let shape = model.input_shape(tokens.len(), 1);
-        let logits = model.run(
-            &context.tensor_from_data(shape, tokens.clone())?,
-            &mask,
-            &state,
-        )?;
-        let probs = model.softmax(&logits)?.to_vec();
-        let token = sample(probs, 0.5);
+    let shape = model.input_shape(tokens.len(), 1);
+    let tokens = TensorCpu::from_data(&context, shape, tokens)?.repeat(0, cli.batch);
+    let logits = model.run(&tokens, &mask, &state)?;
+
+    let probs = model.softmax(&logits)?.split();
+    for probs in probs {
+        let token = sample(probs.to_vec(), 0.5);
         let word = String::from_utf8(tokenizer.decode(&[token])?)?;
         print!("{}", word);
-
-        tokens = vec![token];
-
-        if index == 0 {
-            start = Instant::now();
-        }
     }
 
-    println!(
-        "\n{} tokens: {} mills",
-        num_tokens,
-        start.elapsed().as_millis()
-    );
-    std::io::stdout().flush()?;
+    // let mut start = Instant::now();
+    // let num_tokens = 100;
+    // for index in 0..=num_tokens {
+    //     let shape = model.input_shape(tokens.len(), cli.batch);
+    //     let logits = if index == 0 {
+    //         let tokens = TensorCpu::from_data(&context, shape, tokens)?.repeat(0, cli.batch);
+    //         model.run(&tokens, &mask, &state)?
+    //     } else {
+    //         model.run(&context.tensor_from_data(shape, tokens)?, &mask, &state)?
+    //     };
+
+    //     let probs = model.softmax(&logits)?.to_vec();
+    //     let token = sample(probs, 0.5);
+    //     let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+    //     print!("{}", word);
+
+    //     tokens = vec![token];
+
+    //     if index == 0 {
+    //         start = Instant::now();
+    //     }
+    // }
+
+    // println!(
+    //     "\n{} tokens: {} mills",
+    //     num_tokens,
+    //     start.elapsed().as_millis()
+    // );
+    // std::io::stdout().flush()?;
 
     Ok(())
 }
@@ -141,6 +153,8 @@ struct Cli {
     model: Option<PathBuf>,
     #[arg(short, long, value_name = "LAYERS")]
     quant: Option<u64>,
+    #[arg(short, long, default_value_t = 4)]
+    batch: usize,
 }
 
 fn main() {

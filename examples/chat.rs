@@ -13,7 +13,7 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{LayerFlags, Model, ModelBuilder, ModelState, Quantization},
-    tensor::Shape,
+    tensor::shape::Shape,
     tokenizer::Tokenizer,
 };
 

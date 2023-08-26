@@ -7,13 +7,13 @@ use wgpu::{
 };
 
 use crate::{context::Context, num::Scalar};
-pub use cache::ResourceCache;
-pub use ops::{TensorCommand, TensorOp, TensorPass};
-pub use shape::{Axis, IntoBytes, Shape, TensorSlice};
+use shape::{IntoBytes, Shape, TensorSlice};
 
-mod cache;
-mod ops;
-mod shape;
+use self::shape::Axis;
+
+pub mod cache;
+pub mod ops;
+pub mod shape;
 
 #[derive(Debug, Clone)]
 pub struct TensorBuffer {
@@ -95,7 +95,7 @@ impl std::fmt::Display for TensorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TensorError::Size(a, b) => write!(f, "data size not match: {} vs. {}", a, b),
-            TensorError::Shape(a, b) => write!(f, "tensor shape not match: {} vs. {}", a, b),
+            TensorError::Shape(a, b) => write!(f, "tensor shape {} doesn't match {}", a, b),
             TensorError::SliceOutOfRange { dim, start, end } => write!(
                 f,
                 "slice {}..{} out of range for dimension size {}",
@@ -144,17 +144,13 @@ pub trait TensorExt<'a, 'b, T: Scalar>: Sized + Clone {
         shape: Shape,
         data: impl Into<Cow<'b, [T]>>,
     ) -> Result<Self, TensorError>;
-
     fn init(context: &'a Context, shape: Shape) -> Self;
 
     fn shape(&self) -> Shape;
-
     fn check_shape(&self, shape: Shape) -> Result<(), TensorError> {
-        if self.shape() == shape {
-            Ok(())
-        } else {
-            Err(TensorError::Shape(self.shape(), shape))
-        }
+        (self.shape() == shape)
+            .then_some(())
+            .ok_or(TensorError::Shape(self.shape(), shape))
     }
 }
 
@@ -238,13 +234,6 @@ impl<'a, 'b, T: Scalar> TensorExt<'a, 'b, T> for TensorCpu<'a, 'b, T> {
     #[inline]
     fn shape(&self) -> Shape {
         self.shape
-    }
-}
-
-impl<T: Scalar> From<TensorCpu<'_, '_, T>> for Vec<T> {
-    #[inline]
-    fn from(value: TensorCpu<'_, '_, T>) -> Self {
-        Self::from(value.data)
     }
 }
 
@@ -355,6 +344,20 @@ impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
             .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&host.data[..]));
         Ok(())
     }
+
+    pub fn reshape(self, shape: Shape) -> Result<Self, TensorError> {
+        if self.shape.len() != shape.len() {
+            return Err(TensorError::Size(self.shape.len(), shape.len()));
+        }
+        Ok(Self { shape, ..self })
+    }
+}
+
+impl<T: Scalar> From<TensorCpu<'_, '_, T>> for Vec<T> {
+    #[inline]
+    fn from(value: TensorCpu<'_, '_, T>) -> Self {
+        Self::from(value.data)
+    }
 }
 
 impl<'a, 'b, T: Scalar> std::ops::Index<(usize, usize, usize)> for TensorCpu<'a, 'b, T> {
@@ -394,6 +397,19 @@ impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
             data,
             phantom: PhantomData,
         }
+    }
+
+    pub fn split(self) -> Vec<Self> {
+        (0..self.shape[2])
+            .map(|batch| self.as_slice((.., .., Axis(batch))).unwrap())
+            .collect()
+    }
+
+    pub fn reshape(self, shape: Shape) -> Result<Self, TensorError> {
+        if self.shape.len() != shape.len() {
+            return Err(TensorError::Size(self.shape.len(), shape.len()));
+        }
+        Ok(Self { shape, ..self })
     }
 
     pub fn as_slice(&self, slice: impl TensorSlice) -> Result<TensorCpu<'a, 'b, T>, TensorError> {
@@ -492,7 +508,7 @@ impl<'a, T: Scalar> From<TensorGpu<'a, T, ReadWrite>> for TensorView<'a, T> {
 }
 
 impl<'a, T: Scalar> TensorGpu<'a, T, ReadWrite> {
-    pub fn as_view(&'a self, slice: impl TensorSlice) -> Result<TensorView<'a, T>, TensorError> {
+    pub fn as_view(&self, slice: impl TensorSlice) -> Result<TensorView<'a, T>, TensorError> {
         let (start, end) = slice.shape_bounds(self.shape)?;
         let view = View {
             stride: self.shape,

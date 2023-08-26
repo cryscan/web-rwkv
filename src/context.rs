@@ -9,7 +9,11 @@ use wgpu::{
     ShaderModuleDescriptor, ShaderStages,
 };
 
-use crate::tensor::{IntoBytes, ResourceCache, Shape, TensorError, View};
+use crate::tensor::{
+    cache::ResourceCache,
+    shape::{IntoBytes, Shape},
+    TensorError, View,
+};
 
 #[derive(Deref)]
 pub struct Instance(wgpu::Instance);

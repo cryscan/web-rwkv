@@ -10,8 +10,10 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 use crate::{
     context::Context,
     tensor::{
-        Axis, ReadBack, ReadWrite, ResourceCache, Shape, TensorCommand, TensorCpu, TensorError,
-        TensorExt, TensorGpu, TensorOp, TensorPass, TensorView, Uniform,
+        cache::ResourceCache,
+        ops::{TensorCommand, TensorOp, TensorPass},
+        shape::{Axis, Shape},
+        ReadBack, ReadWrite, TensorCpu, TensorError, TensorExt, TensorGpu, TensorView, Uniform,
     },
 };
 
@@ -305,14 +307,11 @@ impl<'a, 'b> BackedState<'a, 'b> {
     }
 
     pub fn split(self) -> Vec<Self> {
-        (0..self.state.shape()[2])
-            .map(|batch| {
-                let state = self.state.as_slice((.., .., Axis(batch))).unwrap();
-                Self {
-                    context: self.context,
-                    state,
-                }
-            })
+        let Self { context, state } = self;
+        state
+            .split()
+            .into_iter()
+            .map(|state| Self { context, state })
             .collect()
     }
 }
