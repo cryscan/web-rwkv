@@ -99,10 +99,13 @@ async fn run(cli: Cli) -> Result<()> {
     let tokens = tokenizer.encode(prompt.as_bytes())?;
     print!("{}", prompt);
 
+    // The model state should keep the same batch as input.
+    // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
     let state = ModelState::new(&context, model.info(), cli.batch);
     let mask = context.tensor_from_data(Shape::new(1, 1, 1), vec![u32::MAX])?;
 
     let shape = model.input_shape(tokens.len(), 1);
+    // Note that for batch inference to work, the shape of the input tokens tensor should be `[B, T, 1]`, so we are repeating axis 0 here.
     let tokens = TensorCpu::from_data(&context, shape, tokens)?.repeat(0, cli.batch);
     let logits = model.run(&tokens, &mask, &state)?;
 
@@ -112,36 +115,6 @@ async fn run(cli: Cli) -> Result<()> {
         let word = String::from_utf8(tokenizer.decode(&[token])?)?;
         print!("{}", word);
     }
-
-    // let mut start = Instant::now();
-    // let num_tokens = 100;
-    // for index in 0..=num_tokens {
-    //     let shape = model.input_shape(tokens.len(), cli.batch);
-    //     let logits = if index == 0 {
-    //         let tokens = TensorCpu::from_data(&context, shape, tokens)?.repeat(0, cli.batch);
-    //         model.run(&tokens, &mask, &state)?
-    //     } else {
-    //         model.run(&context.tensor_from_data(shape, tokens)?, &mask, &state)?
-    //     };
-
-    //     let probs = model.softmax(&logits)?.to_vec();
-    //     let token = sample(probs, 0.5);
-    //     let word = String::from_utf8(tokenizer.decode(&[token])?)?;
-    //     print!("{}", word);
-
-    //     tokens = vec![token];
-
-    //     if index == 0 {
-    //         start = Instant::now();
-    //     }
-    // }
-
-    // println!(
-    //     "\n{} tokens: {} mills",
-    //     num_tokens,
-    //     start.elapsed().as_millis()
-    // );
-    // std::io::stdout().flush()?;
 
     Ok(())
 }
