@@ -9,7 +9,7 @@ homepage = "https://github.com/cryscan/web-rwkv"
 repository = "https://github.com/cryscan/web-rwkv"
 keywords = ["deep-learning", "language", "model", "rwkv"]
 categories = ["science", "text-processing"]
-exclude = ["assets"]
+exclude = ["assets/", "crates/"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -27,7 +27,7 @@ lazy_static = "1.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-web-rwkv-derive = { version = "0.1.0", path = "crates/web-rwkv-derive" }
+web-rwkv-derive = { version = "0.2.0", path = "crates/web-rwkv-derive" }
 
 [dev-dependencies]
 pollster = "0.3.0"
