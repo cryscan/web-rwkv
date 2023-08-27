@@ -332,9 +332,7 @@ impl Eq for Context {}
 
 impl Context {
     pub fn pipeline(&self, name: &'static str) -> Result<&ComputePipeline, TensorError> {
-        self.pipelines
-            .get(name)
-            .ok_or(TensorError::PipelineError(name))
+        self.pipelines.get(name).ok_or(TensorError::Pipeline(name))
     }
 
     pub fn request_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {

@@ -78,29 +78,31 @@ pub struct ReadBack;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TensorError {
+    Empty,
     Size(usize, usize),
     Shape(Shape, Shape),
-    SliceOutOfRange {
+    OutOfRange {
         dim: usize,
         start: usize,
         end: usize,
     },
-    SliceNotContiguous,
-    PipelineError(&'static str),
+    Contiguous,
+    Pipeline(&'static str),
 }
 
 impl std::fmt::Display for TensorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TensorError::Empty => write!(f, "given list is empty"),
             TensorError::Size(a, b) => write!(f, "data size not match: {} vs. {}", a, b),
             TensorError::Shape(a, b) => write!(f, "tensor shape {} doesn't match {}", a, b),
-            TensorError::SliceOutOfRange { dim, start, end } => write!(
+            TensorError::OutOfRange { dim, start, end } => write!(
                 f,
                 "slice {}..{} out of range for dimension size {}",
                 start, end, dim
             ),
-            TensorError::SliceNotContiguous => write!(f, "slice not contiguous"),
-            TensorError::PipelineError(name) => write!(f, "pipeline {} not found", name),
+            TensorError::Contiguous => write!(f, "slice not contiguous"),
+            TensorError::Pipeline(name) => write!(f, "pipeline {} not found", name),
         }
     }
 }
@@ -367,6 +369,7 @@ impl<'a, 'b, T: Scalar> std::ops::Index<(usize, usize, usize)> for TensorCpu<'a,
 }
 
 impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
+    /// Repeat the tensor along a given axis.
     pub fn repeat(self, axis: usize, repeat: usize) -> Self {
         let Self {
             context,
@@ -397,6 +400,7 @@ impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
         }
     }
 
+    /// Split the tensor along the highest plural axis.
     pub fn split(self) -> Vec<Self> {
         match self.shape {
             Shape([0, _, _]) | Shape([_, 0, _]) | Shape([_, _, 0]) => vec![],
@@ -411,6 +415,36 @@ impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
                 .map(|batch| self.as_slice((.., .., batch)).unwrap())
                 .collect(),
         }
+    }
+
+    /// Concat a batch of tensors.
+    pub fn concat(batches: Vec<Self>) -> Result<Self, TensorError> {
+        if batches.is_empty() {
+            return Err(TensorError::Empty);
+        }
+
+        let mut shape = batches[0].shape;
+        let context = batches[0].context;
+
+        batches.iter().try_for_each(|batch| {
+            batch.check_shape(Shape::new(shape[0], shape[1], batch.shape[2]))
+        })?;
+
+        let num_batch: usize = batches.iter().map(|batch| batch.shape[2]).sum();
+        shape[2] = num_batch;
+
+        let data = batches
+            .into_iter()
+            .map(|batch| batch.data.to_vec())
+            .collect::<Vec<_>>()
+            .concat()
+            .into();
+        Ok(Self {
+            context,
+            shape,
+            data,
+            phantom: PhantomData,
+        })
     }
 
     pub fn reshape(self, shape: Shape) -> Result<Self, TensorError> {

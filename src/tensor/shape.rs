@@ -127,7 +127,7 @@ pub trait TensorAxis {
 #[inline]
 fn check_bounds(dim: usize, start: usize, end: usize) -> Result<(usize, usize), TensorError> {
     if start > end || start >= dim || end > dim {
-        Err(TensorError::SliceOutOfRange { dim, start, end })
+        Err(TensorError::OutOfRange { dim, start, end })
     } else {
         Ok((start, end))
     }
@@ -252,7 +252,7 @@ where
             },
         );
         if !valid {
-            return Err(TensorError::SliceNotContiguous);
+            return Err(TensorError::Contiguous);
         }
 
         let len = (end - start).len();

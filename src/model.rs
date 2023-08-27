@@ -314,6 +314,18 @@ impl<'a, 'b> BackedState<'a, 'b> {
             .map(|state| Self { context, state })
             .collect()
     }
+
+    pub fn concat(batches: Vec<Self>) -> Result<Self, TensorError> {
+        if batches.is_empty() {
+            return Err(TensorError::Empty);
+        }
+        let context = batches[0].context;
+        let states: Vec<_> = batches.into_iter().map(|batch| batch.state).collect();
+        Ok(Self {
+            context,
+            state: TensorCpu::concat(states)?,
+        })
+    }
 }
 
 impl<'a> From<ModelState<'a>> for BackedState<'a, '_> {
