@@ -16,7 +16,7 @@ $ chat --model /path/to/model
 ```
 
 ## Use in Your Project
-To use in your own rust project, simply add `web-rwkv = "0.1"` as a dependency in your `Cargo.toml`.
+To use in your own rust project, simply add `web-rwkv = "0.2"` as a dependency in your `Cargo.toml`.
 Check examples on how to create the environment, the tokenizer and how to run the model.
 
 ## Convert Models
