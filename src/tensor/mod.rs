@@ -9,8 +9,6 @@ use wgpu::{
 use crate::{context::Context, num::Scalar};
 use shape::{IntoBytes, Shape, TensorSlice};
 
-use self::shape::Axis;
-
 pub mod cache;
 pub mod ops;
 pub mod shape;
@@ -400,9 +398,19 @@ impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
     }
 
     pub fn split(self) -> Vec<Self> {
-        (0..self.shape[2])
-            .map(|batch| self.as_slice((.., .., Axis(batch))).unwrap())
-            .collect()
+        match self.shape {
+            Shape([0, _, _]) | Shape([_, 0, _]) | Shape([_, _, 0]) => vec![],
+            Shape([1, 1, 1]) => vec![self],
+            Shape([x, 1, 1]) => (0..x)
+                .map(|batch| self.as_slice((batch, .., ..)).unwrap())
+                .collect(),
+            Shape([_, x, 1]) => (0..x)
+                .map(|batch| self.as_slice((.., batch, ..)).unwrap())
+                .collect(),
+            Shape([_, _, x]) => (0..x)
+                .map(|batch| self.as_slice((.., .., batch)).unwrap())
+                .collect(),
+        }
     }
 
     pub fn reshape(self, shape: Shape) -> Result<Self, TensorError> {

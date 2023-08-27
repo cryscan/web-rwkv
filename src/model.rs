@@ -12,7 +12,7 @@ use crate::{
     tensor::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorPass},
-        shape::{Axis, Shape},
+        shape::Shape,
         ReadBack, ReadWrite, TensorCpu, TensorError, TensorExt, TensorGpu, TensorView, Uniform,
     },
 };
@@ -302,7 +302,7 @@ impl<'a, 'b> BackedState<'a, 'b> {
     }
 
     pub fn take(self, batch: usize) -> Result<Self, TensorError> {
-        let state = self.state.into_slice((.., .., Axis(batch)))?;
+        let state = self.state.into_slice((.., .., batch))?;
         Ok(Self { state, ..self })
     }
 
