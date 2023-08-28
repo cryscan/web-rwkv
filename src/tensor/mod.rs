@@ -93,7 +93,7 @@ pub enum TensorError {
 impl std::fmt::Display for TensorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TensorError::Empty => write!(f, "given list is empty"),
+            TensorError::Empty => write!(f, "list must not be empty"),
             TensorError::Size(a, b) => write!(f, "data size not match: {} vs. {}", a, b),
             TensorError::Shape(a, b) => write!(f, "tensor shape {} doesn't match {}", a, b),
             TensorError::OutOfRange { dim, start, end } => write!(

@@ -307,6 +307,9 @@ impl<'a, 'b> BackedState<'a, 'b> {
     }
 
     pub fn split(self) -> Vec<Self> {
+        if self.state.shape()[2] <= 1 {
+            return vec![self];
+        }
         let Self { context, state } = self;
         state
             .split()
