@@ -129,7 +129,7 @@ impl IntoBytes for View {
 
 #[derive(Debug)]
 pub struct Tensor<'a, D: Device, T: Scalar> {
-    context: &'a Context,
+    pub context: &'a Context,
     shape: Shape,
     data: D::Data,
     phantom: PhantomData<(D, T)>,
@@ -195,11 +195,6 @@ impl<D: Device, T: Scalar> Tensor<'_, D, T> {
     #[inline]
     pub fn offset(index: usize) -> usize {
         index * T::size()
-    }
-
-    #[inline]
-    pub fn context(&self) -> &Context {
-        self.context
     }
 
     #[inline]
@@ -493,7 +488,7 @@ impl<'a, 'b, T: Scalar> TensorCpu<'a, 'b, T> {
 
 #[derive(Debug, Clone)]
 pub struct TensorView<'a, T: Scalar> {
-    context: &'a Context,
+    pub context: &'a Context,
     view: View,
     data: TensorBuffer,
     phantom: PhantomData<T>,
@@ -532,11 +527,6 @@ impl<'a, 'b, T: Scalar> TensorExt<'a, 'b, T> for TensorView<'a, T> {
 }
 
 impl<'a, T: Scalar> TensorView<'a, T> {
-    #[inline]
-    pub fn context(&self) -> &Context {
-        self.context
-    }
-
     #[inline]
     pub fn data(&self) -> &TensorBuffer {
         &self.data

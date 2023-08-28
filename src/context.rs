@@ -1,6 +1,6 @@
 use std::{borrow::Cow, collections::HashMap, str::FromStr, sync::Arc};
 
-use web_rwkv_derive::{Deref, Id};
+use web_rwkv_derive::{Deref, DerefMut, Id};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferUsages,
@@ -67,7 +67,7 @@ impl Instance {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deref, Id, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Deref, DerefMut, Id, PartialEq, Eq, Hash)]
 pub struct ContextId(usize);
 
 #[derive(Debug)]

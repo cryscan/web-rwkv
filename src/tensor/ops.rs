@@ -59,7 +59,7 @@ impl<'a> TensorOp<'a> {
     /// Softmax operator applied on `x`.
     pub fn softmax(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape();
-        let context = x.context();
+        let context = x.context;
         let pipeline = context.pipeline("softmax")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -186,10 +186,10 @@ impl<'a> TensorOp<'a> {
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_int8(
         matrix: &'a TensorGpu<u8, ReadWrite>,
-        mx: &'a TensorGpu<f16, ReadWrite>,
-        rx: &'a TensorGpu<f16, ReadWrite>,
-        my: &'a TensorGpu<f16, ReadWrite>,
-        ry: &'a TensorGpu<f16, ReadWrite>,
+        mx: &'a TensorGpu<f32, ReadWrite>,
+        rx: &'a TensorGpu<f32, ReadWrite>,
+        my: &'a TensorGpu<f32, ReadWrite>,
+        ry: &'a TensorGpu<f32, ReadWrite>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {

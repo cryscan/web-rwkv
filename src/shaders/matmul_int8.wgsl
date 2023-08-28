@@ -9,10 +9,10 @@ struct View {
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
 
 @group(0) @binding(3) var<storage, read> matrix: array<u32>;                // (R, C)
-@group(0) @binding(4) var<storage, read> mx: array<vec2<u32>>;              // (C)
-@group(0) @binding(5) var<storage, read> rx: array<vec2<u32>>;              // (C)
-@group(0) @binding(6) var<storage, read> my: array<vec2<u32>>;              // (R)
-@group(0) @binding(7) var<storage, read> ry: array<vec2<u32>>;              // (R)
+@group(0) @binding(4) var<storage, read> mx: array<vec4<f32>>;              // (C)
+@group(0) @binding(5) var<storage, read> rx: array<vec4<f32>>;              // (C)
+@group(0) @binding(6) var<storage, read> my: array<vec4<f32>>;              // (R)
+@group(0) @binding(7) var<storage, read> ry: array<vec4<f32>>;              // (R)
 
 @group(0) @binding(8) var<storage, read> input: array<vec4<f32>>;           // (B, T, C)
 @group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, R)
@@ -53,8 +53,10 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let bb = compute_index(source, batch, token, 0u);
     let cb = channel * 4u * stride.x;
 
-    let myc = unpack4x16float(my[channel]);
-    let ryc = unpack4x16float(ry[channel]);
+    // let myc = unpack4x16float(my[channel]);
+    // let ryc = unpack4x16float(ry[channel]);
+    let myc = my[channel];
+    let ryc = ry[channel];
 
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride.x; i += BLOCK_SIZE) {
@@ -64,8 +66,10 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         // read 4 elements from the input
         let x = input[bti];
 
-        let mxi = unpack4x16float(mx[i]);
-        let rxi = unpack4x16float(rx[i]);
+        // let mxi = unpack4x16float(mx[i]);
+        // let rxi = unpack4x16float(rx[i]);
+        let mxi = mx[i];
+        let rxi = rx[i];
 
         // read 4 rows from the matrix, each with 4 unpacked floats, forming a 4x4 sub-block
         var m: mat4x4<f32>;

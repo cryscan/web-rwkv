@@ -5,6 +5,7 @@ use bitflags::bitflags;
 use derive_getters::Getters;
 use half::f16;
 use safetensors::SafeTensors;
+use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use crate::{
@@ -71,10 +72,10 @@ enum Matrix<'a> {
     Fp16(TensorGpu<'a, f16, ReadWrite>),
     Int8 {
         w: Box<TensorGpu<'a, u8, ReadWrite>>,
-        mx: Box<TensorGpu<'a, f16, ReadWrite>>,
-        rx: Box<TensorGpu<'a, f16, ReadWrite>>,
-        my: Box<TensorGpu<'a, f16, ReadWrite>>,
-        ry: Box<TensorGpu<'a, f16, ReadWrite>>,
+        mx: Box<TensorGpu<'a, f32, ReadWrite>>,
+        rx: Box<TensorGpu<'a, f32, ReadWrite>>,
+        my: Box<TensorGpu<'a, f32, ReadWrite>>,
+        ry: Box<TensorGpu<'a, f32, ReadWrite>>,
     },
 }
 
@@ -237,11 +238,8 @@ impl<'a> ModelBuffer<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ModelState<'a> {
-    pub context: &'a Context,
-    pub state: TensorGpu<'a, f32, ReadWrite>,
-}
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct ModelState<'a>(pub TensorGpu<'a, f32, ReadWrite>);
 
 impl<'a> ModelState<'a> {
     pub fn new(context: &'a Context, info: &ModelInfo, num_batches: usize) -> Self {
@@ -269,88 +267,74 @@ impl<'a> ModelState<'a> {
                 data,
             )
             .unwrap();
-        Self { context, state }
+        Self(state)
     }
 
     pub fn load(&self, backed: &BackedState<'a, '_>) -> Result<(), TensorError> {
-        self.state.load(&backed.state)
+        self.0.load(backed)
     }
 
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer;
         let end = start + 4;
-        self.state.as_view((.., start..end, ..))
+        self.as_view((.., start..end, ..))
     }
 
     fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer + 4;
-        self.state.as_view((.., start..=start, ..))
+        self.as_view((.., start..=start, ..))
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct BackedState<'a, 'b> {
-    pub context: &'a Context,
-    pub state: TensorCpu<'a, 'b, f32>,
-}
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct BackedState<'a, 'b>(pub TensorCpu<'a, 'b, f32>);
 
 impl<'a, 'b> BackedState<'a, 'b> {
     pub fn repeat(self, repeat: usize) -> Self {
-        let BackedState { context, state } = self;
-        let state = state.repeat(2, repeat);
-        Self { context, state }
+        let state = self.0.repeat(2, repeat);
+        Self(state)
     }
 
     pub fn take(self, batch: usize) -> Result<Self, TensorError> {
-        let state = self.state.into_slice((.., .., batch))?;
-        Ok(Self { state, ..self })
+        let state = self.0.into_slice((.., .., batch))?;
+        Ok(Self(state))
     }
 
     pub fn split(self) -> Vec<Self> {
-        if self.state.shape()[2] <= 1 {
+        if self.shape()[2] <= 1 {
             return vec![self];
         }
-        let Self { context, state } = self;
-        state
-            .split()
-            .into_iter()
-            .map(|state| Self { context, state })
-            .collect()
+        self.0.split().into_iter().map(Self).collect()
     }
 
     pub fn concat(batches: Vec<Self>) -> Result<Self, TensorError> {
         if batches.is_empty() {
             return Err(TensorError::Empty);
         }
-        let context = batches[0].context;
-        let states: Vec<_> = batches.into_iter().map(|batch| batch.state).collect();
-        Ok(Self {
-            context,
-            state: TensorCpu::concat(states)?,
-        })
+        let states: Vec<_> = batches.into_iter().map(|batch| batch.0).collect();
+        Ok(Self(TensorCpu::concat(states)?))
     }
 }
 
 impl<'a> From<ModelState<'a>> for BackedState<'a, '_> {
     fn from(value: ModelState<'a>) -> Self {
-        let ModelState { context, state } = value;
-        let map = context.init_tensor(state.shape());
+        let context = value.context;
+        let map = context.init_tensor(value.shape());
         let mut encoder = context
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
-        encoder.copy_tensor(&state, &map).unwrap();
+        encoder.copy_tensor(&value, &map).unwrap();
         context.queue.submit(Some(encoder.finish()));
 
         let state = TensorCpu::from(map);
-        Self { context, state }
+        Self(state)
     }
 }
 
 impl<'a> From<BackedState<'a, '_>> for ModelState<'a> {
     fn from(value: BackedState<'a, '_>) -> Self {
-        let BackedState { context, state } = value;
-        let state = TensorGpu::from(state);
-        Self { context, state }
+        let state = TensorGpu::from(value.0);
+        Self(state)
     }
 }
 
@@ -466,25 +450,24 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
                 context.tensor_from_data(shape, bytemuck::cast_slice(tensor.data()))?;
             let shape = matrix.shape();
 
-            let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
-            let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
-            let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
-            let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
+            // let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
+            // let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
+            // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
+            // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
 
             let w = Box::new(context.init_tensor(matrix.shape()));
-
-            let mut ops =
-                TensorOp::quantize_mat_int8(&matrix, &mx_f32, &rx_f32, &my_f32, &ry_f32, &w)?;
 
             let mx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
             let rx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
             let my = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
             let ry = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
 
-            ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
-            ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
-            ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
-            ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
+            let ops = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
+
+            // ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
+            // ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
+            // ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
+            // ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
 
             let mut encoder = context
                 .device
