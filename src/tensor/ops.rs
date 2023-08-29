@@ -698,7 +698,7 @@ mod tests {
     use super::{TensorOp, TensorPass};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{ops::TensorCommand, Shape, TensorCpu, TensorExt, TensorGpu, TensorView},
+        tensor::{ops::TensorCommand, Shape, TensorCpu, TensorExt, TensorGpu, TensorInit},
     };
 
     fn is_approx(a: f32, b: f32) -> bool {
@@ -978,7 +978,8 @@ mod tests {
         )?);
 
         let input: Vec<_> = (8..12).map(|x| x as f32).collect();
-        let input = TensorView::from_data(&context, Shape::new(4, 1, 1), input)?;
+        let input =
+            TensorGpu::from_data(&context, Shape::new(4, 1, 1), input)?.into_view((.., .., ..))?;
         ops.push(TensorOp::blit(input, output.as_view((.., 2.., 1..2))?)?);
 
         let mut encoder = context

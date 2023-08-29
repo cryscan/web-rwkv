@@ -268,7 +268,7 @@ mod tests {
     use super::{Shape, TensorSlice};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{TensorCpu, TensorExt},
+        tensor::{TensorCpu, TensorInit},
     };
 
     fn create_context() -> Result<Context, anyhow::Error> {

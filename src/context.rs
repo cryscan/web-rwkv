@@ -80,6 +80,7 @@ pub struct Context {
     pipelines: HashMap<String, ComputePipeline>,
     shapes: ResourceCache<Shape, Buffer>,
     views: ResourceCache<View, Buffer>,
+    _cursors: ResourceCache<usize, Buffer>,
 }
 
 pub struct ContextBuilder<'a> {
@@ -161,6 +162,7 @@ impl<'a> ContextBuilder<'a> {
             pipelines,
             shapes: Default::default(),
             views: Default::default(),
+            _cursors: Default::default(),
         })
     }
 
@@ -205,8 +207,20 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
+            "token_shift_stack",
+            include_str!("shaders/token_shift_stack.wgsl"),
+            "token_shift",
+            None,
+        )
+        .with_pipeline(
             "token_mix",
             include_str!("shaders/token_mix.wgsl"),
+            "token_mix",
+            None,
+        )
+        .with_pipeline(
+            "token_mix_stack",
+            include_str!("shaders/token_mix_stack.wgsl"),
             "token_mix",
             None,
         )
@@ -220,6 +234,12 @@ impl<'a> ContextBuilder<'a> {
         .with_pipeline(
             "channel_mix",
             include_str!("shaders/channel_mix.wgsl"),
+            "channel_mix",
+            None,
+        )
+        .with_pipeline(
+            "channel_mix_stack",
+            include_str!("shaders/channel_mix_stack.wgsl"),
             "channel_mix",
             None,
         )
