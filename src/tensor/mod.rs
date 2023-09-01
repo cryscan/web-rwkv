@@ -85,7 +85,8 @@ pub enum TensorError {
     Size(usize, usize),
     Shape(Shape, Shape),
     DimensionAuto,
-    OutOfRange {
+    BatchOutOfRange(usize, usize),
+    SliceOutOfRange {
         dim: usize,
         start: usize,
         end: usize,
@@ -98,16 +99,18 @@ impl std::fmt::Display for TensorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TensorError::Empty => write!(f, "list must not be empty"),
-            TensorError::Size(a, b) => write!(f, "data size not match: {} vs. {}", a, b),
-            TensorError::Shape(a, b) => write!(f, "tensor shape {} doesn't match {}", a, b),
+            TensorError::Size(a, b) => write!(f, "data size not match: {a} vs. {b}"),
+            TensorError::Shape(a, b) => write!(f, "tensor shape {a} doesn't match {b}"),
             TensorError::DimensionAuto => write!(f, "cannot deduce dimension"),
-            TensorError::OutOfRange { dim, start, end } => write!(
+            TensorError::BatchOutOfRange(batch, max) => {
+                write!(f, "batch {batch} out of range of max {max}")
+            }
+            TensorError::SliceOutOfRange { dim, start, end } => write!(
                 f,
-                "slice {}..{} out of range for dimension size {}",
-                start, end, dim
+                "slice {start}..{end} out of range for dimension size {dim}",
             ),
             TensorError::Contiguous => write!(f, "slice not contiguous"),
-            TensorError::Pipeline(name) => write!(f, "pipeline {} not found", name),
+            TensorError::Pipeline(name) => write!(f, "pipeline {name} not found"),
         }
     }
 }
@@ -386,10 +389,22 @@ impl<'a, 'b, T: Scalar> From<TensorGpu<'a, T, ReadBack>> for TensorCpu<'a, 'b, T
 
 impl<'a, T: Scalar, K: Kind> TensorGpu<'a, T, K> {
     pub fn load(&self, host: &TensorCpu<'a, '_, T>) -> Result<(), TensorError> {
-        self.check_shape(host.shape)?;
+        host.check_shape(self.shape)?;
         self.context
             .queue
             .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&host.data[..]));
+        Ok(())
+    }
+
+    pub fn load_batch(&self, host: &TensorCpu<'a, '_, T>, batch: usize) -> Result<(), TensorError> {
+        host.check_shape(Shape::new(self.shape[0], self.shape[1], 1))?;
+        if batch >= self.shape[2] {
+            return Err(TensorError::BatchOutOfRange(batch, self.shape[2]));
+        }
+        let offset = (T::size() * self.shape[0] * self.shape[1] * batch) as u64;
+        self.context
+            .queue
+            .write_buffer(&self.buffer, offset, bytemuck::cast_slice(&host.data[..]));
         Ok(())
     }
 
@@ -655,15 +670,18 @@ pub struct TensorStack<'a, 'b, T: Scalar> {
 
 impl<'a, 'b, T: Scalar> TensorStack<'a, 'b, T> {
     /// Number of input batches.
+    #[inline]
     pub fn max_batch(&self) -> usize {
         self.cursors.len()
     }
 
     /// Number of non-empty input batches.
+    #[inline]
     pub fn num_batch(&self) -> usize {
         self.cursors.iter().filter(|cursor| cursor.len > 0).count()
     }
 
+    #[inline]
     pub fn num_token(&self) -> usize {
         self.tensor.shape[1]
     }

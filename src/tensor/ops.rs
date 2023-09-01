@@ -1,7 +1,6 @@
 use half::f16;
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BufferAddress, CommandEncoder, ComputePass,
-    ComputePipeline,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, CommandEncoder, ComputePass, ComputePipeline,
 };
 
 use super::{Kind, ReadWrite, Shape, TensorError, TensorExt, TensorGpu, TensorView, Uniform};
@@ -13,6 +12,13 @@ pub trait TensorCommand<T: Scalar, K: Kind> {
         source: &TensorGpu<T, ReadWrite>,
         destination: &TensorGpu<T, K>,
     ) -> Result<(), TensorError>;
+
+    fn copy_tensor_batch(
+        &mut self,
+        source: &TensorGpu<T, ReadWrite>,
+        destination: &TensorGpu<T, K>,
+        batch: usize,
+    ) -> Result<(), TensorError>;
 }
 
 impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
@@ -21,9 +27,25 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
         source: &TensorGpu<T, ReadWrite>,
         destination: &TensorGpu<T, K>,
     ) -> Result<(), TensorError> {
-        source.check_shape(destination.shape())?;
-        let size = source.size() as BufferAddress;
+        destination.check_shape(source.shape())?;
+        let size = destination.size() as u64;
         self.copy_buffer_to_buffer(&source.buffer, 0, &destination.buffer, 0, size);
+        Ok(())
+    }
+
+    fn copy_tensor_batch(
+        &mut self,
+        source: &TensorGpu<T, ReadWrite>,
+        destination: &TensorGpu<T, K>,
+        batch: usize,
+    ) -> Result<(), TensorError> {
+        destination.check_shape(Shape::new(source.shape[0], source.shape[1], 1))?;
+        if batch >= source.shape[2] {
+            return Err(TensorError::BatchOutOfRange(batch, source.shape[2]));
+        }
+        let size = destination.size() as u64;
+        let offset = (T::size() * source.shape[0] * source.shape[1] * batch) as u64;
+        self.copy_buffer_to_buffer(&source.buffer, offset, &destination.buffer, 0, size);
         Ok(())
     }
 }

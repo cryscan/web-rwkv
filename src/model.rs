@@ -218,10 +218,12 @@ impl<'a> ModelBuffer<'a> {
         }
     }
 
+    #[inline]
     pub fn max_batch(&self) -> usize {
         self.map.shape()[2]
     }
 
+    #[inline]
     pub fn num_token(&self) -> usize {
         self.cursors.shape()[1]
     }
@@ -259,8 +261,58 @@ impl<'a> ModelState<'a> {
         Self(state)
     }
 
-    pub fn load(&self, backed: &BackedState<'a, '_>) -> Result<(), TensorError> {
-        self.0.load(backed)
+    pub fn load(&self, backed: &BackedState) -> Result<(), TensorError> {
+        let host = TensorCpu::from_data(self.context, self.shape(), &backed.data)?;
+        self.0.load(&host)
+    }
+
+    pub fn load_batch(&self, backed: &BackedState, batch: usize) -> Result<(), TensorError> {
+        let shape = self.shape();
+        let shape = Shape::new(shape[0], shape[1], 1);
+        let host = TensorCpu::from_data(self.context, shape, &backed.data)?;
+        self.0.load_batch(&host, batch)
+    }
+
+    pub fn back(&self) -> BackedState {
+        let context = self.context;
+        let shape = self.shape();
+        let map = TensorGpu::init(self.context, shape);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder.copy_tensor(self, &map).expect("back entire state");
+        context.queue.submit(Some(encoder.finish()));
+
+        let host = TensorCpu::from(map);
+        BackedState {
+            shape,
+            data: host.to_vec(),
+        }
+    }
+
+    pub fn back_batch(&self, batch: usize) -> Result<BackedState, TensorError> {
+        let context = self.context;
+        let shape = self.shape();
+        let shape = Shape::new(shape[0], shape[1], 1);
+        let map = TensorGpu::init(self.context, shape);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder.copy_tensor_batch(self, &map, batch)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let host = TensorCpu::from(map);
+        Ok(BackedState {
+            shape,
+            data: host.to_vec(),
+        })
+    }
+
+    #[inline]
+    pub fn max_batch(&self) -> usize {
+        self.0.shape()[2]
     }
 
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
@@ -275,59 +327,62 @@ impl<'a> ModelState<'a> {
     }
 }
 
-#[derive(Debug, Clone, Deref, DerefMut)]
-pub struct BackedState<'a, 'b>(pub TensorCpu<'a, 'b, f32>);
-
-impl<'a, 'b> BackedState<'a, 'b> {
-    pub fn repeat(self, repeat: usize) -> Self {
-        let state = self.0.repeat(2, repeat);
-        Self(state)
-    }
-
-    pub fn take(self, batch: usize) -> Result<Self, TensorError> {
-        let state = self.0.into_slice((.., .., batch))?;
-        Ok(Self(state))
-    }
-
-    pub fn split(self) -> Vec<Self> {
-        self.0
-            .split(2)
-            .expect("split backed state")
-            .into_iter()
-            .map(Self)
-            .collect()
-    }
-
-    pub fn stack(batches: Vec<Self>) -> Result<Self, TensorError> {
-        if batches.is_empty() {
-            return Err(TensorError::Empty);
-        }
-        let states: Vec<_> = batches.into_iter().map(|batch| batch.0).collect();
-        Ok(Self(TensorCpu::stack(states)?))
-    }
+#[derive(Debug, Clone)]
+pub struct BackedState {
+    pub shape: Shape,
+    pub data: Vec<f32>,
 }
 
-impl<'a> From<ModelState<'a>> for BackedState<'a, '_> {
-    fn from(value: ModelState<'a>) -> Self {
-        let context = value.context;
-        let map = context.init_tensor(value.shape());
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-        encoder.copy_tensor(&value, &map).unwrap();
-        context.queue.submit(Some(encoder.finish()));
+// impl<'a, 'b> BackedState<'a, 'b> {
+//     pub fn repeat(self, repeat: usize) -> Self {
+//         let state = self.0.repeat(2, repeat);
+//         Self(state)
+//     }
 
-        let state = TensorCpu::from(map);
-        Self(state)
-    }
-}
+//     pub fn take(self, batch: usize) -> Result<Self, TensorError> {
+//         let state = self.0.into_slice((.., .., batch))?;
+//         Ok(Self(state))
+//     }
 
-impl<'a> From<BackedState<'a, '_>> for ModelState<'a> {
-    fn from(value: BackedState<'a, '_>) -> Self {
-        let state = TensorGpu::from(value.0);
-        Self(state)
-    }
-}
+//     pub fn split(self) -> Vec<Self> {
+//         self.0
+//             .split(2)
+//             .expect("split backed state")
+//             .into_iter()
+//             .map(Self)
+//             .collect()
+//     }
+
+//     pub fn stack(batches: Vec<Self>) -> Result<Self, TensorError> {
+//         if batches.is_empty() {
+//             return Err(TensorError::Empty);
+//         }
+//         let states: Vec<_> = batches.into_iter().map(|batch| batch.0).collect();
+//         Ok(Self(TensorCpu::stack(states)?))
+//     }
+// }
+
+// impl<'a> From<ModelState<'a>> for BackedState<'a, '_> {
+//     fn from(value: ModelState<'a>) -> Self {
+//         let context = value.context;
+//         let map = context.init_tensor(value.shape());
+//         let mut encoder = context
+//             .device
+//             .create_command_encoder(&CommandEncoderDescriptor::default());
+//         encoder.copy_tensor(&value, &map).unwrap();
+//         context.queue.submit(Some(encoder.finish()));
+
+//         let state = TensorCpu::from(map);
+//         Self(state)
+//     }
+// }
+
+// impl<'a> From<BackedState<'a, '_>> for ModelState<'a> {
+//     fn from(value: BackedState<'a, '_>) -> Self {
+//         let state = TensorGpu::from(value.0);
+//         Self(state)
+//     }
+// }
 
 pub struct ModelBuilder<'a, 'b> {
     context: &'a Context,
@@ -620,8 +675,8 @@ pub enum ModelError {
 impl std::fmt::Display for ModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ModelError::BatchSize(batch, maximum) => {
-                write!(f, "input batch size {batch} not match {maximum}")
+            ModelError::BatchSize(batch, max) => {
+                write!(f, "input batch size {batch} not match {max}")
             }
         }
     }
@@ -630,18 +685,21 @@ impl std::fmt::Display for ModelError {
 impl std::error::Error for ModelError {}
 
 impl<'a, 'b> Model<'a, 'b> {
+    #[inline]
     fn request_buffer(&self, max_batch: usize, num_token: usize) -> Arc<ModelBuffer> {
         self.buffer_cache.request((max_batch, num_token), || {
             ModelBuffer::new(self.context, &self.info, max_batch, num_token)
         })
     }
 
+    #[inline]
     fn request_stack(&self, num_batch: usize) -> Arc<TensorGpu<u32, ReadWrite>> {
         self.stack_cache.request(num_batch, || {
             self.context.zeros(Shape::new(num_batch, 1, 1))
         })
     }
 
+    #[inline]
     pub fn head_shape(&self, num_batch: usize) -> Shape {
         Shape::new(self.info.num_vocab, 1, num_batch)
     }

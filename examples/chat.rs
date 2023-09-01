@@ -146,7 +146,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
     tokens[0].clear();
 
-    let mut backed_state = state.clone().into();
+    let mut backed = state.back();
     let mut last_user_text = String::from("Hi!");
     let mut last_tokens = vec![];
 
@@ -166,11 +166,11 @@ async fn run(cli: Cli) -> Result<()> {
         if &user_text == "-" {
             break;
         } else if &user_text == "+" {
-            state.load(&backed_state)?;
+            state.load(&backed)?;
             user_text = last_user_text.clone();
             tokens = last_tokens.clone();
         } else {
-            backed_state = state.clone().into();
+            backed = state.back();
             last_user_text = user_text.clone();
             last_tokens = tokens.clone();
         }
