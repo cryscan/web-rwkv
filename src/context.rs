@@ -80,7 +80,6 @@ pub struct Context {
     pipelines: HashMap<String, ComputePipeline>,
     shapes: ResourceCache<Shape, Buffer>,
     views: ResourceCache<View, Buffer>,
-    _cursors: ResourceCache<usize, Buffer>,
 }
 
 pub struct ContextBuilder<'a> {
@@ -162,7 +161,6 @@ impl<'a> ContextBuilder<'a> {
             pipelines,
             shapes: Default::default(),
             views: Default::default(),
-            _cursors: Default::default(),
         })
     }
 

@@ -44,15 +44,15 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
-    let stask = invocation_id.y;
-    let cursor = compute_cursor(cursors[stask]);
-    let token = stask - cursor.token;
+    let stack = invocation_id.y;
+    let cursor = compute_cursor(cursors[stack]);
+    let token = stack - cursor.token;
 
-    if index >= stride || stask > shape[1] {
+    if index >= stride || stack >= shape[1] {
         return;
     }
 
-    let bti = stask * stride + index;
+    let bti = stack * stride + index;
     if token == 0u {
         output[bti] = mix(sx[compute_index(cursor.batch, 0u, index)], x[bti], unpack4x16float(time_mix[index]));
     } else {

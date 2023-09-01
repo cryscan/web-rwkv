@@ -11,7 +11,7 @@ pub trait IntoBytes {
 /// The shape of a [`Tensor`].
 /// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
 #[derive(Debug, Default, Clone, Copy, Deref, DerefMut, PartialEq, Eq, Hash)]
-pub struct Shape(pub [usize; 3]);
+pub struct Shape([usize; 3]);
 
 impl Shape {
     pub fn new(x: usize, y: usize, z: usize) -> Self {
@@ -261,8 +261,54 @@ where
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TensorDimension {
+    #[default]
+    Full,
+    Auto,
+    Dimension(usize),
+}
+
+impl TensorDimension {
+    pub fn deduce(shape: Shape, x: Self, y: Self, z: Self) -> Result<Shape, TensorError> {
+        use TensorDimension::{Auto, Dimension, Full};
+        let len = shape.len();
+        let Shape([a, b, c]) = shape;
+
+        let deduced = match (x, y, z) {
+            (Auto, Auto, _) | (Auto, _, Auto) | (_, Auto, Auto) => Err(TensorError::DimensionAuto),
+            (Full, Full, Full) | (Full, Full, Auto) | (Full, Auto, Full) | (Auto, Full, Full) => {
+                Ok(shape)
+            }
+            (Full, Full, Dimension(z)) => Ok(Shape([a, b, z])),
+            (Full, Auto, Dimension(z)) => Ok(Shape([a, len / a / z, z])),
+            (Full, Dimension(y), Full) => Ok(Shape([a, y, c])),
+            (Full, Dimension(y), Auto) => Ok(Shape([a, y, len / a / y])),
+            (Full, Dimension(y), Dimension(z)) => Ok(Shape([a, y, z])),
+            (Auto, Full, Dimension(z)) => Ok(Shape([len / b / z, b, z])),
+            (Auto, Dimension(y), Full) => Ok(Shape([len / y / c, y, c])),
+            (Auto, Dimension(y), Dimension(z)) => Ok(Shape([len / y / z, y, z])),
+            (Dimension(x), Full, Full) => Ok(Shape([x, b, c])),
+            (Dimension(x), Full, Auto) => Ok(Shape([x, b, len / x / b])),
+            (Dimension(x), Full, Dimension(z)) => Ok(Shape([x, b, z])),
+            (Dimension(x), Auto, Full) => Ok(Shape([x, len / x / c, c])),
+            (Dimension(x), Auto, Dimension(z)) => Ok(Shape([x, len / x / z, z])),
+            (Dimension(x), Dimension(y), Full) => Ok(Shape([x, y, c])),
+            (Dimension(x), Dimension(y), Auto) => Ok(Shape([x, y, len / x / y])),
+            (Dimension(x), Dimension(y), Dimension(z)) => Ok(Shape([x, y, z])),
+        }?;
+
+        if deduced.len() != len {
+            Err(TensorError::Size(deduced.len(), len))
+        } else {
+            Ok(deduced)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
     use wgpu::PowerPreference;
 
     use super::{Shape, TensorSlice};
@@ -327,7 +373,7 @@ mod tests {
         assert!((.., 256..512, ..).contiguous_bounds(x.shape).is_ok());
 
         let shape = Shape::new(4, 2, 3);
-        let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
+        let x = (0..shape.len()).map(|x| x as f32).collect_vec();
         let x = TensorCpu::from_data(&context, shape, x)?;
 
         let y: Vec<_> = x.as_slice((.., 1..2, 1..2))?.into();

@@ -12,7 +12,6 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{LayerFlags, Model, ModelBuilder, ModelState, Quantization},
-    tensor::{shape::Shape, TensorCpu, TensorExt},
     tokenizer::Tokenizer,
 };
 
@@ -95,25 +94,34 @@ async fn run(cli: Cli) -> Result<()> {
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
     let model = load_model(&context, model, cli.quant)?;
 
-    let prompt = "The Eiffel Tower is located in the city of";
-    let tokens = tokenizer.encode(prompt.as_bytes())?;
-    print!("{}", prompt);
+    let prompts = [
+        "The Eiffel Tower is located in the city of",
+        "The name of the capital of Italy is",
+        "The Space Needle is located in downtown",
+    ]
+    .repeat(10);
+    let mut tokens = prompts
+        .iter()
+        .map(|prompt| tokenizer.encode(prompt.as_bytes()).unwrap())
+        .collect_vec();
 
     // The model state should keep the same batch as input.
     // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
-    let state = ModelState::new(&context, model.info(), cli.batch);
-    let mask = context.tensor_from_data(Shape::new(1, 1, 1), vec![u32::MAX])?;
+    let state = ModelState::new(&context, model.info(), tokens.len());
 
-    let shape = model.input_shape(tokens.len(), 1);
-    // Note that for batch inference to work, the shape of the input tokens tensor should be `[B, T, 1]`, so we are repeating axis 0 here.
-    let tokens = TensorCpu::from_data(&context, shape, tokens)?.repeat(0, cli.batch);
-    let logits = model.run(&tokens, &mask, &state)?;
+    loop {
+        let logits = model.run(&mut tokens, &state).await?;
+        let probs = model.softmax(logits).await?;
+        for (index, probs) in probs.into_iter().enumerate().filter(|(_, v)| !v.is_empty()) {
+            let token = sample(probs.to_vec(), 0.5);
+            let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+            println!("{}{}", prompts[index], word);
+        }
 
-    let probs = model.softmax(&logits)?.split();
-    for probs in probs {
-        let token = sample(probs.to_vec(), 0.5);
-        let word = String::from_utf8(tokenizer.decode(&[token])?)?;
-        print!("{}", word);
+        let len: usize = tokens.iter().map(|v| v.len()).sum();
+        if len == 0 {
+            break;
+        }
     }
 
     Ok(())

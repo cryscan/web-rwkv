@@ -12,18 +12,17 @@ struct Cursor {
 
 @group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, A, 1]
 @group(0) @binding(1) var<uniform> view: View;                              // [C, 4, B] / [C, 5L, B]
-@group(0) @binding(2) var<storage, read> cursors: array<u32>;               // [B]
+@group(0) @binding(2) var<storage, read> stack: array<u32>;                 // [B]
 
 @group(0) @binding(3) var<storage, read> time_decay: array<vec4<f32>>;      // (C)
 @group(0) @binding(4) var<storage, read> time_first: array<vec4<f32>>;      // (C)
 
-@group(0) @binding(5) var<storage, read> x: array<vec4<f32>>;               // (1, A, C)
-@group(0) @binding(6) var<storage, read> k: array<vec4<f32>>;               // (1, A, C)
-@group(0) @binding(7) var<storage, read> v: array<vec4<f32>>;               // (1, A, C)
-@group(0) @binding(8) var<storage, read> r: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(5) var<storage, read> k: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(6) var<storage, read> v: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(7) var<storage, read> r: array<vec4<f32>>;               // (1, A, C)
 
-@group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (1, A, C)
-@group(0) @binding(10) var<storage, read_write> state: array<vec4<f32>>;    // (B, 4, C)
+@group(0) @binding(8) var<storage, read_write> x: array<vec4<f32>>;         // (1, A, C)
+@group(0) @binding(9) var<storage, read_write> state: array<vec4<f32>>;    // (B, 4, C)
 
 const BLOCK_SIZE: u32 = 128u;
 
@@ -46,17 +45,17 @@ fn compute_cursor(x: u32) -> Cursor {
 fn token_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
-    let batch = invocation_id.z;
-    let cursor = compute_cursor(cursors[batch]);
+    let batch = invocation_id.y;
+    let cursor = compute_cursor(stack[batch]);
 
-    if index >= stride || batch >= shape[2] {
+    if index >= stride {
         return;
     }
 
-    let xi = compute_index(batch, 0u, index);
-    let ai = compute_index(batch, 1u, index);
-    let bi = compute_index(batch, 2u, index);
-    let pi = compute_index(batch, 3u, index);
+    let xi = compute_index(cursor.batch, 0u, index);
+    let ai = compute_index(cursor.batch, 1u, index);
+    let bi = compute_index(cursor.batch, 2u, index);
+    let pi = compute_index(cursor.batch, 3u, index);
 
     state[xi] = x[(cursor.token + cursor.len - 1u) * stride + index];
 
@@ -75,7 +74,7 @@ fn token_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         var e2 = exp(ww - q);
 
         let rr = 1.0 / (1.0 + exp(-r[bti]));
-        output[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
+        x[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
 
         ww = time_decay[index] + pp;
         q = max(ww, kk);

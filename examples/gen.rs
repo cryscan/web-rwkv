@@ -13,13 +13,13 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{LayerFlags, Model, ModelBuilder, ModelState, Quantization},
-    tensor::shape::Shape,
     tokenizer::Tokenizer,
 };
 
-fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
+fn sample(probs: &[f32], top_p: f32) -> u16 {
     let sorted = probs
-        .into_iter()
+        .iter()
+        .copied()
         .enumerate()
         .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
         .scan((0, 0.0), |(_, cum), (id, x)| {
@@ -97,27 +97,22 @@ async fn run(cli: Cli) -> Result<()> {
     let model = load_model(&context, model, cli.quant)?;
 
     let prompt = "The Eiffel Tower is located in the city of";
-    let mut tokens = tokenizer.encode(prompt.as_bytes())?;
+    let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
     print!("{}", prompt);
 
     let state = ModelState::new(&context, model.info(), 1);
-    let mask = context.tensor_from_data(Shape::new(1, 1, 1), vec![u32::MAX])?;
 
     let mut start = Instant::now();
     let num_tokens = 100;
     for index in 0..=num_tokens {
-        let shape = model.input_shape(tokens.len(), 1);
-        let logits = model.run(
-            &context.tensor_from_data(shape, tokens.clone())?,
-            &mask,
-            &state,
-        )?;
-        let probs = model.softmax(&logits)?.to_vec();
-        let token = sample(probs, 0.5);
-        let word = String::from_utf8(tokenizer.decode(&[token])?)?;
-        print!("{}", word);
-
-        tokens = vec![token];
+        let logits = model.run(&mut tokens, &state).await?;
+        let probs = model.softmax(logits).await?;
+        if !probs[0].is_empty() {
+            let token = sample(&probs[0], 0.5);
+            let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+            print!("{}", word);
+            tokens = vec![vec![token]];
+        }
 
         if index == 0 {
             start = Instant::now();
