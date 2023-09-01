@@ -24,6 +24,13 @@ impl<K, V> ResourceCache<K, V>
 where
     K: PartialEq + Eq + Hash,
 {
+    pub fn new(max_count: usize) -> Self {
+        Self {
+            max_count,
+            map: Default::default(),
+        }
+    }
+
     pub fn query(&self, key: &K) -> Option<Arc<V>> {
         let map = self.map.read().unwrap();
         map.get(key).cloned().map(|(v, _)| v)

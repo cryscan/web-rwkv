@@ -13,7 +13,6 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{LayerFlags, Model, ModelBuilder, ModelState, Quantization},
-    tensor::shape::Shape,
     tokenizer::Tokenizer,
 };
 
@@ -30,9 +29,10 @@ struct Sampler {
 }
 
 impl Sampler {
-    pub fn sample(&self, probs: Vec<f32>) -> u16 {
+    pub fn sample(&self, probs: &[f32]) -> u16 {
         let sorted: Vec<_> = probs
-            .into_iter()
+            .iter()
+            .copied()
             .enumerate()
             .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
             .scan((0, 0.0, 0.0), |(_, cum, _), (id, x)| {
@@ -129,24 +129,24 @@ async fn run(cli: Cli) -> Result<()> {
     let user = "User";
     let bot = "Assistant";
     let prompt = format!("\n\n{user}: Hi!\n\n{bot}: Hello! I'm an AI assistant trained by Peng Bo! I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\n");
-    let mut tokens = tokenizer.encode(prompt.as_bytes())?;
+    let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
 
     print!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting");
     print!("{}", prompt);
     std::io::stdout().flush()?;
 
-    let mask = context.tensor_from_data(Shape::new(1, 1, 1), vec![u32::MAX])?;
-
     let state = ModelState::new(&context, model.info(), 1);
-    let shape = model.input_shape(tokens.len(), 1);
-    let _ = model.run(
-        &context.tensor_from_data(shape, tokens.clone())?,
-        &mask,
-        &state,
-    )?;
-    tokens.clear();
 
-    let mut backed_state = state.clone().into();
+    // run initial prompt
+    loop {
+        let logits = model.run(&mut tokens, &state).await?;
+        if !logits[0].is_empty() {
+            break;
+        }
+    }
+    tokens[0].clear();
+
+    let mut backed = state.back();
     let mut last_user_text = String::from("Hi!");
     let mut last_tokens = vec![];
 
@@ -166,11 +166,11 @@ async fn run(cli: Cli) -> Result<()> {
         if &user_text == "-" {
             break;
         } else if &user_text == "+" {
-            state.load(&backed_state)?;
+            state.load(&backed)?;
             user_text = last_user_text.clone();
             tokens = last_tokens.clone();
         } else {
-            backed_state = state.clone().into();
+            backed = state.back();
             last_user_text = user_text.clone();
             last_tokens = tokens.clone();
         }
@@ -179,35 +179,30 @@ async fn run(cli: Cli) -> Result<()> {
         std::io::stdout().flush()?;
 
         let prompt = format!("{user}: {user_text}\n\n{bot}:");
-        tokens.append(&mut tokenizer.encode(prompt.as_bytes())?);
+        tokens[0].append(&mut tokenizer.encode(prompt.as_bytes())?);
 
         loop {
-            let shape = model.input_shape(tokens.len(), 1);
-            let mut logits = model
-                .run(
-                    &context.tensor_from_data(shape, tokens.clone())?,
-                    &mask,
-                    &state,
-                )?
-                .to_vec();
-            logits[0] = f32::NEG_INFINITY;
+            let mut logits = loop {
+                let logits = model.run(&mut tokens, &state).await?;
+                if !logits[0].is_empty() {
+                    break logits;
+                }
+            };
+            logits[0][0] = f32::NEG_INFINITY;
             for (&token, &count) in occurrences.iter() {
                 let penalty = sampler.presence_penalty + count as f32 * sampler.frequency_penalty;
-                logits[token as usize] -= penalty;
+                logits[0][token as usize] -= penalty;
             }
 
-            let shape = model.head_shape(1);
-            let probs = model
-                .softmax(&context.tensor_from_data(shape, logits.clone())?)?
-                .to_vec();
-            let token = sampler.sample(probs);
+            let probs = model.softmax(logits).await?;
+            let token = sampler.sample(&probs[0]);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;
 
             model_text += &word;
             print!("{}", word);
             std::io::stdout().flush()?;
 
-            tokens = vec![token];
+            tokens[0] = vec![token];
             let count = occurrences.get(&token).unwrap_or(&1);
             occurrences.insert(token, *count);
 
