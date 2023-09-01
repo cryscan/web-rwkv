@@ -100,16 +100,17 @@ async fn run(cli: Cli) -> Result<()> {
         "The name of the capital of Italy is",
         "The Space Needle is located in downtown",
         "人们发现",
-    ]
-    .repeat(5);
+    ];
+    let mut prompts = prompts
+        .to_vec()
+        .repeat((cli.batch + prompts.len() - 1) / prompts.len())[..cli.batch]
+        .into_iter()
+        .map(|str| String::from_str(str).unwrap())
+        .collect_vec();
     let mut tokens = prompts
         .clone()
         .iter()
         .map(|prompt| tokenizer.encode(prompt.as_bytes()).unwrap())
-        .collect_vec();
-    let mut prompts = prompts
-        .into_iter()
-        .map(|str| String::from_str(str).unwrap())
         .collect_vec();
 
     // The model state should keep the same batch as input.
