@@ -33,11 +33,11 @@ fn compute_index(batch: u32, token: u32, index: u32) -> u32 {
 }
 
 fn compute_cursor(x: u32) -> Cursor {
-    let unpacked = vec4<u32>(unpack4x8unorm(x) * 255.0);
+    // let unpacked = vec4<u32>(unpack4x8unorm(x) * 255.0 + 0.5);
     var cursor: Cursor;
-    cursor.batch = unpacked.x;
-    cursor.token = (unpacked.z << 8u) | unpacked.y;
-    cursor.len = unpacked.w;
+    cursor.batch = x & 0xffu;
+    cursor.token = (x >> 8u) & 0xffffu;
+    cursor.len = (x >> 24u) & 0xffu;
     return cursor;
 }
 
