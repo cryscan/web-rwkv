@@ -650,7 +650,7 @@ impl<'a, T: Scalar> TensorGpu<'a, T, ReadWrite> {
 pub struct TensorStack<'a, 'b, T: Scalar> {
     pub tensor: TensorCpu<'a, 'b, T>,
     pub cursors: Vec<Cursor>,
-    pub redirect: Vec<Option<usize>>,
+    // pub redirect: Vec<Option<usize>>,
 }
 
 impl<'a, 'b, T: Scalar> TensorStack<'a, 'b, T> {
@@ -683,13 +683,13 @@ impl<'a, 'b, T: Scalar> TryFrom<Vec<TensorCpu<'a, 'b, T>>> for TensorStack<'a, '
             .try_for_each(|batch| batch.check_shape(Shape::new(shape[0], batch.shape[1], 1)))?;
 
         // erase empty batches and pack them tightly
-        let mut redirect = vec![None; value.len()];
-        value
-            .iter()
-            .enumerate()
-            .filter_map(|(index, tensor)| (!tensor.is_empty()).then_some(index))
-            .enumerate()
-            .for_each(|(packed, index)| redirect[index] = Some(packed));
+        // let mut redirect = vec![None; value.len()];
+        // value
+        //     .iter()
+        //     .enumerate()
+        //     .filter_map(|(index, tensor)| (!tensor.is_empty()).then_some(index))
+        //     .enumerate()
+        //     .for_each(|(packed, index)| redirect[index] = Some(packed));
 
         let cursors = value
             .iter()
@@ -723,7 +723,7 @@ impl<'a, 'b, T: Scalar> TryFrom<Vec<TensorCpu<'a, 'b, T>>> for TensorStack<'a, '
                 phantom: PhantomData,
             },
             cursors,
-            redirect,
+            // redirect,
         })
     }
 }

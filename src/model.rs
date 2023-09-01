@@ -621,7 +621,7 @@ impl std::fmt::Display for ModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ModelError::BatchSize(batch, maximum) => {
-                write!(f, "input batch size {batch} too large (maximum {maximum})")
+                write!(f, "input batch size {batch} not match {maximum}")
             }
         }
     }
@@ -713,12 +713,11 @@ impl<'a, 'b> Model<'a, 'b> {
         tokens: &mut Vec<Vec<u16>>,
         state: &ModelState<'a>,
     ) -> Result<Vec<Vec<f32>>> {
-        let num_batch = tokens.len();
         let num_token: usize = tokens.iter().map(Vec::len).sum();
         let max_batch = state.shape()[2];
 
-        if num_batch > max_batch {
-            return Err(ModelError::BatchSize(num_batch, max_batch).into());
+        if tokens.len() != max_batch {
+            return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
         }
         if num_token == 0 {
             return Ok(vec![vec![]; max_batch]);
@@ -804,7 +803,6 @@ impl<'a, 'b> Model<'a, 'b> {
             .enumerate()
             .map(|(index, cursor)| -> Result<TensorOp<'_>, TensorError> {
                 redirect[cursor.batch] = Some(index);
-
                 let token = cursor.token + cursor.len - 1;
                 let input = buffer.ffn_x.as_view((.., token, ..))?;
                 let output = buffer.head_x.as_view((.., .., index))?;
