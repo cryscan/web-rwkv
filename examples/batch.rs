@@ -8,6 +8,7 @@ use std::{
     fs::File,
     io::{BufReader, Read},
     path::PathBuf,
+    str::FromStr,
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
@@ -98,29 +99,33 @@ async fn run(cli: Cli) -> Result<()> {
         "The Eiffel Tower is located in the city of",
         "The name of the capital of Italy is",
         "The Space Needle is located in downtown",
+        "人们发现",
     ]
-    .repeat(10);
+    .repeat(5);
     let mut tokens = prompts
+        .clone()
         .iter()
         .map(|prompt| tokenizer.encode(prompt.as_bytes()).unwrap())
+        .collect_vec();
+    let mut prompts = prompts
+        .into_iter()
+        .map(|str| String::from_str(str).unwrap())
         .collect_vec();
 
     // The model state should keep the same batch as input.
     // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
     let state = ModelState::new(&context, model.info(), tokens.len());
 
-    loop {
+    let num_tokens = 100;
+    for _ in 0..=num_tokens {
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
         for (index, probs) in probs.into_iter().enumerate().filter(|(_, v)| !v.is_empty()) {
             let token = sample(probs.to_vec(), 0.5);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;
-            println!("{}{}", prompts[index], word);
-        }
-
-        let len: usize = tokens.iter().map(|v| v.len()).sum();
-        if len == 0 {
-            break;
+            tokens[index] = vec![token];
+            prompts[index].push_str(&word);
+            println!("{}: {}", index, prompts[index]);
         }
     }
 
