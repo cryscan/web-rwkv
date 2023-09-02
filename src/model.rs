@@ -747,7 +747,8 @@ impl<'a, 'b> Model<'a, 'b> {
             .collect_vec()
             .try_into()?;
 
-        let buffer = self.request_softmax(max_batch);
+        let num_batch = input.shape()[2];
+        let buffer = self.request_softmax(num_batch);
         buffer.softmax.load(&input)?;
 
         let op = TensorOp::softmax(&buffer.softmax)?;
@@ -764,7 +765,7 @@ impl<'a, 'b> Model<'a, 'b> {
         encoder.copy_tensor(&buffer.softmax, &buffer.map)?;
         self.context.queue.submit(Some(encoder.finish()));
 
-        let output = async {
+        let mut output = async {
             TensorCpu::from(buffer.map.clone())
                 .split(2)
                 .expect("split buffer map")
@@ -777,7 +778,7 @@ impl<'a, 'b> Model<'a, 'b> {
         let mut probs = vec![vec![]; max_batch];
         for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
             if let Some(redirect) = redirect {
-                *probs = output[redirect].clone();
+                std::mem::swap(probs, &mut output[redirect]);
             }
         }
 
