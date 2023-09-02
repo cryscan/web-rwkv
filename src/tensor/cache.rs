@@ -1,14 +1,14 @@
 use std::{
     collections::HashMap,
     hash::Hash,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex},
 };
 
 #[allow(clippy::type_complexity)]
 #[derive(Debug)]
 pub struct ResourceCache<K, V> {
     max_count: usize,
-    map: RwLock<HashMap<K, (Arc<V>, usize)>>,
+    map: Mutex<HashMap<K, (Arc<V>, usize)>>,
 }
 
 impl<K, V> Default for ResourceCache<K, V> {
@@ -31,22 +31,12 @@ where
         }
     }
 
-    pub fn query(&self, key: &K) -> Option<Arc<V>> {
-        let map = self.map.read().unwrap();
-        map.get(key).cloned().map(|(v, _)| v)
-    }
-
-    pub fn request(&self, key: K, op: impl FnOnce() -> V) -> Arc<V> {
-        let buffer = self.query(&key).unwrap_or_else(|| Arc::new(op()));
-
-        let mut map = self.map.write().unwrap();
-        map.insert(key, (buffer.clone(), 0));
-
-        map.retain(|_, (_, count)| {
-            *count += 1;
-            *count <= self.max_count
-        });
-
-        buffer
+    pub fn request(&self, key: K, f: impl FnOnce() -> V) -> Arc<V> {
+        let mut map = self.map.lock().unwrap();
+        let (value, count) = map.remove(&key).unwrap_or_else(|| (Arc::new(f()), 0));
+        if count < self.max_count {
+            map.insert(key, (value.clone(), count + 1));
+        }
+        value
     }
 }

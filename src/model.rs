@@ -37,6 +37,8 @@ pub struct Model<'a, 'b> {
     #[getter(skip)]
     buffer_cache: ResourceCache<(usize, usize), ModelBuffer<'a>>,
     #[getter(skip)]
+    softmax_cache: ResourceCache<usize, SoftmaxBuffer<'a>>,
+    #[getter(skip)]
     stack_cache: ResourceCache<usize, TensorGpu<'a, u32, ReadWrite>>,
 }
 
@@ -180,7 +182,6 @@ pub struct ModelBuffer<'a> {
 
     head_x: TensorGpu<'a, f32, ReadWrite>,
     head_o: TensorGpu<'a, f32, ReadWrite>,
-    softmax: TensorGpu<'a, f32, ReadWrite>,
 
     map: TensorGpu<'a, f32, ReadBack>,
 }
@@ -188,7 +189,6 @@ pub struct ModelBuffer<'a> {
 impl<'a> ModelBuffer<'a> {
     pub fn new(context: &'a Context, info: &ModelInfo, max_batch: usize, num_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1);
-        // let stack_shape = Shape::new(max_batch, 1, 1);
         let cursors_shape = Shape::new(num_token, 1, 1);
         let hidden_shape = Shape::new(info.num_emb << 2, num_token, 1);
         let head_shape = Shape::new(info.num_emb, 1, max_batch);
@@ -213,7 +213,6 @@ impl<'a> ModelBuffer<'a> {
             ffn_r: context.init_tensor(shape),
             head_x: context.init_tensor(head_shape),
             head_o: context.init_tensor(output_shape),
-            softmax: context.init_tensor(output_shape),
             map: context.init_tensor(output_shape),
         }
     }
@@ -226,6 +225,22 @@ impl<'a> ModelBuffer<'a> {
     #[inline]
     pub fn num_token(&self) -> usize {
         self.cursors.shape()[1]
+    }
+}
+
+#[derive(Debug)]
+pub struct SoftmaxBuffer<'a> {
+    softmax: TensorGpu<'a, f32, ReadWrite>,
+    map: TensorGpu<'a, f32, ReadBack>,
+}
+
+impl<'a> SoftmaxBuffer<'a> {
+    pub fn new(context: &'a Context, info: &ModelInfo, max_batch: usize) -> Self {
+        let shape = Shape::new(info.num_vocab, 1, max_batch);
+        Self {
+            softmax: context.init_tensor(shape),
+            map: context.init_tensor(shape),
+        }
     }
 }
 
@@ -662,6 +677,7 @@ impl<'a, 'b> ModelBuilder<'a, 'b> {
             token_chunk_size,
             tensor,
             buffer_cache: ResourceCache::new(2),
+            softmax_cache: ResourceCache::new(2),
             stack_cache: Default::default(),
         })
     }
@@ -689,6 +705,12 @@ impl<'a, 'b> Model<'a, 'b> {
     fn request_buffer(&self, max_batch: usize, num_token: usize) -> Arc<ModelBuffer> {
         self.buffer_cache.request((max_batch, num_token), || {
             ModelBuffer::new(self.context, &self.info, max_batch, num_token)
+        })
+    }
+
+    fn request_softmax(&self, max_batch: usize) -> Arc<SoftmaxBuffer> {
+        self.softmax_cache.request(max_batch, || {
+            SoftmaxBuffer::new(self.context, &self.info, max_batch)
         })
     }
 
@@ -725,8 +747,7 @@ impl<'a, 'b> Model<'a, 'b> {
             .collect_vec()
             .try_into()?;
 
-        let num_batch = input.shape()[2];
-        let buffer = self.request_buffer(num_batch, num_batch);
+        let buffer = self.request_softmax(max_batch);
         buffer.softmax.load(&input)?;
 
         let op = TensorOp::softmax(&buffer.softmax)?;
