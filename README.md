@@ -2,7 +2,14 @@
 [![crates.io](https://img.shields.io/crates/v/web-rwkv)](https://crates.io/crates/web-rwkv)
 [![docs.rs](https://docs.rs/web-rwkv/badge.svg)](https://docs.rs/web-rwkv)
 
-This is an implementation of the [language model of RWKV](https://github.com/BlinkDL/RWKV-LM) in pure WebGPU.
+This is an inference engine for the [language model of RWKV](https://github.com/BlinkDL/RWKV-LM) implemented in pure WebGPU.
+
+## Features
+- No dependencies on CUDA/Python.
+- Support Nvidia/AMD/Intel GPUs, including integrated GPUs.
+- Batched inference.
+- Int8 quantization.
+- Very fast.
 
 ## Compile and Run
 1. [Install Rust](https://rustup.rs/).
@@ -19,7 +26,23 @@ $ chat --model /path/to/model
 To use in your own rust project, simply add `web-rwkv = "0.2"` as a dependency in your `Cargo.toml`.
 Check examples on how to create the environment, the tokenizer and how to run the model.
 
+### Explanation of Batched Inference
+Since version v0.2.4, the engine supports batched inference, i.e., inference of a batch of prompts (with different length) in parallel.
+This is achieved by a modified `WKV` kernel.
+
+When building the model, the user specifies `token_chunk_size` (default: 32, but for powerful GPUs this could be much higher), which is the maximum number of tokens the engine could process in one `run` call.
+
+After creating the model, the user creates a `ModelState` with `max_batch` specified.
+This means that there are `max_batch` slots that could consume the inputs in parallel.
+
+Before calling `run()`, the user fills each slot with some tokens as prompt.
+If a slot is empty, no inference will be run for it.
+
+After calling `run()`, some (but may not be all) input tokens are consumed, and `logits` appears in their corresponding returned slots if the inference of that slot is finished during this run.
+Since there are only `token_chunk_size` tokens are processed during each `run()` call, there may be none of `logits` appearing in the results.
+
 ## Convert Models
+*You must download the model and put in `assets/models` before running if you are building from source.*
 You can now download the coverted models [here](https://huggingface.co/cgisky/RWKV-safetensors-fp16).
 
 You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-4-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
