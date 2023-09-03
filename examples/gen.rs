@@ -108,8 +108,8 @@ async fn run(cli: Cli) -> Result<()> {
     let num_tokens = 100;
     for index in 0..=num_tokens {
         instant = Instant::now();
-        let logits = model.run(&mut tokens, &state).await?;
-        let probs = model.softmax(logits).await?;
+        let logits = model.run(&mut tokens, &state)?;
+        let probs = model.softmax(logits)?;
         duration = match index {
             0 => Duration::default(),
             _ => duration + instant.elapsed(),

@@ -718,7 +718,7 @@ impl<'a, 'b> Model<'a, 'b> {
     }
 
     /// Softmax of the input tensors.
-    pub async fn softmax(&'a self, input: Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>> {
+    pub fn softmax(&'a self, input: Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>> {
         let max_batch = input.len();
 
         let mut redirect = vec![None; max_batch];
@@ -756,15 +756,12 @@ impl<'a, 'b> Model<'a, 'b> {
         encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
         self.context.queue.submit(Some(encoder.finish()));
 
-        let mut output = async {
-            TensorCpu::from(softmax.map.clone())
-                .split(2)
-                .expect("split buffer map")
-                .into_iter()
-                .map(|tensor| tensor.to_vec())
-                .collect_vec()
-        }
-        .await;
+        let mut output = TensorCpu::from(softmax.map.clone())
+            .split(2)
+            .expect("split buffer map")
+            .into_iter()
+            .map(|tensor| tensor.to_vec())
+            .collect_vec();
 
         let mut probs = vec![vec![]; max_batch];
         for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
@@ -779,7 +776,7 @@ impl<'a, 'b> Model<'a, 'b> {
     /// Run the model for a batch of tokens as input.
     /// The length of `tokens` must match the number of batches in `state`.
     /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
-    pub async fn run(
+    pub fn run(
         &'a self,
         tokens: &mut Vec<Vec<u16>>,
         state: &ModelState<'a>,
@@ -815,7 +812,7 @@ impl<'a, 'b> Model<'a, 'b> {
         }
 
         let (buffer, redirect) = self.run_internal(inputs, state, last)?;
-        let output = async { TensorCpu::from(buffer.map.clone()) }.await;
+        let output = TensorCpu::from(buffer.map.clone());
 
         Ok(redirect
             .into_iter()

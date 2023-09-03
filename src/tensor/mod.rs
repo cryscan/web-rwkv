@@ -1,4 +1,8 @@
-use std::{borrow::Cow, marker::PhantomData, sync::Arc};
+use std::{
+    borrow::Cow,
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+};
 
 use itertools::Itertools;
 use web_rwkv_derive::Kind;
@@ -743,6 +747,60 @@ impl<'a, 'b, T: Scalar> TryFrom<Vec<TensorCpu<'a, 'b, T>>> for TensorStack<'a, '
             cursors,
             // redirect,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TensorBack<'a, 'b, T: Scalar> {
+    map: TensorGpu<'a, T, ReadBack>,
+    mapped: Arc<Mutex<bool>>,
+    phantom: PhantomData<&'b T>,
+}
+
+impl<'a, 'b, T: Scalar> TensorBack<'a, 'b, T> {
+    pub fn new(map: TensorGpu<'a, T, ReadBack>) -> Self {
+        Self {
+            map,
+            mapped: Arc::new(Mutex::new(false)),
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, 'b, T: Scalar> std::future::Future for TensorBack<'a, 'b, T> {
+    type Output = TensorCpu<'a, 'b, T>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let TensorGpu {
+            context,
+            shape,
+            data: TensorBuffer { buffer, .. },
+            ..
+        } = self.map.clone();
+        let mut mapped = self.mapped.lock().unwrap();
+        let slice = buffer.slice(..);
+
+        if *mapped {
+            let data = {
+                let map = slice.get_mapped_range();
+                Vec::from(bytemuck::cast_slice(&map))
+            };
+            buffer.unmap();
+            std::task::Poll::Ready(TensorCpu {
+                context,
+                shape,
+                data: Cow::from(data),
+                phantom: PhantomData,
+            })
+        } else {
+            let waker = cx.waker().clone();
+            slice.map_async(MapMode::Read, move |_| waker.wake());
+            *mapped = true;
+            std::task::Poll::Pending
+        }
     }
 }
 

@@ -119,8 +119,8 @@ async fn run(cli: Cli) -> Result<()> {
 
     let num_tokens = 100;
     for _ in 0..=num_tokens {
-        let logits = model.run(&mut tokens, &state).await?;
-        let probs = model.softmax(logits).await?;
+        let logits = model.run(&mut tokens, &state)?;
+        let probs = model.softmax(logits)?;
         for (index, probs) in probs.into_iter().enumerate().filter(|(_, v)| !v.is_empty()) {
             let token = sample(probs.to_vec(), 0.5);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;

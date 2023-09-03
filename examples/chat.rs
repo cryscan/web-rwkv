@@ -139,7 +139,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     // run initial prompt
     loop {
-        let logits = model.run(&mut tokens, &state).await?;
+        let logits = model.run(&mut tokens, &state)?;
         if !logits[0].is_empty() {
             break;
         }
@@ -183,7 +183,7 @@ async fn run(cli: Cli) -> Result<()> {
 
         loop {
             let mut logits = loop {
-                let logits = model.run(&mut tokens, &state).await?;
+                let logits = model.run(&mut tokens, &state)?;
                 if !logits[0].is_empty() {
                     break logits;
                 }
@@ -194,7 +194,7 @@ async fn run(cli: Cli) -> Result<()> {
                 logits[0][token as usize] -= penalty;
             }
 
-            let probs = model.softmax(logits).await?;
+            let probs = model.softmax(logits)?;
             let token = sampler.sample(&probs[0]);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;
 
