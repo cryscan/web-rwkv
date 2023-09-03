@@ -8,7 +8,7 @@ use std::{
     fs::File,
     io::{BufReader, Read, Write},
     path::PathBuf,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
@@ -102,28 +102,28 @@ async fn run(cli: Cli) -> Result<()> {
 
     let state = ModelState::new(&context, model.info(), 1);
 
-    let mut start = Instant::now();
+    let mut instant;
+    let mut duration = Duration::default();
+
     let num_tokens = 100;
     for index in 0..=num_tokens {
+        instant = Instant::now();
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
+        duration = match index {
+            0 => Duration::default(),
+            _ => duration + instant.elapsed(),
+        };
+
         if !probs[0].is_empty() {
             let token = sample(&probs[0], 0.5);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;
             print!("{}", word);
-            tokens = vec![vec![token]];
-        }
-
-        if index == 0 {
-            start = Instant::now();
+            tokens[0] = vec![token];
         }
     }
 
-    println!(
-        "\n{} tokens: {} mills",
-        num_tokens,
-        start.elapsed().as_millis()
-    );
+    println!("\n{} tokens: {} mills", num_tokens, duration.as_millis());
     std::io::stdout().flush()?;
 
     Ok(())
