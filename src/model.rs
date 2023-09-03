@@ -37,7 +37,7 @@ pub struct Model<'a, 'b> {
     #[getter(skip)]
     buffer_cache: ResourceCache<(usize, usize), ModelBuffer<'a>>,
     #[getter(skip)]
-    softmax_cache: ResourceCache<usize, SoftmaxBuffer<'a>>,
+    softmax_cache: ResourceCache<usize, Softmax<'a>>,
     #[getter(skip)]
     stack_cache: ResourceCache<usize, TensorGpu<'a, u32, ReadWrite>>,
 }
@@ -160,7 +160,7 @@ struct Head<'a> {
 
 /// Runtime buffers.
 #[derive(Debug)]
-pub struct ModelBuffer<'a> {
+struct ModelBuffer<'a> {
     cursors: TensorGpu<'a, u32, ReadWrite>,
     input: TensorGpu<'a, f32, ReadWrite>,
 
@@ -191,8 +191,8 @@ impl<'a> ModelBuffer<'a> {
         let shape = Shape::new(info.num_emb, num_token, 1);
         let cursors_shape = Shape::new(num_token, 1, 1);
         let hidden_shape = Shape::new(info.num_emb << 2, num_token, 1);
-        let head_shape = Shape::new(info.num_emb, 1, max_batch);
-        let output_shape = Shape::new(info.num_vocab, 1, max_batch);
+        let head_shape = Shape::new(info.num_emb, max_batch, 1);
+        let output_shape = Shape::new(info.num_vocab, max_batch, 1);
 
         Self {
             cursors: context.init_tensor(cursors_shape),
@@ -216,29 +216,19 @@ impl<'a> ModelBuffer<'a> {
             map: context.init_tensor(output_shape),
         }
     }
-
-    #[inline]
-    pub fn max_batch(&self) -> usize {
-        self.map.shape()[2]
-    }
-
-    #[inline]
-    pub fn num_token(&self) -> usize {
-        self.cursors.shape()[1]
-    }
 }
 
 #[derive(Debug)]
-pub struct SoftmaxBuffer<'a> {
-    softmax: TensorGpu<'a, f32, ReadWrite>,
+struct Softmax<'a> {
+    buffer: TensorGpu<'a, f32, ReadWrite>,
     map: TensorGpu<'a, f32, ReadBack>,
 }
 
-impl<'a> SoftmaxBuffer<'a> {
+impl<'a> Softmax<'a> {
     pub fn new(context: &'a Context, info: &ModelInfo, max_batch: usize) -> Self {
         let shape = Shape::new(info.num_vocab, 1, max_batch);
         Self {
-            softmax: context.init_tensor(shape),
+            buffer: context.init_tensor(shape),
             map: context.init_tensor(shape),
         }
     }
@@ -708,9 +698,10 @@ impl<'a, 'b> Model<'a, 'b> {
         })
     }
 
-    fn request_softmax(&self, max_batch: usize) -> Arc<SoftmaxBuffer> {
-        self.softmax_cache.request(max_batch, || {
-            SoftmaxBuffer::new(self.context, &self.info, max_batch)
+    #[inline]
+    fn request_softmax(&self, num_batch: usize) -> Arc<Softmax> {
+        self.softmax_cache.request(num_batch, || {
+            Softmax::new(self.context, &self.info, num_batch)
         })
     }
 
@@ -748,10 +739,10 @@ impl<'a, 'b> Model<'a, 'b> {
             .try_into()?;
 
         let num_batch = input.shape()[2];
-        let buffer = self.request_softmax(num_batch);
-        buffer.softmax.load(&input)?;
+        let softmax = self.request_softmax(num_batch);
+        softmax.buffer.load(&input)?;
 
-        let op = TensorOp::softmax(&buffer.softmax)?;
+        let op = TensorOp::softmax(&softmax.buffer)?;
 
         let mut encoder = self
             .context
@@ -762,11 +753,11 @@ impl<'a, 'b> Model<'a, 'b> {
         pass.execute_tensor_op(&op);
         drop(pass);
 
-        encoder.copy_tensor(&buffer.softmax, &buffer.map)?;
+        encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
         self.context.queue.submit(Some(encoder.finish()));
 
         let mut output = async {
-            TensorCpu::from(buffer.map.clone())
+            TensorCpu::from(softmax.map.clone())
                 .split(2)
                 .expect("split buffer map")
                 .into_iter()
@@ -806,7 +797,7 @@ impl<'a, 'b> Model<'a, 'b> {
         // we only infer at most `token_chunk_size` tokens at a time
         let mut num_token = num_token.min(self.token_chunk_size);
         let mut inputs = vec![vec![]; max_batch];
-        let mut last_batch = None;
+        let mut last = None;
 
         // take `num_token` tokens out of all the inputs and put into `input`
         for (index, (batch, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
@@ -814,7 +805,7 @@ impl<'a, 'b> Model<'a, 'b> {
             num_token -= mid;
 
             let (head, tail) = batch.split_at(mid);
-            last_batch = (!tail.is_empty()).then_some(index);
+            last = (!tail.is_empty()).then_some(index);
             *input = head.to_vec();
             *batch = tail.to_vec();
 
@@ -823,14 +814,14 @@ impl<'a, 'b> Model<'a, 'b> {
             }
         }
 
-        let (buffer, redirect) = self.run_internal(inputs, state, last_batch)?;
+        let (buffer, redirect) = self.run_internal(inputs, state, last)?;
         let output = async { TensorCpu::from(buffer.map.clone()) }.await;
 
         Ok(redirect
             .into_iter()
             .map(|index| match index {
                 Some(index) => output
-                    .as_slice((.., .., index))
+                    .as_slice((.., index, ..))
                     .expect("this never happens")
                     .to_vec(),
                 None => vec![],
@@ -842,7 +833,7 @@ impl<'a, 'b> Model<'a, 'b> {
         &self,
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
-        last_batch: Option<usize>,
+        last: Option<usize>,
     ) -> Result<(Arc<ModelBuffer>, Vec<Option<usize>>)> {
         let context = self.context;
         let tensor = &self.tensor;
@@ -875,20 +866,57 @@ impl<'a, 'b> Model<'a, 'b> {
 
         // collect batch output copy commands for later
         let mut redirect = vec![None; max_batch];
-        let head_ops: Vec<_> = input
+        let headers = input
             .cursors
             .iter()
             .filter(|cursor| cursor.len > 0)
-            .filter(|cursor| !last_batch.is_some_and(|index| cursor.batch == index))
+            .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
             .enumerate()
-            .map(|(index, cursor)| -> Result<TensorOp<'_>, TensorError> {
+            .map(|(index, cursor)| {
                 redirect[cursor.batch] = Some(index);
-                let token = cursor.token + cursor.len - 1;
-                let input = buffer.ffn_x.as_view((.., token, ..))?;
-                let output = buffer.head_x.as_view((.., .., index))?;
-                TensorOp::blit(input, output)
+                cursor.token + cursor.len - 1
             })
-            .try_collect()?;
+            .collect_vec();
+        let num_header = headers.len();
+
+        // group copies
+        let (head_ops, head_x) = if num_token == max_batch {
+            (vec![], &buffer.ffn_x)
+        } else {
+            let mut start = 0;
+            let mut end = 1;
+            let mut ops = vec![];
+            while end <= headers.len() {
+                if end == headers.len() || headers[end - 1] + 1 != headers[end] {
+                    let first = headers[start];
+                    let last = headers[end - 1];
+                    assert_eq!(last - first + 1, end - start);
+
+                    let input = buffer.ffn_x.as_view((.., first..=last, ..))?;
+                    let output = buffer.head_x.as_view((.., start..end, ..))?;
+                    ops.push(TensorOp::blit(input, output)?);
+
+                    start = end;
+                }
+                end += 1;
+            }
+            (ops, &buffer.head_x)
+        };
+
+        // let head_ops: Vec<_> = input
+        //     .cursors
+        //     .iter()
+        //     .filter(|cursor| cursor.len > 0)
+        //     .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
+        //     .enumerate()
+        //     .map(|(index, cursor)| -> Result<TensorOp<'_>, TensorError> {
+        //         redirect[cursor.batch] = Some(index);
+        //         let token = cursor.token + cursor.len - 1;
+        //         let input = buffer.ffn_x.as_view((.., token, ..))?;
+        //         let output = buffer.head_x.as_view((.., .., index))?;
+        //         TensorOp::blit(input, output)
+        //     })
+        //     .try_collect()?;
 
         let stack_host =
             TensorCpu::from_data(context, stack.shape(), input.cursors.clone().into_stack())?;
@@ -1035,14 +1063,14 @@ impl<'a, 'b> Model<'a, 'b> {
         let mut ops = vec![TensorOp::layer_norm(
             &tensor.head.layer_norm.w,
             &tensor.head.layer_norm.b,
-            &buffer.head_x,
+            head_x,
         )?];
 
         for (chunk, matrix) in tensor.head.w.iter().enumerate() {
             let start = chunk * self.head_chunk_size;
             let end = start + self.head_chunk_size;
-            let input = buffer.head_x.as_view((.., .., ..head_ops.len()))?;
-            let output = buffer.head_o.as_view((start..end, .., ..head_ops.len()))?;
+            let input = head_x.as_view((.., ..num_header, ..))?;
+            let output = buffer.head_o.as_view((start..end, ..num_header, ..))?;
             ops.push(TensorOp::matmul(matrix, input, output)?);
         }
 
