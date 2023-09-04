@@ -238,8 +238,8 @@ impl<'a> Softmax<'a> {
 pub struct ModelState<'a>(pub TensorGpu<'a, f32, ReadWrite>);
 
 impl<'a> ModelState<'a> {
-    pub fn new(context: &'a Context, info: &ModelInfo, num_batches: usize) -> Self {
-        let data = (0..num_batches)
+    pub fn new(context: &'a Context, info: &ModelInfo, max_batch: usize) -> Self {
+        let data = (0..max_batch)
             .map(|_| {
                 (0..info.num_layers)
                     .map(|_| {
@@ -259,7 +259,7 @@ impl<'a> ModelState<'a> {
             .concat();
         let state = context
             .tensor_from_data(
-                Shape::new(info.num_emb, 5 * info.num_layers, num_batches),
+                Shape::new(info.num_emb, 5 * info.num_layers, max_batch),
                 data,
             )
             .unwrap();
@@ -336,6 +336,22 @@ impl<'a> ModelState<'a> {
 pub struct BackedState {
     pub shape: Shape,
     pub data: Vec<f32>,
+}
+
+impl BackedState {
+    pub fn new(info: &ModelInfo, max_batch: usize) -> Self {
+        let att_x = vec![0.0; info.num_emb];
+        let att_a = vec![0.0; info.num_emb];
+        let att_b = vec![0.0; info.num_emb];
+        let att_p = vec![f32::MIN; info.num_emb];
+        let ffn_x = vec![0.0; info.num_emb];
+        let layer = [att_x, att_a, att_b, att_p, ffn_x].concat();
+        let data = vec![layer; info.num_layers * max_batch].concat();
+
+        let shape = Shape::new(info.num_emb, 5 * info.num_layers, max_batch);
+
+        Self { shape, data }
+    }
 }
 
 // impl<'a, 'b> BackedState<'a, 'b> {
@@ -857,6 +873,7 @@ impl<'a, 'b> Model<'a, 'b> {
         let max_batch = input.max_batch();
         let num_batch = input.num_batch();
         let num_token = input.num_token();
+        assert_ne!(num_token, 0);
 
         let buffer = self.request_buffer(max_batch, num_token);
         let stack = self.request_stack(num_batch);
@@ -876,8 +893,8 @@ impl<'a, 'b> Model<'a, 'b> {
             .collect_vec();
         let num_header = headers.len();
 
-        // group copies
-        let (head_ops, head_x) = if num_token == max_batch {
+        // gather and group copy operations
+        let (head_ops, head_x) = if num_token == 1 || num_token == max_batch {
             (vec![], &buffer.ffn_x)
         } else {
             let mut start = 0;

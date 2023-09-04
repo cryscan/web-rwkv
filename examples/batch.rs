@@ -117,16 +117,28 @@ async fn run(cli: Cli) -> Result<()> {
     // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
     let state = ModelState::new(&context, model.info(), tokens.len());
 
-    let num_tokens = 100;
-    for _ in 0..=num_tokens {
+    let mut num_tokens = [100usize, 200, 300, 400]
+        .to_vec()
+        .repeat((cli.batch + prompts.len() - 1) / prompts.len())[..cli.batch]
+        .to_vec();
+    loop {
         let logits = model.run(&mut tokens, &state)?;
         let probs = model.softmax(logits)?;
         for (index, probs) in probs.into_iter().enumerate().filter(|(_, v)| !v.is_empty()) {
-            let token = sample(probs.to_vec(), 0.5);
-            let word = String::from_utf8(tokenizer.decode(&[token])?)?;
-            tokens[index] = vec![token];
-            prompts[index].push_str(&word);
-            println!("{}: {}", index, prompts[index]);
+            if num_tokens[index] > 0 {
+                let token = sample(probs.to_vec(), 0.5);
+                let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+                tokens[index] = vec![token];
+                prompts[index].push_str(&word);
+                num_tokens[index] -= 1;
+                println!("{}: {}", index, prompts[index]);
+            } else {
+                tokens[index] = vec![];
+            }
+        }
+
+        if num_tokens.iter().all(|x| *x == 0) {
+            break;
         }
     }
 
