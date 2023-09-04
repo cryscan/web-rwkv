@@ -949,21 +949,21 @@ impl<'a, 'b> Model<'a, 'b> {
                     &layer.att_layer_norm.b,
                     &buffer.att_x,
                 )?,
-                TensorOp::token_shift_stack(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     &layer.att.time_mix_k,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_kx,
                 )?,
-                TensorOp::token_shift_stack(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     &layer.att.time_mix_v,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_vx,
                 )?,
-                TensorOp::token_shift_stack(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     &layer.att.time_mix_r,
                     &buffer.att_x,
@@ -982,7 +982,7 @@ impl<'a, 'b> Model<'a, 'b> {
                     .att
                     .w_r
                     .matmul_op(buffer.att_rx.clone().into(), buffer.att_r.clone().into())?,
-                TensorOp::token_mix_stack(
+                TensorOp::time_mix(
                     &stack,
                     &layer.att.time_decay,
                     &layer.att.time_first,
@@ -1011,14 +1011,14 @@ impl<'a, 'b> Model<'a, 'b> {
                     &layer.ffn_layer_norm.b,
                     &buffer.ffn_x,
                 )?,
-                TensorOp::token_shift_stack(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     &layer.ffn.time_mix_k,
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_kx,
                 )?,
-                TensorOp::token_shift_stack(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     &layer.ffn.time_mix_r,
                     &buffer.ffn_x,
@@ -1038,7 +1038,7 @@ impl<'a, 'b> Model<'a, 'b> {
                     .ffn
                     .w_r
                     .matmul_op(buffer.ffn_rx.clone().into(), buffer.ffn_r.clone().into())?,
-                TensorOp::channel_mix_stack(
+                TensorOp::channel_mix(
                     &buffer.cursors,
                     &buffer.ffn_r,
                     &buffer.ffn_v,

@@ -42,7 +42,7 @@ fn compute_cursor(x: u32) -> Cursor {
 }
 
 @compute @workgroup_size(128, 1, 1)
-fn token_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
     let batch = invocation_id.y;

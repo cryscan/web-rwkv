@@ -3,7 +3,7 @@ use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, CommandEncoder, ComputePass, ComputePipeline,
 };
 
-use super::{Kind, ReadWrite, Shape, TensorError, TensorExt, TensorGpu, TensorView, Uniform};
+use super::{Kind, ReadWrite, Shape, TensorError, TensorExt, TensorGpu, TensorView};
 use crate::num::Scalar;
 
 pub trait TensorCommand<T: Scalar, K: Kind> {
@@ -320,62 +320,6 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn token_shift(
-        time_mix: &'a TensorGpu<f16, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
-        sx: TensorView<'a, f32>,
-        output: &'a TensorGpu<f32, ReadWrite>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape;
-        time_mix.check_shape(Shape::new(shape[0], 1, 1))?;
-        x.check_shape(shape)?;
-        sx.check_shape(Shape::new(shape[0], 1, shape[2]))
-            .or(sx.check_shape(Shape::new(shape[0], 4, shape[2])))?;
-
-        let context = output.context;
-        let pipeline = context.pipeline("token_shift")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: sx.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: time_mix.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: x.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: sx.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: output.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
-    pub fn token_shift_stack(
         cursors: &'a TensorGpu<u32, ReadWrite>,
         time_mix: &'a TensorGpu<f16, ReadWrite>,
         x: &'a TensorGpu<f32, ReadWrite>,
@@ -391,7 +335,7 @@ impl<'a> TensorOp<'a> {
             .or(sx.check_shape(Shape::new(shape[0], 4, max_batch)))?;
 
         let context = output.context;
-        let pipeline = context.pipeline("token_shift_stack")?;
+        let pipeline = context.pipeline("token_shift")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -435,89 +379,7 @@ impl<'a> TensorOp<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn token_mix(
-        mask: &'a TensorGpu<u32, Uniform>,
-        time_decay: &'a TensorGpu<f32, ReadWrite>,
-        time_first: &'a TensorGpu<f32, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
-        k: &'a TensorGpu<f32, ReadWrite>,
-        v: &'a TensorGpu<f32, ReadWrite>,
-        r: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
-        state: TensorView<f32>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape;
-        mask.check_shape(Shape::new(1, 1, 1))?;
-        x.check_shape(shape)?;
-        k.check_shape(shape)?;
-        v.check_shape(shape)?;
-        r.check_shape(shape)?;
-        time_decay.check_shape(Shape::new(shape[0], 1, 1))?;
-        time_first.check_shape(Shape::new(shape[0], 1, 1))?;
-        state.check_shape(Shape::new(shape[0], 4, shape[2]))?;
-
-        let context = output.context;
-        let pipeline = context.pipeline("token_mix")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: mask.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: time_decay.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: time_first.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: x.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: k.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 8,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 9,
-                    resource: output.binding(),
-                },
-                BindGroupEntry {
-                    binding: 10,
-                    resource: state.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self {
-            pipeline,
-            bindings,
-            dispatch: [Self::block_count(shape[0] as u32 / 4), 1, shape[2] as u32],
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn token_mix_stack(
+    pub fn time_mix(
         stack: &'a TensorGpu<u32, ReadWrite>,
         time_decay: &'a TensorGpu<f32, ReadWrite>,
         time_first: &'a TensorGpu<f32, ReadWrite>,
@@ -539,7 +401,7 @@ impl<'a> TensorOp<'a> {
         state.check_shape(Shape::new(shape[0], 4, max_batch))?;
 
         let context = x.context;
-        let pipeline = context.pipeline("token_mix_stack")?;
+        let pipeline = context.pipeline("time_mix")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -625,73 +487,6 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn channel_mix(
-        mask: &'a TensorGpu<u32, Uniform>,
-        x: &'a TensorGpu<f32, ReadWrite>,
-        r: &'a TensorGpu<f32, ReadWrite>,
-        v: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
-        state: TensorView<f32>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape;
-        mask.check_shape(Shape::new(1, 1, 1))?;
-        x.check_shape(shape)?;
-        v.check_shape(shape)?;
-        r.check_shape(shape)?;
-        state.check_shape(Shape::new(shape[0], 1, shape[2]))?;
-
-        let context = output.context;
-        let pipeline = context.pipeline("channel_mix")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: mask.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: x.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: output.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: state.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
-    pub fn channel_mix_stack(
         cursors: &'a TensorGpu<u32, ReadWrite>,
         r: &'a TensorGpu<f32, ReadWrite>,
         v: &'a TensorGpu<f32, ReadWrite>,
@@ -706,7 +501,7 @@ impl<'a> TensorOp<'a> {
         state.check_shape(Shape::new(shape[0], 1, max_batch))?;
 
         let context = x.context;
-        let pipeline = context.pipeline("channel_mix_stack")?;
+        let pipeline = context.pipeline("channel_mix")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
