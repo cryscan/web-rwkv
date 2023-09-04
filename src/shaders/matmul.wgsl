@@ -4,7 +4,7 @@ struct View {
     shape: vec4<u32>,  
 };
 
-@group(0) @binding(0) var<uniform> shape: vec4<u32>;                         // [C, R]
+@group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, R]
 @group(0) @binding(1) var<uniform> source: View;                            // [R, T, B]
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
 
