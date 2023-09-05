@@ -11,6 +11,9 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - Int8 quantization.
 - Very fast.
 
+![chat](screenshots/chat.gif)
+![batch](screenshots/batch.gif)
+
 ## Compile and Run
 1. [Install Rust](https://rustup.rs/).
 2. Run `cargo run --release --example gen` to generate 100 tokens and measure the time cost.
@@ -48,6 +51,17 @@ You can now download the coverted models [here](https://huggingface.co/cgisky/RW
 You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-4-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
 
 An already-converted 0.4B model can be found under [`assets/models`](assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st).
+
+## Troubleshoot
+- "thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: HeaderTooLarge'"
+  
+  Your model is broken, mainly because you cloned the repo but did not set up git-lfs.Please download the model manually and overwrite that one in `assets/models`.
+
+- "thread 'main' panicked at 'wgpu error: Validation Error"
+  
+  It's most likely that you are using the D3D backend.
+  Please use Vulkan backend instead.
+
 
 ## Credits
 - Tokenizer is implemented by [@koute](https://github.com/koute/rwkv_tokenizer).

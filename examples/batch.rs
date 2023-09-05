@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+#[cfg(not(debug_assertions))]
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -7,6 +8,7 @@ use crossterm::terminal::{
 use dialoguer::{theme::ColorfulTheme, Select};
 use itertools::Itertools;
 use memmap2::Mmap;
+#[cfg(not(debug_assertions))]
 use ratatui::{
     prelude::{Constraint, CrosstermBackend, Direction, Layout},
     style::{Color, Modifier, Style, Stylize},
@@ -16,7 +18,7 @@ use ratatui::{
 };
 use std::{
     fs::File,
-    io::{BufReader, Read, Stdout},
+    io::{BufReader, Read},
     path::PathBuf,
     str::FromStr,
 };
@@ -96,14 +98,16 @@ fn load_model(context: &Context, model: PathBuf, quant: Option<u64>) -> Result<M
     Ok(model)
 }
 
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+#[cfg(not(debug_assertions))]
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
     let mut stdout = std::io::stdout();
     enable_raw_mode()?;
     crossterm::execute!(stdout, EnterAlternateScreen)?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+#[cfg(not(debug_assertions))]
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
     crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
     Ok(terminal.show_cursor()?)
@@ -111,6 +115,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result
 
 async fn run(cli: Cli) -> Result<()> {
     let context = create_context().await?;
+    #[cfg(not(debug_assertions))]
     let mut terminal = setup_terminal()?;
 
     let tokenizer = load_tokenizer()?;
@@ -146,6 +151,7 @@ async fn run(cli: Cli) -> Result<()> {
         .repeat((cli.batch + prompts.len() - 1) / prompts.len())[..cli.batch]
         .to_vec();
     loop {
+        #[cfg(not(debug_assertions))]
         terminal.draw(|frame| {
             let size = frame.size();
 
@@ -193,6 +199,11 @@ async fn run(cli: Cli) -> Result<()> {
             }
         })?;
 
+        #[cfg(debug_assertions)]
+        for (index, prompt) in prompts.iter().enumerate() {
+            println!("{index}: {prompt}");
+        }
+
         let logits = model.run(&mut tokens, &state)?;
         let probs = model.softmax(logits)?;
         for (index, probs) in probs.into_iter().enumerate().filter(|(_, v)| !v.is_empty()) {
@@ -212,6 +223,7 @@ async fn run(cli: Cli) -> Result<()> {
         }
     }
 
+    #[cfg(not(debug_assertions))]
     restore_terminal(&mut terminal)?;
     Ok(())
 }
