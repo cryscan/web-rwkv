@@ -340,70 +340,28 @@ pub struct BackedState {
 
 impl BackedState {
     pub fn new(info: &ModelInfo, max_batch: usize) -> Self {
-        let att_x = vec![0.0; info.num_emb];
-        let att_a = vec![0.0; info.num_emb];
-        let att_b = vec![0.0; info.num_emb];
-        let att_p = vec![f32::MIN; info.num_emb];
-        let ffn_x = vec![0.0; info.num_emb];
-        let layer = [att_x, att_a, att_b, att_p, ffn_x].concat();
-        let data = vec![layer; info.num_layers * max_batch].concat();
-
         let shape = Shape::new(info.num_emb, 5 * info.num_layers, max_batch);
-
+        let data = (0..max_batch)
+            .map(|_| {
+                (0..info.num_layers)
+                    .map(|_| {
+                        [
+                            vec![0.0; info.num_emb],
+                            vec![0.0; info.num_emb],
+                            vec![0.0; info.num_emb],
+                            vec![f32::MIN; info.num_emb],
+                            vec![0.0; info.num_emb],
+                        ]
+                        .concat()
+                    })
+                    .collect_vec()
+                    .concat()
+            })
+            .collect_vec()
+            .concat();
         Self { shape, data }
     }
 }
-
-// impl<'a, 'b> BackedState<'a, 'b> {
-//     pub fn repeat(self, repeat: usize) -> Self {
-//         let state = self.0.repeat(2, repeat);
-//         Self(state)
-//     }
-
-//     pub fn take(self, batch: usize) -> Result<Self, TensorError> {
-//         let state = self.0.into_slice((.., .., batch))?;
-//         Ok(Self(state))
-//     }
-
-//     pub fn split(self) -> Vec<Self> {
-//         self.0
-//             .split(2)
-//             .expect("split backed state")
-//             .into_iter()
-//             .map(Self)
-//             .collect()
-//     }
-
-//     pub fn stack(batches: Vec<Self>) -> Result<Self, TensorError> {
-//         if batches.is_empty() {
-//             return Err(TensorError::Empty);
-//         }
-//         let states: Vec<_> = batches.into_iter().map(|batch| batch.0).collect();
-//         Ok(Self(TensorCpu::stack(states)?))
-//     }
-// }
-
-// impl<'a> From<ModelState<'a>> for BackedState<'a, '_> {
-//     fn from(value: ModelState<'a>) -> Self {
-//         let context = value.context;
-//         let map = context.init_tensor(value.shape());
-//         let mut encoder = context
-//             .device
-//             .create_command_encoder(&CommandEncoderDescriptor::default());
-//         encoder.copy_tensor(&value, &map).unwrap();
-//         context.queue.submit(Some(encoder.finish()));
-
-//         let state = TensorCpu::from(map);
-//         Self(state)
-//     }
-// }
-
-// impl<'a> From<BackedState<'a, '_>> for ModelState<'a> {
-//     fn from(value: BackedState<'a, '_>) -> Self {
-//         let state = TensorGpu::from(value.0);
-//         Self(state)
-//     }
-// }
 
 pub struct ModelBuilder<'a, 'b> {
     context: &'a Context,

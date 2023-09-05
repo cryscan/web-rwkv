@@ -1,12 +1,22 @@
 use anyhow::Result;
 use clap::Parser;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use itertools::Itertools;
 use memmap2::Mmap;
+use ratatui::{
+    prelude::{Constraint, CrosstermBackend, Direction, Layout},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Span, Text},
+    widgets::{Block, Borders, Paragraph, Wrap},
+    Terminal,
+};
 use std::{
     fs::File,
-    io::{BufReader, Read},
+    io::{BufReader, Read, Stdout},
     path::PathBuf,
     str::FromStr,
 };
@@ -86,8 +96,22 @@ fn load_model(context: &Context, model: PathBuf, quant: Option<u64>) -> Result<M
     Ok(model)
 }
 
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+    let mut stdout = std::io::stdout();
+    enable_raw_mode()?;
+    crossterm::execute!(stdout, EnterAlternateScreen)?;
+    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
+}
+
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
+    Ok(terminal.show_cursor()?)
+}
+
 async fn run(cli: Cli) -> Result<()> {
     let context = create_context().await?;
+    let mut terminal = setup_terminal()?;
 
     let tokenizer = load_tokenizer()?;
     let model = cli
@@ -122,6 +146,53 @@ async fn run(cli: Cli) -> Result<()> {
         .repeat((cli.batch + prompts.len() - 1) / prompts.len())[..cli.batch]
         .to_vec();
     loop {
+        terminal.draw(|frame| {
+            let size = frame.size();
+
+            let block = Block::default().black();
+            frame.render_widget(block, size);
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(
+                    [
+                        Constraint::Percentage(25),
+                        Constraint::Percentage(25),
+                        Constraint::Percentage(25),
+                        Constraint::Percentage(25),
+                    ]
+                    .as_ref(),
+                )
+                .split(size);
+
+            let create_block = |title| {
+                Block::default()
+                    .borders(Borders::ALL)
+                    .style(Style::default().fg(Color::Gray))
+                    .title(Span::styled(
+                        title,
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ))
+            };
+
+            for (index, (text, chunk)) in prompts.iter().zip(chunks.iter()).enumerate() {
+                let text = Text::from(text.as_str());
+                let text_height_estimation: usize = text
+                    .lines
+                    .iter()
+                    .map(|line| (line.width() / 1.max(chunk.width as usize - 2)).max(1))
+                    .sum();
+                let scroll =
+                    (text_height_estimation as isize - chunk.height as isize + 2).max(0) as u16;
+                let paragraph = Paragraph::new(text)
+                    .style(Style::default().fg(Color::Gray))
+                    .block(create_block(format!("Batch {index}")))
+                    .wrap(Wrap { trim: true })
+                    .scroll((scroll, 0));
+                frame.render_widget(paragraph, *chunk);
+            }
+        })?;
+
         let logits = model.run(&mut tokens, &state)?;
         let probs = model.softmax(logits)?;
         for (index, probs) in probs.into_iter().enumerate().filter(|(_, v)| !v.is_empty()) {
@@ -131,7 +202,6 @@ async fn run(cli: Cli) -> Result<()> {
                 tokens[index] = vec![token];
                 prompts[index].push_str(&word);
                 num_tokens[index] -= 1;
-                println!("{}: {}", index, prompts[index]);
             } else {
                 tokens[index] = vec![];
             }
@@ -142,6 +212,7 @@ async fn run(cli: Cli) -> Result<()> {
         }
     }
 
+    restore_terminal(&mut terminal)?;
     Ok(())
 }
 

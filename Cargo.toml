@@ -1,6 +1,6 @@
 [package]
 name = "web-rwkv"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 authors = ["Zhenyuan Zhang <cryscan@umich.edu>"]
 license = "MIT OR Apache-2.0"
@@ -36,6 +36,8 @@ memmap2 = "0.7"
 fastrand = "2.0"
 clap = { version = "4.3", features = ["derive"] }
 dialoguer = "0.10"
+ratatui = { version = "0.23.0", features = ["all-widgets"] }
+crossterm = "0.27"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen = "0.2"
