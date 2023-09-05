@@ -9,7 +9,7 @@ homepage = "https://github.com/cryscan/web-rwkv"
 repository = "https://github.com/cryscan/web-rwkv"
 keywords = ["deep-learning", "language", "model", "rwkv"]
 categories = ["science", "text-processing"]
-exclude = ["assets/", "crates/"]
+exclude = ["assets/", "crates/", "screenshots/"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
