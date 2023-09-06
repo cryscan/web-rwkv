@@ -99,11 +99,7 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model<'a>(
-    context: &'a Context,
-    model: PathBuf,
-    quant: Option<u64>,
-) -> Result<Model<'a, '_>> {
+fn load_model(context: &Context, model: PathBuf, quant: Option<u64>) -> Result<Model<'_>> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
     let quant = quant

@@ -71,7 +71,7 @@ impl Instance {
 pub struct ContextId(usize);
 
 #[derive(Debug)]
-pub struct Context {
+pub struct ContextInner {
     pub id: ContextId,
     pub adapter: Adapter,
     pub device: Device,
@@ -81,6 +81,9 @@ pub struct Context {
     shapes: ResourceCache<Shape, Buffer>,
     views: ResourceCache<View, Buffer>,
 }
+
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct Context(Arc<ContextInner>);
 
 pub struct ContextBuilder<'a> {
     adapter: Adapter,
@@ -153,15 +156,18 @@ impl<'a> ContextBuilder<'a> {
                 (String::from_str(name).expect("Bad pipeline name"), pipeline)
             })
             .collect();
-        Ok(Context {
-            id: ContextId::new(),
-            adapter: self.adapter,
-            device,
-            queue,
-            pipelines,
-            shapes: Default::default(),
-            views: Default::default(),
-        })
+        Ok(Context(
+            ContextInner {
+                id: ContextId::new(),
+                adapter: self.adapter,
+                device,
+                queue,
+                pipelines,
+                shapes: Default::default(),
+                views: Default::default(),
+            }
+            .into(),
+        ))
     }
 
     pub fn with_pipeline(

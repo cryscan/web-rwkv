@@ -376,10 +376,10 @@ mod tests {
         let x = (0..shape.len()).map(|x| x as f32).collect_vec();
         let x = TensorCpu::from_data(&context, shape, x)?;
 
-        let y: Vec<_> = x.as_slice((.., 1..2, 1..2))?.into();
+        let y: Vec<_> = x.slice((.., 1..2, 1..2))?.into();
         assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);
 
-        let y: Vec<_> = x.as_slice((.., .., 1..2))?.into();
+        let y: Vec<_> = x.slice((.., .., 1..2))?.into();
         assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
 
         let y: Vec<_> = x.into_slice((2.., 1.., ..0))?.into();
