@@ -849,6 +849,7 @@ impl<'a> Model<'a> {
         let num_batch = input.num_batch();
         let num_token = input.num_token();
         assert_ne!(num_token, 0);
+        assert_ne!(num_batch, 0);
 
         // collect batch output copy commands for later
         let mut redirect = vec![None; max_batch];
@@ -866,7 +867,7 @@ impl<'a> Model<'a> {
         let num_header = headers.len();
 
         let buffer = self.request_buffer(num_token);
-        let output = self.request_output(num_header);
+        let output = self.request_output(num_header.max(1));
         let stack = self.request_stack(num_batch);
 
         // gather and group copy operations
@@ -1047,26 +1048,28 @@ impl<'a> Model<'a> {
             }
         }
 
-        let mut ops = vec![TensorOp::layer_norm(
-            &tensor.head.layer_norm.w,
-            &tensor.head.layer_norm.b,
-            head_x,
-        )?];
+        if num_header > 0 {
+            let mut ops = vec![TensorOp::layer_norm(
+                &tensor.head.layer_norm.w,
+                &tensor.head.layer_norm.b,
+                head_x,
+            )?];
 
-        for (chunk, matrix) in tensor.head.w.iter().enumerate() {
-            let start = chunk * self.head_chunk_size;
-            let end = start + self.head_chunk_size;
-            let input = head_x.view((.., .., ..))?;
-            let output = output.head_o.view((start..end, .., ..))?;
-            ops.push(TensorOp::matmul(matrix, input, output)?);
+            for (chunk, matrix) in tensor.head.w.iter().enumerate() {
+                let start = chunk * self.head_chunk_size;
+                let end = start + self.head_chunk_size;
+                let input = head_x.view((.., .., ..))?;
+                let output = output.head_o.view((start..end, .., ..))?;
+                ops.push(TensorOp::matmul(matrix, input, output)?);
+            }
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            head_ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            drop(pass);
+
+            encoder.copy_tensor(&output.head_o, &output.map)?;
         }
-
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        head_ops.iter().for_each(|op| pass.execute_tensor_op(op));
-        ops.iter().for_each(|op| pass.execute_tensor_op(op));
-        drop(pass);
-
-        encoder.copy_tensor(&output.head_o, &output.map)?;
 
         context.queue.submit(Some(encoder.finish()));
         Ok((output, redirect))
