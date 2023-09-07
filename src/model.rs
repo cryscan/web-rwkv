@@ -871,7 +871,7 @@ impl<'a> Model<'a> {
         let stack = self.request_stack(num_batch);
 
         // gather and group copy operations
-        let (head_ops, head_x) = if num_token == 1 || num_token == max_batch {
+        let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
             (vec![], &buffer.ffn_x)
         } else {
             let mut start = 0;

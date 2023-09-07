@@ -146,9 +146,9 @@ async fn run(cli: Cli) -> Result<()> {
     // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
     let state = ModelState::new(&context, model.info(), tokens.len());
 
-    let mut num_tokens = [100usize, 200, 300, 400]
+    let mut num_tokens = [100usize, 400, 200, 300]
         .to_vec()
-        .repeat((cli.batch + prompts.len() - 1) / prompts.len())[..cli.batch]
+        .repeat((cli.batch + 3) / 4)[..cli.batch]
         .to_vec();
     loop {
         #[cfg(not(debug_assertions))]
