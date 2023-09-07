@@ -33,10 +33,12 @@ where
 
     pub fn request(&self, key: K, f: impl FnOnce() -> V) -> Arc<V> {
         let mut map = self.map.lock().unwrap();
-        let (value, count) = map.remove(&key).unwrap_or_else(|| (Arc::new(f()), 0));
-        if count < self.max_count {
-            map.insert(key, (value.clone(), count + 1));
-        }
+        let (value, _) = map.remove(&key).unwrap_or_else(|| (Arc::new(f()), 0));
+        map.insert(key, (value.clone(), 0));
+        map.retain(|_, (_, count)| {
+            *count += 1;
+            *count <= self.max_count
+        });
         value
     }
 }
