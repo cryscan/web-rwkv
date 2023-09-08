@@ -278,11 +278,13 @@ impl ModelState {
         Self(state)
     }
 
+    /// Load the state from host. Their shapes must match.
     pub fn load(&self, backed: &BackedState) -> Result<(), TensorError> {
         let host = self.context.tensor_from_data(self.shape(), &backed.data)?;
         self.0.load(&host)
     }
 
+    /// Load one batch from host. The shape of the backed state should be of one batch.
     pub fn load_batch(&self, backed: &BackedState, batch: usize) -> Result<(), TensorError> {
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1);
@@ -290,6 +292,7 @@ impl ModelState {
         self.0.load_batch(&host, batch)
     }
 
+    /// Back the entire device state to host.
     pub fn back(&self) -> BackedState {
         let shape = self.shape();
         let map = self.context.init_tensor(shape);
@@ -308,6 +311,7 @@ impl ModelState {
         }
     }
 
+    /// Back one batch of the device state to host.
     pub fn back_batch(&self, batch: usize) -> Result<BackedState, TensorError> {
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1);
@@ -325,6 +329,41 @@ impl ModelState {
             shape,
             data: host.to_vec(),
         })
+    }
+
+    /// Copy one device state to another. Their shapes must match.
+    pub fn blit(&self, other: &ModelState) -> Result<(), TensorError> {
+        let mut encoder = self
+            .context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder.copy_tensor(self, other)?;
+        self.context.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    /// Copy one batch from the source state to another.
+    pub fn blit_batch(
+        &self,
+        other: &ModelState,
+        from_batch: usize,
+        to_batch: usize,
+    ) -> Result<(), TensorError> {
+        let op = TensorOp::blit(
+            self.view((.., .., from_batch))?,
+            other.view((.., .., to_batch))?,
+        )?;
+        let mut encoder = self
+            .context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
+        self.context.queue.submit(Some(encoder.finish()));
+        Ok(())
     }
 
     #[inline]
