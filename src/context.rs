@@ -5,8 +5,8 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferUsages,
     ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Dx12Compiler,
-    InstanceDescriptor, PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
-    ShaderModuleDescriptor, ShaderStages,
+    InstanceDescriptor, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
+    RequestAdapterOptions, ShaderModuleDescriptor, ShaderStages,
 };
 
 use crate::tensor::{
@@ -87,6 +87,7 @@ pub struct Context(Arc<ContextInner>);
 
 pub struct ContextBuilder<'a> {
     adapter: Adapter,
+    limits: Limits,
     pipelines: HashMap<&'a str, (&'a str, &'a str, Option<&'a [BindGroupLayoutEntry]>)>,
 }
 
@@ -112,6 +113,7 @@ impl<'a> ContextBuilder<'a> {
         Self {
             adapter,
             pipelines: HashMap::new(),
+            limits: Default::default(),
         }
     }
 
@@ -122,7 +124,7 @@ impl<'a> ContextBuilder<'a> {
                 &DeviceDescriptor {
                     label: None,
                     features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
+                    limits: self.limits,
                 },
                 None,
             )
@@ -170,6 +172,10 @@ impl<'a> ContextBuilder<'a> {
         ))
     }
 
+    pub fn with_limits(self, limits: Limits) -> Self {
+        Self { limits, ..self }
+    }
+
     pub fn with_pipeline(
         self,
         name: &'a str,
@@ -177,12 +183,9 @@ impl<'a> ContextBuilder<'a> {
         entry_point: &'a str,
         layout: Option<&'a [BindGroupLayoutEntry]>,
     ) -> Self {
-        let Self {
-            adapter,
-            mut pipelines,
-        } = self;
+        let mut pipelines = self.pipelines;
         pipelines.insert(name, (shader, entry_point, layout));
-        Self { adapter, pipelines }
+        Self { pipelines, ..self }
     }
 
     pub fn with_default_pipelines(self) -> Self {
