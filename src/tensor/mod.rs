@@ -416,6 +416,10 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         }
         Ok(Self { shape, ..self })
     }
+
+    pub fn destroy(self) {
+        self.buffer.destroy();
+    }
 }
 
 impl<T: Scalar> From<TensorCpu<'_, T>> for Vec<T> {

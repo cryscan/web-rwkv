@@ -451,6 +451,43 @@ impl<'a> ModelBuilder<'a> {
         }
     }
 
+    fn quant_matrix_u8(matrix: TensorGpu<f16, ReadWrite>) -> Result<Matrix, TensorError> {
+        let context = &matrix.context;
+        let shape = matrix.shape();
+
+        // let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
+        // let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
+        // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
+        // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
+
+        let w = Box::new(context.init_tensor(matrix.shape()));
+
+        let mx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
+        let rx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
+        let my = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
+        let ry = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
+
+        let ops = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
+
+        // ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
+        // ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
+        // ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
+        // ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        ops.iter().for_each(|op| pass.execute_tensor_op(op));
+        drop(pass);
+
+        context.queue.submit(Some(encoder.finish()));
+        matrix.destroy();
+
+        Ok(Matrix::Int8 { w, mx, rx, my, ry })
+    }
+
     pub fn build<'b>(self) -> Result<Model<'b>> {
         let Self {
             context,
@@ -511,51 +548,11 @@ impl<'a> ModelBuilder<'a> {
             let shape = Shape::new(data.len(), 1, 1);
             Ok(context.tensor_from_data(shape, data)?)
         };
-        let load_matrix_f16 = |name: String| -> Result<Matrix> {
+        let load_matrix_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
             let tensor = model.tensor(&name)?;
             let shape = tensor.shape();
             let shape = Shape::new(shape[1], shape[0], 1);
-            let w = context.tensor_from_data(shape, bytemuck::cast_slice(tensor.data()))?;
-            Ok(Matrix::Fp16(w))
-        };
-        let load_matrix_u8 = |name: String| -> Result<Matrix> {
-            let tensor = model.tensor(&name)?;
-            let shape = tensor.shape();
-            let shape = Shape::new(shape[1], shape[0], 1);
-            let matrix: TensorGpu<f16, _> =
-                context.tensor_from_data(shape, bytemuck::cast_slice(tensor.data()))?;
-            let shape = matrix.shape();
-
-            // let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
-            // let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
-            // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
-            // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
-
-            let w = Box::new(context.init_tensor(matrix.shape()));
-
-            let mx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
-            let rx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
-            let my = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
-            let ry = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
-
-            let ops = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
-
-            // ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
-            // ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
-            // ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
-            // ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
-
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            ops.iter().for_each(|op| pass.execute_tensor_op(op));
-            drop(pass);
-
-            context.queue.submit(Some(encoder.finish()));
-
-            Ok(Matrix::Int8 { w, mx, rx, my, ry })
+            Ok(context.tensor_from_data(shape, bytemuck::cast_slice(tensor.data()))?)
         };
 
         let embed = Embed {
@@ -613,6 +610,11 @@ impl<'a> ModelBuilder<'a> {
                 let time_mix_v = load_vector_f16(format!("{att}.time_mix_v"))?;
                 let time_mix_r = load_vector_f16(format!("{att}.time_mix_r"))?;
 
+                let w_k = load_matrix_f16(format!("{att}.key.weight"))?;
+                let w_v = load_matrix_f16(format!("{att}.value.weight"))?;
+                let w_r = load_matrix_f16(format!("{att}.receptance.weight"))?;
+                let w_o = load_matrix_f16(format!("{att}.output.weight"))?;
+
                 let att = match quant {
                     Quantization::Int8(x) if x.contains_layer(layer as u64) => Att {
                         time_decay,
@@ -620,10 +622,10 @@ impl<'a> ModelBuilder<'a> {
                         time_mix_k,
                         time_mix_v,
                         time_mix_r,
-                        w_k: load_matrix_u8(format!("{att}.key.weight"))?,
-                        w_v: load_matrix_u8(format!("{att}.value.weight"))?,
-                        w_r: load_matrix_u8(format!("{att}.receptance.weight"))?,
-                        w_o: load_matrix_u8(format!("{att}.output.weight"))?,
+                        w_k: Matrix::Fp16(w_k),
+                        w_v: Matrix::Fp16(w_v),
+                        w_r: Matrix::Fp16(w_r),
+                        w_o: Matrix::Fp16(w_o),
                     },
                     _ => Att {
                         time_decay,
@@ -631,10 +633,10 @@ impl<'a> ModelBuilder<'a> {
                         time_mix_k,
                         time_mix_v,
                         time_mix_r,
-                        w_k: load_matrix_f16(format!("{att}.key.weight"))?,
-                        w_v: load_matrix_f16(format!("{att}.value.weight"))?,
-                        w_r: load_matrix_f16(format!("{att}.receptance.weight"))?,
-                        w_o: load_matrix_f16(format!("{att}.output.weight"))?,
+                        w_k: Self::quant_matrix_u8(w_k)?,
+                        w_v: Self::quant_matrix_u8(w_v)?,
+                        w_r: Self::quant_matrix_u8(w_r)?,
+                        w_o: Self::quant_matrix_u8(w_o)?,
                     },
                 };
 
@@ -647,20 +649,24 @@ impl<'a> ModelBuilder<'a> {
                 let time_mix_k = load_vector_f16(format!("{ffn}.time_mix_k"))?;
                 let time_mix_r = load_vector_f16(format!("{ffn}.time_mix_k"))?;
 
+                let w_k = load_matrix_f16(format!("{ffn}.key.weight"))?;
+                let w_v = load_matrix_f16(format!("{ffn}.value.weight"))?;
+                let w_r = load_matrix_f16(format!("{ffn}.receptance.weight"))?;
+
                 let ffn = match quant {
                     Quantization::Int8(x) if x.contains_layer(layer as u64) => Ffn {
                         time_mix_k,
                         time_mix_r,
-                        w_k: load_matrix_u8(format!("{ffn}.key.weight"))?,
-                        w_v: load_matrix_u8(format!("{ffn}.value.weight"))?,
-                        w_r: load_matrix_u8(format!("{ffn}.receptance.weight"))?,
+                        w_k: Matrix::Fp16(w_k),
+                        w_v: Matrix::Fp16(w_v),
+                        w_r: Matrix::Fp16(w_r),
                     },
                     _ => Ffn {
                         time_mix_k,
                         time_mix_r,
-                        w_k: load_matrix_f16(format!("{ffn}.key.weight"))?,
-                        w_v: load_matrix_f16(format!("{ffn}.value.weight"))?,
-                        w_r: load_matrix_f16(format!("{ffn}.receptance.weight"))?,
+                        w_k: Self::quant_matrix_u8(w_k)?,
+                        w_v: Self::quant_matrix_u8(w_v)?,
+                        w_r: Self::quant_matrix_u8(w_r)?,
                     },
                 };
 
