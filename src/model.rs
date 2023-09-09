@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ahash::HashMap;
 use anyhow::Result;
 use bitflags::bitflags;
 use derive_getters::Getters;
@@ -52,7 +53,7 @@ pub struct ModelInfo {
 }
 
 bitflags! {
-    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct LayerFlags: u64 {}
 }
 
@@ -94,9 +95,9 @@ impl<'a> Matrix {
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'a>, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => TensorOp::matmul(matrix, input, output),
+            Matrix::Fp16(matrix) => TensorOp::mat_vec(matrix, input, output),
             Matrix::Int8 { w, mx, rx, my, ry } => {
-                TensorOp::matmul_int8(w, mx, rx, my, ry, input, output)
+                TensorOp::mat_vec_int8(w, mx, rx, my, ry, input, output)
             }
         }
     }
@@ -417,9 +418,49 @@ impl BackedState {
 pub struct ModelBuilder<'a> {
     context: Context,
     data: &'a [u8],
+    lora: Vec<Lora<'a>>,
     quant: Quantization,
     head_chunk_size: usize,
     token_chunk_size: usize,
+}
+
+pub struct Lora<'a> {
+    /// Raw lora data from `safetensors`.
+    pub data: &'a [u8],
+    /// Loading configures for some layers.
+    pub layers: HashMap<usize, LoraLayer>,
+    /// Merge factor of the head lora matrix.
+    pub head: f32,
+}
+
+pub struct LoraLayer {
+    pub att_layer_norm: f32,
+    pub att_time_mix: f32,
+    pub att_time_decay: f32,
+    pub att_w: f32,
+    pub ffn_layer_norm: f32,
+    pub ffn_time_mix: f32,
+    pub ffn_w: f32,
+}
+
+impl Default for LoraLayer {
+    fn default() -> Self {
+        Self::from_same(1.0)
+    }
+}
+
+impl LoraLayer {
+    pub fn from_same(value: f32) -> Self {
+        Self {
+            att_layer_norm: value,
+            att_time_mix: value,
+            att_time_decay: value,
+            att_w: value,
+            ffn_layer_norm: value,
+            ffn_time_mix: value,
+            ffn_w: value,
+        }
+    }
 }
 
 impl<'a> ModelBuilder<'a> {
@@ -427,6 +468,7 @@ impl<'a> ModelBuilder<'a> {
         Self {
             context: context.clone(),
             data,
+            lora: vec![],
             quant: Quantization::None,
             head_chunk_size: 4096,
             token_chunk_size: 32,
@@ -435,6 +477,11 @@ impl<'a> ModelBuilder<'a> {
 
     pub fn with_quant(self, quant: Quantization) -> Self {
         Self { quant, ..self }
+    }
+
+    pub fn add_lora(mut self, lora: Lora<'a>) -> Self {
+        self.lora.push(lora);
+        self
     }
 
     pub fn with_head_chunk_size(self, size: usize) -> Self {
@@ -492,6 +539,7 @@ impl<'a> ModelBuilder<'a> {
         let Self {
             context,
             data,
+            lora,
             quant,
             head_chunk_size,
             token_chunk_size,
@@ -499,6 +547,11 @@ impl<'a> ModelBuilder<'a> {
 
         let model = SafeTensors::deserialize(data)?;
         let embed = model.tensor("emb.weight")?;
+
+        let _lora_tensors: Vec<_> = lora
+            .iter()
+            .map(|lora| SafeTensors::deserialize(lora.data))
+            .try_collect()?;
 
         let num_layers = {
             let mut r: usize = 0;
@@ -1105,7 +1158,7 @@ impl<'a> Model<'a> {
                 let end = start + self.head_chunk_size;
                 let input = head_x.view((.., .., ..))?;
                 let output = output.head_o.view((start..end, .., ..))?;
-                ops.push(TensorOp::matmul(matrix, input, output)?);
+                ops.push(TensorOp::mat_vec(matrix, input, output)?);
             }
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());

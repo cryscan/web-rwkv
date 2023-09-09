@@ -151,7 +151,7 @@ impl<'a> TensorOp<'a> {
     /// - `matrix` shape: `[C, R, 1]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn matmul(
+    pub fn mat_vec(
         matrix: &'a TensorGpu<f16, ReadWrite>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
@@ -161,7 +161,7 @@ impl<'a> TensorOp<'a> {
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
 
         let context = &output.tensor.context;
-        let pipeline = context.pipeline("matmul")?;
+        let pipeline = context.pipeline("mat_vec")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -206,7 +206,7 @@ impl<'a> TensorOp<'a> {
     /// - `my` and `ry` shape: `[R, 1, 1]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn matmul_int8(
+    pub fn mat_vec_int8(
         matrix: &'a TensorGpu<u8, ReadWrite>,
         mx: &'a TensorGpu<f32, ReadWrite>,
         rx: &'a TensorGpu<f32, ReadWrite>,
@@ -224,7 +224,7 @@ impl<'a> TensorOp<'a> {
         ry.check_shape(Shape::new(matrix.shape[1], 1, 1))?;
 
         let context = &matrix.context;
-        let pipeline = context.pipeline("matmul_int8")?;
+        let pipeline = context.pipeline("mat_vec_int8")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -922,7 +922,7 @@ mod tests {
         let output_dev = TensorGpu::init(&context, Shape::new(R * 2, T, B));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
-        let matmul = TensorOp::matmul(
+        let matmul = TensorOp::mat_vec(
             &matrix_dev,
             input_dev.view((.., .., ..))?,
             output_dev.view((R.., .., ..))?,
