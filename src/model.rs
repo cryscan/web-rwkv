@@ -95,9 +95,9 @@ impl<'a> Matrix {
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'a>, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => TensorOp::mat_vec(matrix, input, output),
+            Matrix::Fp16(matrix) => TensorOp::matmul_vec(matrix, input, output),
             Matrix::Int8 { w, mx, rx, my, ry } => {
-                TensorOp::mat_vec_int8(w, mx, rx, my, ry, input, output)
+                TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
             }
         }
     }
@@ -675,10 +675,10 @@ impl<'a> ModelBuilder<'a> {
                         time_mix_k,
                         time_mix_v,
                         time_mix_r,
-                        w_k: Matrix::Fp16(w_k),
-                        w_v: Matrix::Fp16(w_v),
-                        w_r: Matrix::Fp16(w_r),
-                        w_o: Matrix::Fp16(w_o),
+                        w_k: Self::quant_matrix_u8(w_k)?,
+                        w_v: Self::quant_matrix_u8(w_v)?,
+                        w_r: Self::quant_matrix_u8(w_r)?,
+                        w_o: Self::quant_matrix_u8(w_o)?,
                     },
                     _ => Att {
                         time_decay,
@@ -686,10 +686,10 @@ impl<'a> ModelBuilder<'a> {
                         time_mix_k,
                         time_mix_v,
                         time_mix_r,
-                        w_k: Self::quant_matrix_u8(w_k)?,
-                        w_v: Self::quant_matrix_u8(w_v)?,
-                        w_r: Self::quant_matrix_u8(w_r)?,
-                        w_o: Self::quant_matrix_u8(w_o)?,
+                        w_k: Matrix::Fp16(w_k),
+                        w_v: Matrix::Fp16(w_v),
+                        w_r: Matrix::Fp16(w_r),
+                        w_o: Matrix::Fp16(w_o),
                     },
                 };
 
@@ -710,16 +710,16 @@ impl<'a> ModelBuilder<'a> {
                     Quantization::Int8(x) if x.contains_layer(layer as u64) => Ffn {
                         time_mix_k,
                         time_mix_r,
-                        w_k: Matrix::Fp16(w_k),
-                        w_v: Matrix::Fp16(w_v),
-                        w_r: Matrix::Fp16(w_r),
+                        w_k: Self::quant_matrix_u8(w_k)?,
+                        w_v: Self::quant_matrix_u8(w_v)?,
+                        w_r: Self::quant_matrix_u8(w_r)?,
                     },
                     _ => Ffn {
                         time_mix_k,
                         time_mix_r,
-                        w_k: Self::quant_matrix_u8(w_k)?,
-                        w_v: Self::quant_matrix_u8(w_v)?,
-                        w_r: Self::quant_matrix_u8(w_r)?,
+                        w_k: Matrix::Fp16(w_k),
+                        w_v: Matrix::Fp16(w_v),
+                        w_r: Matrix::Fp16(w_r),
                     },
                 };
 
@@ -1158,7 +1158,7 @@ impl<'a> Model<'a> {
                 let end = start + self.head_chunk_size;
                 let input = head_x.view((.., .., ..))?;
                 let output = output.head_o.view((start..end, .., ..))?;
-                ops.push(TensorOp::mat_vec(matrix, input, output)?);
+                ops.push(TensorOp::matmul_vec(matrix, input, output)?);
             }
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());

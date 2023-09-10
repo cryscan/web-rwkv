@@ -74,8 +74,14 @@ pub struct TensorOp<'a> {
 impl<'a> TensorOp<'a> {
     const BLOCK_SIZE: u32 = 128;
 
+    #[inline]
+    fn round(x: u32, div: u32) -> u32 {
+        (x + div - 1) / div
+    }
+
+    #[inline]
     fn block_count(x: u32) -> u32 {
-        (x + Self::BLOCK_SIZE - 1) / Self::BLOCK_SIZE
+        Self::round(x, Self::BLOCK_SIZE)
     }
 
     /// Softmax operator applied on `x`.
@@ -151,7 +157,7 @@ impl<'a> TensorOp<'a> {
     /// - `matrix` shape: `[C, R, 1]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn mat_vec(
+    pub fn matmul_vec(
         matrix: &'a TensorGpu<f16, ReadWrite>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
@@ -161,7 +167,7 @@ impl<'a> TensorOp<'a> {
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
 
         let context = &output.tensor.context;
-        let pipeline = context.pipeline("mat_vec")?;
+        let pipeline = context.pipeline("matmul_vec")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -206,7 +212,7 @@ impl<'a> TensorOp<'a> {
     /// - `my` and `ry` shape: `[R, 1, 1]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn mat_vec_int8(
+    pub fn matmul_vec_int8(
         matrix: &'a TensorGpu<u8, ReadWrite>,
         mx: &'a TensorGpu<f32, ReadWrite>,
         rx: &'a TensorGpu<f32, ReadWrite>,
@@ -224,7 +230,7 @@ impl<'a> TensorOp<'a> {
         ry.check_shape(Shape::new(matrix.shape[1], 1, 1))?;
 
         let context = &matrix.context;
-        let pipeline = context.pipeline("mat_vec_int8")?;
+        let pipeline = context.pipeline("matmul_vec_int8")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -276,6 +282,59 @@ impl<'a> TensorOp<'a> {
             pipeline,
             bindings,
             dispatch: [matrix.shape[1] as u32 / 4, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
+    pub fn matmul_mat_fp16(
+        xa: TensorView<'a, f16>,
+        xb: TensorView<'a, f16>,
+        output: TensorView<'a, f32>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        xa.check_shape(Shape::new(xa.shape()[0], shape[0], shape[2]))?;
+        xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2]))?;
+
+        let context = &output.tensor.context;
+        let pipeline = context.pipeline("matmul_mat_fp16")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: xa.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: xb.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: xa.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: xb.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::round(Self::round(shape[0] as u32, 4), 8),
+                Self::round(Self::round(shape[1] as u32, 4), 8),
+                shape[2] as u32,
+            ],
         })
     }
 
@@ -904,7 +963,7 @@ mod tests {
 
         const C: usize = 1024;
         const R: usize = 768;
-        const T: usize = 7;
+        const T: usize = 121;
         const B: usize = 3;
 
         let matrix: Vec<_> = vec![(); C * R]
@@ -922,7 +981,7 @@ mod tests {
         let output_dev = TensorGpu::init(&context, Shape::new(R * 2, T, B));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
-        let matmul = TensorOp::mat_vec(
+        let matmul = TensorOp::matmul_vec(
             &matrix_dev,
             input_dev.view((.., .., ..))?,
             output_dev.view((R.., .., ..))?,
