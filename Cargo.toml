@@ -34,6 +34,7 @@ web-rwkv-derive = { version = "0.2.0", path = "crates/web-rwkv-derive" }
 pollster = "0.3.0"
 memmap2 = "0.7"
 fastrand = "2.0"
+wgpu-profiler = "0.14.1"
 clap = { version = "4.3", features = ["derive"] }
 dialoguer = "0.10"
 ratatui = { version = "0.23.0", features = ["all-widgets"] }

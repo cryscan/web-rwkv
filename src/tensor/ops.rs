@@ -764,7 +764,8 @@ impl<'a> TensorOp<'a> {
 mod tests {
     use half::f16;
     use itertools::Itertools;
-    use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, PowerPreference};
+    use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, Features, PowerPreference};
+    use wgpu_profiler::GpuProfiler;
 
     use super::{TensorOp, TensorPass};
     use crate::{
@@ -788,6 +789,7 @@ mod tests {
         let context = pollster::block_on(async {
             ContextBuilder::new(adapter)
                 .with_default_pipelines()
+                .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
                 .build()
                 .await
         })?;
@@ -960,6 +962,7 @@ mod tests {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
+        let mut profiler = GpuProfiler::new(&context.adapter, &context.device, &context.queue, 1);
 
         const C: usize = 1024;
         const R: usize = 768;
@@ -999,15 +1002,44 @@ mod tests {
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&matmul_vec);
-        pass.execute_tensor_op(&matmul_mat);
+        {
+            let mut pass = wgpu_profiler::scope::Scope::start(
+                "matmul_vec",
+                &mut profiler,
+                &mut pass,
+                &context.device,
+            );
+            pass.execute_tensor_op(&matmul_vec);
+        }
+        {
+            let mut pass = wgpu_profiler::scope::Scope::start(
+                "matmul_mat",
+                &mut profiler,
+                &mut pass,
+                &context.device,
+            );
+            pass.execute_tensor_op(&matmul_mat);
+        }
         drop(pass);
+
+        profiler.resolve_queries(&mut encoder);
 
         encoder.copy_tensor(&output_dev, &output_map)?;
         context.queue.submit(Some(encoder.finish()));
 
         let output_host = TensorCpu::from(output_map);
         let output_host = Vec::from(output_host);
+
+        profiler.end_frame().unwrap();
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        if let Some(results) = profiler.process_finished_frame() {
+            wgpu_profiler::chrometrace::write_chrometrace(
+                std::path::Path::new("./trace/matmul.json"),
+                &results,
+            )
+            .expect("failed to write trace");
+        }
 
         let mut ans = vec![0.0; output_host.len()];
         for batch in 0..B {
@@ -1020,13 +1052,7 @@ mod tests {
                         .zip(input.iter())
                         .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
                     ans[(batch * T + token) * 2 * R + line] = product;
-                }
-            }
-        }
-        for batch in 0..B {
-            for token in 0..T {
-                for line in 0..R {
-                    let matrix = &matrix[line * C..(line + 1) * C];
+
                     let input = &input_f32[(batch * T + token) * C..(batch * T + token + 1) * C];
                     let product = matrix
                         .iter()

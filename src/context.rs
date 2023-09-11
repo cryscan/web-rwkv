@@ -4,7 +4,7 @@ use web_rwkv_derive::{Deref, DerefMut, Id};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferUsages,
-    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Dx12Compiler,
+    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Dx12Compiler, Features,
     InstanceDescriptor, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
     RequestAdapterOptions, ShaderModuleDescriptor, ShaderStages,
 };
@@ -87,6 +87,7 @@ pub struct Context(Arc<ContextInner>);
 
 pub struct ContextBuilder<'a> {
     adapter: Adapter,
+    features: Features,
     limits: Limits,
     pipelines: HashMap<&'a str, (&'a str, &'a str, Option<&'a [BindGroupLayoutEntry]>)>,
 }
@@ -113,6 +114,7 @@ impl<'a> ContextBuilder<'a> {
         Self {
             adapter,
             pipelines: HashMap::new(),
+            features: Features::empty(),
             limits: Default::default(),
         }
     }
@@ -123,7 +125,7 @@ impl<'a> ContextBuilder<'a> {
             .request_device(
                 &DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::empty(),
+                    features: self.features,
                     limits: self.limits,
                 },
                 None,
@@ -174,6 +176,10 @@ impl<'a> ContextBuilder<'a> {
 
     pub fn with_limits(self, limits: Limits) -> Self {
         Self { limits, ..self }
+    }
+
+    pub fn with_features(self, features: Features) -> Self {
+        Self { features, ..self }
     }
 
     pub fn with_pipeline(
