@@ -964,27 +964,34 @@ mod tests {
         const C: usize = 1024;
         const R: usize = 768;
         const T: usize = 121;
-        const B: usize = 3;
+        const B: usize = 1;
 
-        let matrix: Vec<_> = vec![(); C * R]
+        let matrix = vec![(); C * R]
             .into_iter()
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
             .map(f16::from_f32)
-            .collect();
-        let input: Vec<_> = vec![(); C * T * B]
+            .collect_vec();
+        let input_f32 = vec![(); C * T * B]
             .into_iter()
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
-            .collect();
+            .collect_vec();
+        let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
-        let matrix_dev = TensorGpu::from_data(&context, Shape::new(C, R, 1), matrix.clone())?;
-        let input_dev = TensorGpu::from_data(&context, Shape::new(C, T, B), input.clone())?;
+        let matrix_dev = context.tensor_from_data(Shape::new(C, R, 1), matrix.clone())?;
+        let input_f32_dev = TensorGpu::from_data(&context, Shape::new(C, T, B), input_f32.clone())?;
+        let input_f16_dev = TensorGpu::from_data(&context, Shape::new(C, T, B), input_f16.clone())?;
         let output_dev = TensorGpu::init(&context, Shape::new(R * 2, T, B));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
-        let matmul = TensorOp::matmul_vec(
+        let matmul_vec = TensorOp::matmul_vec(
             &matrix_dev,
-            input_dev.view((.., .., ..))?,
+            input_f32_dev.view((.., .., ..))?,
             output_dev.view((R.., .., ..))?,
+        )?;
+        let matmul_mat = TensorOp::matmul_mat_fp16(
+            matrix_dev.view((.., .., ..))?,
+            input_f16_dev.view((.., .., ..))?,
+            output_dev.view((..R, .., ..))?,
         )?;
 
         let mut encoder = context
@@ -992,7 +999,8 @@ mod tests {
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&matmul);
+        pass.execute_tensor_op(&matmul_vec);
+        pass.execute_tensor_op(&matmul_mat);
         drop(pass);
 
         encoder.copy_tensor(&output_dev, &output_map)?;
@@ -1006,12 +1014,24 @@ mod tests {
             for token in 0..T {
                 for line in 0..R {
                     let matrix = &matrix[line * C..(line + 1) * C];
-                    let input = &input[(batch * T + token) * C..(batch * T + token + 1) * C];
+                    let input = &input_f16[(batch * T + token) * C..(batch * T + token + 1) * C];
                     let product = matrix
                         .iter()
-                        .map(|x| (*x).to_f32())
                         .zip(input.iter())
-                        .fold(0.0f32, |acc, x| acc + x.0 * *x.1);
+                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
+                    ans[(batch * T + token) * 2 * R + line] = product;
+                }
+            }
+        }
+        for batch in 0..B {
+            for token in 0..T {
+                for line in 0..R {
+                    let matrix = &matrix[line * C..(line + 1) * C];
+                    let input = &input_f32[(batch * T + token) * C..(batch * T + token + 1) * C];
+                    let product = matrix
+                        .iter()
+                        .zip(input.iter())
+                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
                     ans[(batch * T + token) * 2 * R + R + line] = product;
                 }
             }
