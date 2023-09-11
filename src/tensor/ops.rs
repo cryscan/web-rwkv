@@ -966,7 +966,7 @@ mod tests {
 
         const C: usize = 1024;
         const R: usize = 768;
-        const T: usize = 121;
+        const T: usize = 255;
         const B: usize = 1;
 
         let matrix = vec![(); C * R]
@@ -1035,7 +1035,7 @@ mod tests {
 
         if let Some(results) = profiler.process_finished_frame() {
             wgpu_profiler::chrometrace::write_chrometrace(
-                std::path::Path::new("./trace/matmul.json"),
+                std::path::Path::new(&format!("./trace/matmul_{T}.json")),
                 &results,
             )
             .expect("failed to write trace");
