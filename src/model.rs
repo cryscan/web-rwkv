@@ -36,9 +36,9 @@ pub struct Model<'a> {
     #[getter(skip)]
     tensor: ModelTensor<'a>,
     #[getter(skip)]
-    buffer_cache: ResourceCache<usize, ModelBuffer>,
+    runtime_cache: ResourceCache<usize, Runtime>,
     #[getter(skip)]
-    output_cache: ResourceCache<usize, ModelOutput>,
+    output_cache: ResourceCache<usize, Output>,
     #[getter(skip)]
     softmax_cache: ResourceCache<usize, Softmax>,
     #[getter(skip)]
@@ -163,7 +163,7 @@ struct Head {
 
 /// Runtime buffers.
 #[derive(Debug)]
-struct ModelBuffer {
+struct Runtime {
     cursors: TensorGpu<u32, ReadWrite>,
     input: TensorGpu<f32, ReadWrite>,
 
@@ -184,7 +184,7 @@ struct ModelBuffer {
     ffn_r: TensorGpu<f32, ReadWrite>,
 }
 
-impl ModelBuffer {
+impl Runtime {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1);
         let cursors_shape = Shape::new(num_token, 1, 1);
@@ -212,13 +212,13 @@ impl ModelBuffer {
 }
 
 #[derive(Debug)]
-struct ModelOutput {
+struct Output {
     head_x: TensorGpu<f32, ReadWrite>,
     head_o: TensorGpu<f32, ReadWrite>,
     map: TensorGpu<f32, ReadBack>,
 }
 
-impl ModelOutput {
+impl Output {
     pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
         let head_shape = Shape::new(info.num_emb, num_batch, 1);
         let output_shape = Shape::new(info.num_vocab, num_batch, 1);
@@ -750,7 +750,7 @@ impl<'a> ModelBuilder<'a> {
             head_chunk_size,
             token_chunk_size,
             tensor,
-            buffer_cache: ResourceCache::new(2),
+            runtime_cache: ResourceCache::new(2),
             output_cache: ResourceCache::new(2),
             softmax_cache: ResourceCache::new(2),
             stack_cache: Default::default(),
@@ -777,16 +777,16 @@ impl std::error::Error for ModelError {}
 
 impl<'a> Model<'a> {
     #[inline]
-    fn request_buffer(&self, num_token: usize) -> Arc<ModelBuffer> {
-        self.buffer_cache.request(num_token, || {
-            ModelBuffer::new(&self.context, &self.info, num_token)
+    fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
+        self.runtime_cache.request(num_token, || {
+            Runtime::new(&self.context, &self.info, num_token)
         })
     }
 
     #[inline]
-    fn request_output(&self, num_batch: usize) -> Arc<ModelOutput> {
+    fn request_output(&self, num_batch: usize) -> Arc<Output> {
         self.output_cache.request(num_batch, || {
-            ModelOutput::new(&self.context, &self.info, num_batch)
+            Output::new(&self.context, &self.info, num_batch)
         })
     }
 
@@ -920,7 +920,7 @@ impl<'a> Model<'a> {
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
         last: Option<usize>,
-    ) -> Result<(Arc<ModelOutput>, Vec<Option<usize>>)> {
+    ) -> Result<(Arc<Output>, Vec<Option<usize>>)> {
         let context = &self.context;
         let tensor = &self.tensor;
 
@@ -964,7 +964,7 @@ impl<'a> Model<'a> {
             .collect_vec();
         let num_header = headers.len();
 
-        let buffer = self.request_buffer(num_token);
+        let buffer = self.request_runtime(num_token);
         let output = self.request_output(num_header.max(1));
         let stack = self.request_stack(num_batch);
 

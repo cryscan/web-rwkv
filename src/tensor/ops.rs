@@ -1043,8 +1043,7 @@ mod tests {
 
         let matrix_dev = context.tensor_from_data(Shape::new(C, R, 1), matrix.clone())?;
         let input_f32_dev = TensorGpu::from_data(&context, Shape::new(C, T, 1), input_f32.clone())?;
-        // let input_f16_dev = TensorGpu::from_data(&context, Shape::new(C, T, 1), input_f16.clone())?;
-        let input_f16_dev = TensorGpu::init(&context, input_f32_dev.shape());
+        let input_f16_dev = context.init_tensor(input_f32_dev.shape());
         let output_dev = TensorGpu::init(&context, Shape::new(R, T, 3));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 

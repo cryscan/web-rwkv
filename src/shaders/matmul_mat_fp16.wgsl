@@ -66,7 +66,7 @@ fn matmul(
         workgroupBarrier();
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
-        if u.x < va.shape.y && u.y < vb.shape.y {
+        if u.x < ra.y && u.y < rb.y {
             for (var x = 0u; x < j; x += 1u) {
                 let aa = mat4x4<f32>(
                     unpack4x16float(sa[t.x][x]),
@@ -86,7 +86,7 @@ fn matmul(
         workgroupBarrier();
     }
 
-    if uid.x < stride && u.y < destination.shape.y {
+    if uid.x < ra.y / 4u && u.y < rb.y {
         output[compute_index(destination, uid.z, u.y, uid.x)] = local_sum[0];
         output[compute_index(destination, uid.z, u.y + 1u, uid.x)] = local_sum[1];
         output[compute_index(destination, uid.z, u.y + 2u, uid.x)] = local_sum[2];
