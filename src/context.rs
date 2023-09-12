@@ -214,6 +214,12 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
+            "matmul_mat",
+            include_str!("shaders/matmul_mat.wgsl"),
+            "matmul",
+            None,
+        )
+        .with_pipeline(
             "matmul_mat_fp16",
             include_str!("shaders/matmul_mat_fp16.wgsl"),
             "matmul",

@@ -153,7 +153,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    /// Fp16 matrix multiplication.
+    /// Fp32 matrix-vector multiplication.
     /// - `matrix` shape: `[C, R, 1]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
@@ -206,7 +206,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    /// Int8 matrix multiplication.
+    /// Int8 matrix-vector multiplication.
     /// - `matrix` shape: `[C, R, 1]`.
     /// - `mx` and `rx` shape: `[C, 1, 1]`.
     /// - `my` and `ry` shape: `[R, 1, 1]`.
@@ -285,6 +285,67 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    /// Fp32 matrix-matrix multiplication.
+    /// - `matrix` shape: `[K, M, B]`.
+    /// - `input` shape: `[K, N, B]`.
+    /// - `output` shape: `[M, N, B]`.
+    pub fn matmul_mat(
+        xa: TensorView<'a, f16>,
+        xb: TensorView<'a, f32>,
+        output: TensorView<'a, f32>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        xa.check_shape(Shape::new(xa.shape()[0], shape[0], shape[2]))?;
+        xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2]))?;
+
+        let context = &output.tensor.context;
+        let pipeline = context.pipeline("matmul_mat")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: xa.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: xb.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: xa.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: xb.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::round(Self::round(shape[0] as u32, 4), 8),
+                Self::round(Self::round(shape[1] as u32, 4), 8),
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    /// Fp16 matrix-matrix multiplication.
+    /// - `matrix` shape: `[K, M, B]`.
+    /// - `input` shape: `[K, N, B]`.
+    /// - `output` shape: `[M, N, B]`.
     pub fn matmul_mat_fp16(
         xa: TensorView<'a, f16>,
         xb: TensorView<'a, f16>,
@@ -789,6 +850,7 @@ mod tests {
         let context = pollster::block_on(async {
             ContextBuilder::new(adapter)
                 .with_default_pipelines()
+                .with_quant_pipelines()
                 .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
                 .build()
                 .await
@@ -967,34 +1029,40 @@ mod tests {
         const C: usize = 1024;
         const R: usize = 768;
         const T: usize = 255;
-        const B: usize = 1;
 
         let matrix = vec![(); C * R]
             .into_iter()
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
             .map(f16::from_f32)
             .collect_vec();
-        let input_f32 = vec![(); C * T * B]
+        let input_f32 = vec![(); C * T]
             .into_iter()
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
             .collect_vec();
         let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
         let matrix_dev = context.tensor_from_data(Shape::new(C, R, 1), matrix.clone())?;
-        let input_f32_dev = TensorGpu::from_data(&context, Shape::new(C, T, B), input_f32.clone())?;
-        let input_f16_dev = TensorGpu::from_data(&context, Shape::new(C, T, B), input_f16.clone())?;
-        let output_dev = TensorGpu::init(&context, Shape::new(R * 2, T, B));
+        let input_f32_dev = TensorGpu::from_data(&context, Shape::new(C, T, 1), input_f32.clone())?;
+        // let input_f16_dev = TensorGpu::from_data(&context, Shape::new(C, T, 1), input_f16.clone())?;
+        let input_f16_dev = TensorGpu::init(&context, input_f32_dev.shape());
+        let output_dev = TensorGpu::init(&context, Shape::new(R, T, 3));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
+        let quant_input = TensorOp::quantize_vec_fp16(&input_f32_dev, &input_f16_dev)?;
         let matmul_vec = TensorOp::matmul_vec(
             &matrix_dev,
             input_f32_dev.view((.., .., ..))?,
-            output_dev.view((R.., .., ..))?,
+            output_dev.view((.., .., 0))?,
         )?;
-        let matmul_mat = TensorOp::matmul_mat_fp16(
+        let matmul_mat = TensorOp::matmul_mat(
+            matrix_dev.view((.., .., ..))?,
+            input_f32_dev.view((.., .., ..))?,
+            output_dev.view((.., .., 1))?,
+        )?;
+        let matmul_mat_fp16 = TensorOp::matmul_mat_fp16(
             matrix_dev.view((.., .., ..))?,
             input_f16_dev.view((.., .., ..))?,
-            output_dev.view((..R, .., ..))?,
+            output_dev.view((.., .., 2))?,
         )?;
 
         let mut encoder = context
@@ -1002,6 +1070,15 @@ mod tests {
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        {
+            let mut pass = wgpu_profiler::scope::Scope::start(
+                "quant_fp16",
+                &mut profiler,
+                &mut pass,
+                &context.device,
+            );
+            pass.execute_tensor_op(&quant_input);
+        }
         {
             let mut pass = wgpu_profiler::scope::Scope::start(
                 "matmul_vec",
@@ -1019,6 +1096,15 @@ mod tests {
                 &context.device,
             );
             pass.execute_tensor_op(&matmul_mat);
+        }
+        {
+            let mut pass = wgpu_profiler::scope::Scope::start(
+                "matmul_mat_fp16",
+                &mut profiler,
+                &mut pass,
+                &context.device,
+            );
+            pass.execute_tensor_op(&matmul_mat_fp16);
         }
         drop(pass);
 
@@ -1042,24 +1128,23 @@ mod tests {
         }
 
         let mut ans = vec![0.0; output_host.len()];
-        for batch in 0..B {
-            for token in 0..T {
-                for line in 0..R {
-                    let matrix = &matrix[line * C..(line + 1) * C];
-                    let input = &input_f16[(batch * T + token) * C..(batch * T + token + 1) * C];
-                    let product = matrix
-                        .iter()
-                        .zip(input.iter())
-                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-                    ans[(batch * T + token) * 2 * R + line] = product;
+        for token in 0..T {
+            for line in 0..R {
+                let matrix = &matrix[line * C..(line + 1) * C];
+                let input = &input_f32[token * C..(token + 1) * C];
+                let product = matrix
+                    .iter()
+                    .zip(input.iter())
+                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
+                ans[(0 * T + token) * R + line] = product;
+                ans[(1 * T + token) * R + line] = product;
 
-                    let input = &input_f32[(batch * T + token) * C..(batch * T + token + 1) * C];
-                    let product = matrix
-                        .iter()
-                        .zip(input.iter())
-                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
-                    ans[(batch * T + token) * 2 * R + R + line] = product;
-                }
+                let input = &input_f16[token * C..(token + 1) * C];
+                let product = matrix
+                    .iter()
+                    .zip(input.iter())
+                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
+                ans[(2 * T + token) * R + line] = product;
             }
         }
 

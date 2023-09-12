@@ -9,11 +9,11 @@ struct View {
 @group(0) @binding(2) var<uniform> destination: View;                       // [M, N, B]
 
 @group(0) @binding(3) var<storage, read> xa: array<vec2<u32>>;              // (B, M, K)
-@group(0) @binding(4) var<storage, read> xb: array<vec2<u32>>;              // (B, N, K)
+@group(0) @binding(4) var<storage, read> xb: array<vec4<f32>>;              // (B, N, K)
 @group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
 
 var<workgroup> sa: array<array<vec2<u32>, 32u>, 32u>;
-var<workgroup> sb: array<array<vec2<u32>, 32u>, 32u>;
+var<workgroup> sb: array<array<vec4<f32>, 32u>, 32u>;
 
 fn compute_index(view: View, z: u32, y: u32, x: u32) -> u32 {
     let stride = view.stride.x / 4u;
@@ -59,7 +59,7 @@ fn matmul(
                 if all(ub < rb) {
                     sb[y][i] = xb[compute_index(vb, uid.z, ub.y, ub.x)];
                 } else {
-                    sb[y][i] = vec2<u32>(0u);
+                    sb[y][i] = vec4<f32>(0.0);
                 }
             }
         }
@@ -75,10 +75,10 @@ fn matmul(
                     unpack4x16float(sa[t.x + 3u][x])
                 );
                 let bb = mat4x4<f32>(
-                    unpack4x16float(sb[t.y][x]),
-                    unpack4x16float(sb[t.y + 1u][x]),
-                    unpack4x16float(sb[t.y + 2u][x]),
-                    unpack4x16float(sb[t.y + 3u][x])
+                    sb[t.y][x],
+                    sb[t.y + 1u][x],
+                    sb[t.y + 2u][x],
+                    sb[t.y + 3u][x]
                 );
                 local_sum += transpose(aa) * bb;
             }
