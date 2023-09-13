@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use ahash::HashMap;
 use anyhow::Result;
 use bitflags::bitflags;
 use derive_getters::Getters;
 use half::f16;
 use itertools::Itertools;
+use regex::Regex;
 use safetensors::SafeTensors;
 use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
@@ -351,8 +351,8 @@ impl ModelState {
         to_batch: usize,
     ) -> Result<(), TensorError> {
         let op = TensorOp::blit(
-            self.view((.., .., from_batch))?,
-            other.view((.., .., to_batch))?,
+            self.view(.., .., from_batch)?,
+            other.view(.., .., to_batch)?,
         )?;
         let mut encoder = self
             .context
@@ -375,12 +375,12 @@ impl ModelState {
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer;
         let end = start + 4;
-        self.view((.., start..end, ..))
+        self.view(.., start..end, ..)
     }
 
     fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer + 4;
-        self.view((.., start..=start, ..))
+        self.view(.., start..=start, ..)
     }
 }
 
@@ -427,40 +427,15 @@ pub struct ModelBuilder<'a> {
 pub struct Lora<'a> {
     /// Raw lora data from `safetensors`.
     pub data: &'a [u8],
-    /// Loading configures for some layers.
-    pub layers: HashMap<usize, LoraLayer>,
-    /// Merge factor of the head lora matrix.
-    pub head: f32,
+    /// Blend factors for tensor name pattens.
+    pub blend: Vec<LoraBlend>,
 }
 
-pub struct LoraLayer {
-    pub att_layer_norm: f32,
-    pub att_time_mix: f32,
-    pub att_time_decay: f32,
-    pub att_w: f32,
-    pub ffn_layer_norm: f32,
-    pub ffn_time_mix: f32,
-    pub ffn_w: f32,
-}
-
-impl Default for LoraLayer {
-    fn default() -> Self {
-        Self::from_same(1.0)
-    }
-}
-
-impl LoraLayer {
-    pub fn from_same(value: f32) -> Self {
-        Self {
-            att_layer_norm: value,
-            att_time_mix: value,
-            att_time_decay: value,
-            att_w: value,
-            ffn_layer_norm: value,
-            ffn_time_mix: value,
-            ffn_w: value,
-        }
-    }
+pub struct LoraBlend {
+    /// A regex pattern that matches tensors in the model.
+    pub pattern: Regex,
+    /// The blend factor.
+    pub alpha: f32,
 }
 
 impl<'a> ModelBuilder<'a> {
@@ -548,7 +523,7 @@ impl<'a> ModelBuilder<'a> {
         let model = SafeTensors::deserialize(data)?;
         let embed = model.tensor("emb.weight")?;
 
-        let _lora_tensors: Vec<_> = lora
+        let lora_tensors: Vec<_> = lora
             .iter()
             .map(|lora| SafeTensors::deserialize(lora.data))
             .try_collect()?;
@@ -576,36 +551,111 @@ impl<'a> ModelBuilder<'a> {
             num_vocab,
         };
 
+        let _lora_vectors = |name: &str| -> Vec<(TensorCpu<f32>, f32)> {
+            lora.iter()
+                .zip_eq(lora_tensors.iter())
+                .filter_map(|(lora, data)| {
+                    let blend_data = |blend: &LoraBlend| {
+                        data.tensor(name).ok().and_then(|tensor| {
+                            let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)
+                                .ok()?
+                                .map(|x| x.to_f32());
+                            Some((tensor, blend.alpha))
+                        })
+                    };
+                    // find the last blend that matches the name while the tensor exists in the data
+                    lora.blend
+                        .iter()
+                        .filter(|blend| blend.pattern.is_match(name))
+                        .last()
+                        .and_then(blend_data)
+                })
+                .collect()
+        };
+        let _lora_matrices = |name: &str| -> Vec<(TensorCpu<f32>, f32)> {
+            lora.iter()
+                .zip_eq(lora_tensors.iter())
+                .filter_map(|(lora, data)| {
+                    let blend_data = |blend: &LoraBlend| {
+                        let a = data
+                            .tensor(&format!("{name}.lora_a"))
+                            .ok()
+                            .and_then(|tensor| {
+                                TensorGpu::<f16, _>::from_safetensors(&context, tensor).ok()
+                            })?;
+                        let b = data
+                            .tensor(&format!("{name}.lora_b"))
+                            .ok()
+                            .and_then(|tensor| {
+                                TensorGpu::<f16, _>::from_safetensors(&context, tensor).ok()
+                            })?;
+                        let output =
+                            TensorGpu::init(&context, Shape::new(a.shape()[1], b.shape()[1], 1));
+                        let map = TensorGpu::init(&context, output.shape());
+
+                        let op = TensorOp::matmul_mat_fp16(
+                            b.view(.., .., ..).ok()?,
+                            a.view(.., .., ..).ok()?,
+                            output.view(.., .., ..).ok()?,
+                        )
+                        .ok()?;
+                        let mut encoder = context
+                            .device
+                            .create_command_encoder(&CommandEncoderDescriptor::default());
+                        let mut pass =
+                            encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                        pass.execute_tensor_op(&op);
+                        drop(pass);
+                        context.queue.submit(Some(encoder.finish()));
+
+                        let host = TensorCpu::from(map);
+                        Some((host, blend.alpha))
+                    };
+                    // find the last blend that matches the name while the tensor exists in the data
+                    lora.blend
+                        .iter()
+                        .filter(|blend| blend.pattern.is_match(name))
+                        .last()
+                        .and_then(blend_data)
+                })
+                .collect()
+        };
+
         let load_vector_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
+            use TensorDimension::{Auto, Dimension};
             let tensor = model.tensor(&name)?;
-            let data = bytemuck::pod_collect_to_vec::<_, f16>(tensor.data())
-                .into_iter()
-                .map(f16::to_f32)
-                .collect_vec();
-            let shape = Shape::new(data.len(), 1, 1);
-            Ok(context.tensor_from_data(shape, data)?)
+            let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
+                .map(|x| x.to_f32())
+                .reshape(Auto, Dimension(1), Dimension(1))?;
+            Ok(tensor.into())
         };
         let load_vector_exp_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
+            use TensorDimension::{Auto, Dimension};
             let tensor = model.tensor(&name)?;
-            let data = bytemuck::pod_collect_to_vec::<_, f16>(tensor.data())
-                .into_iter()
-                .map(f16::to_f32)
-                .map(|x| -x.exp())
-                .collect_vec();
-            let shape = Shape::new(data.len(), 1, 1);
-            Ok(context.tensor_from_data(shape, data)?)
+            let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
+                .map(|x| -x.to_f32().exp())
+                .reshape(Auto, Dimension(1), Dimension(1))?;
+            Ok(tensor.into())
         };
         let load_vector_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
+            use TensorDimension::{Auto, Dimension};
             let tensor = model.tensor(&name)?;
-            let data = bytemuck::cast_slice(tensor.data());
-            let shape = Shape::new(data.len(), 1, 1);
-            Ok(context.tensor_from_data(shape, data)?)
+            let tensor = TensorGpu::<f16, _>::from_safetensors(&context, tensor)?.reshape(
+                Auto,
+                Dimension(1),
+                Dimension(1),
+            )?;
+            Ok(tensor)
         };
         let load_matrix_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
+            use TensorDimension::{Dimension, Full};
             let tensor = model.tensor(&name)?;
-            let shape = tensor.shape();
-            let shape = Shape::new(shape[1], shape[0], 1);
-            Ok(context.tensor_from_data(shape, bytemuck::cast_slice(tensor.data()))?)
+            let tensor = TensorGpu::<f16, _>::from_safetensors(&context, tensor)?.reshape(
+                Full,
+                Full,
+                Dimension(1),
+            )?;
+            Ok(tensor)
         };
 
         let embed = Embed {
@@ -907,7 +957,7 @@ impl<'a> Model<'a> {
             .into_iter()
             .map(|index| match index {
                 Some(index) => output
-                    .slice((.., index, ..))
+                    .slice(.., index, ..)
                     .expect("this never happens")
                     .to_vec(),
                 None => vec![],
@@ -930,7 +980,7 @@ impl<'a> Model<'a> {
                 let stack = TensorCpu::stack(
                     tokens
                         .into_iter()
-                        .map(|token| tensor.embed.w.slice((.., token as usize, ..)))
+                        .map(|token| tensor.embed.w.slice(.., token as usize, ..))
                         .try_collect()?,
                 )
                 .unwrap_or_else(|_| context.zeros(Shape::new(self.info.num_emb, 1, 0)));
@@ -981,8 +1031,8 @@ impl<'a> Model<'a> {
                     let last = headers[end - 1];
                     assert_eq!(last - first + 1, end - start);
 
-                    let input = buffer.ffn_x.view((.., first..=last, ..))?;
-                    let output = output.head_x.view((.., start..end, ..))?;
+                    let input = buffer.ffn_x.view(.., first..=last, ..)?;
+                    let output = output.head_x.view(.., start..end, ..)?;
                     ops.push(TensorOp::blit(input, output)?);
 
                     start = end;
@@ -1060,16 +1110,16 @@ impl<'a> Model<'a> {
                     &buffer.att_rx,
                 )?,
                 layer.att.w_k.matmul_op(
-                    buffer.att_kx.view((.., .., ..))?,
-                    buffer.att_k.view((.., .., ..))?,
+                    buffer.att_kx.view(.., .., ..)?,
+                    buffer.att_k.view(.., .., ..)?,
                 )?,
                 layer.att.w_v.matmul_op(
-                    buffer.att_vx.view((.., .., ..))?,
-                    buffer.att_v.view((.., .., ..))?,
+                    buffer.att_vx.view(.., .., ..)?,
+                    buffer.att_v.view(.., .., ..)?,
                 )?,
                 layer.att.w_r.matmul_op(
-                    buffer.att_rx.view((.., .., ..))?,
-                    buffer.att_r.view((.., .., ..))?,
+                    buffer.att_rx.view(.., .., ..)?,
+                    buffer.att_r.view(.., .., ..)?,
                 )?,
                 TensorOp::time_mix(
                     &stack,
@@ -1082,8 +1132,8 @@ impl<'a> Model<'a> {
                     state.att(index)?,
                 )?,
                 layer.att.w_o.matmul_op(
-                    buffer.att_x.view((.., .., ..))?,
-                    buffer.att_o.view((.., .., ..))?,
+                    buffer.att_x.view(.., .., ..)?,
+                    buffer.att_o.view(.., .., ..)?,
                 )?,
                 TensorOp::add(&buffer.input, &buffer.att_o)?,
             ];
@@ -1115,17 +1165,17 @@ impl<'a> Model<'a> {
                     &buffer.ffn_rx,
                 )?,
                 layer.ffn.w_k.matmul_op(
-                    buffer.ffn_kx.view((.., .., ..))?,
-                    buffer.ffn_k.view((.., .., ..))?,
+                    buffer.ffn_kx.view(.., .., ..)?,
+                    buffer.ffn_k.view(.., .., ..)?,
                 )?,
                 TensorOp::squared_relu(&buffer.ffn_k)?,
                 layer.ffn.w_v.matmul_op(
-                    buffer.ffn_k.view((.., .., ..))?,
-                    buffer.ffn_v.view((.., .., ..))?,
+                    buffer.ffn_k.view(.., .., ..)?,
+                    buffer.ffn_v.view(.., .., ..)?,
                 )?,
                 layer.ffn.w_r.matmul_op(
-                    buffer.ffn_rx.view((.., .., ..))?,
-                    buffer.ffn_r.view((.., .., ..))?,
+                    buffer.ffn_rx.view(.., .., ..)?,
+                    buffer.ffn_r.view(.., .., ..)?,
                 )?,
                 TensorOp::channel_mix(
                     &buffer.cursors,
@@ -1156,8 +1206,8 @@ impl<'a> Model<'a> {
             for (chunk, matrix) in tensor.head.w.iter().enumerate() {
                 let start = chunk * self.head_chunk_size;
                 let end = start + self.head_chunk_size;
-                let input = head_x.view((.., .., ..))?;
-                let output = output.head_o.view((start..end, .., ..))?;
+                let input = head_x.view(.., .., ..)?;
+                let output = output.head_o.view(start..end, .., ..)?;
                 ops.push(TensorOp::matmul_vec(matrix, input, output)?);
             }
 

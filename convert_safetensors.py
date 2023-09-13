@@ -16,6 +16,7 @@ args = parser.parse_args()
 def convert_file(
     pt_filename: str,
     sf_filename: str,
+    transpose_names = []
 ):
     loaded = torch.load(pt_filename, map_location="cpu")
     if "state_dict" in loaded:
@@ -26,7 +27,14 @@ def convert_file(
         print(f'{k}\t{v.shape}\t{v.dtype}')
 
     # For tensors to be contiguous
-    loaded = {k: v.contiguous() for k, v in loaded.items()}
+    for k, v in loaded.items():
+        for transpose_name in transpose_names:
+            if transpose_name in k:
+                loaded[k] = v.transpose(0, 1)
+    loaded = {k.lower(): v.contiguous() for k, v in loaded.items()}
+
+    for k, v in loaded.items():
+        print(f'{k}\t{v.shape}\t{v.dtype}')
 
     dirname = os.path.dirname(sf_filename)
     os.makedirs(dirname, exist_ok=True)
@@ -40,5 +48,5 @@ def convert_file(
 
 
 if __name__ == "__main__":
-    convert_file(args.input, args.output)
+    convert_file(args.input, args.output, ['lora_A'])
     print(f"Saved to {args.output}")

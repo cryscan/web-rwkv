@@ -214,12 +214,6 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
-            "matmul_mat",
-            include_str!("shaders/matmul_mat.wgsl"),
-            "matmul",
-            None,
-        )
-        .with_pipeline(
             "matmul_mat_fp16",
             include_str!("shaders/matmul_mat_fp16.wgsl"),
             "matmul",
@@ -257,6 +251,7 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
+        .with_pipeline("blend", include_str!("shaders/blend.wgsl"), "blend", None)
     }
 
     pub fn with_quant_pipelines(self) -> Self {

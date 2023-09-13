@@ -1,5 +1,6 @@
 use bytemuck::Pod;
 use half::f16;
+use safetensors::Dtype;
 
 pub trait Zero: Sized + core::ops::Add<Self, Output = Self> {
     fn zero() -> Self;
@@ -73,13 +74,25 @@ pub trait Scalar: Sized + Clone + Copy + Pod + Zero + One + sealed::Sealed {
     fn size() -> usize {
         std::mem::size_of::<Self>()
     }
+
+    const DATA_TYPE: Dtype;
 }
 
-impl Scalar for f32 {}
-impl Scalar for f16 {}
-impl Scalar for u8 {}
-impl Scalar for u16 {}
-impl Scalar for u32 {}
+impl Scalar for f32 {
+    const DATA_TYPE: Dtype = Dtype::F32;
+}
+impl Scalar for f16 {
+    const DATA_TYPE: Dtype = Dtype::F16;
+}
+impl Scalar for u8 {
+    const DATA_TYPE: Dtype = Dtype::U8;
+}
+impl Scalar for u16 {
+    const DATA_TYPE: Dtype = Dtype::U16;
+}
+impl Scalar for u32 {
+    const DATA_TYPE: Dtype = Dtype::U32;
+}
 
 mod sealed {
     use half::f16;

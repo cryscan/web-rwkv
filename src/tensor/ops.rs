@@ -3,7 +3,7 @@ use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, CommandEncoder, ComputePass, ComputePipeline,
 };
 
-use super::{Kind, ReadWrite, Shape, TensorError, TensorExt, TensorGpu, TensorView};
+use super::{Kind, ReadWrite, Shape, TensorError, TensorExt, TensorGpu, TensorView, Uniform};
 use crate::num::Scalar;
 
 pub trait TensorCommand<T: Scalar, K: Kind> {
@@ -41,7 +41,10 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
     ) -> Result<(), TensorError> {
         destination.check_shape(Shape::new(source.shape[0], source.shape[1], 1))?;
         if batch >= source.shape[2] {
-            return Err(TensorError::BatchOutOfRange(batch, source.shape[2]));
+            return Err(TensorError::BatchOutOfRange {
+                batch,
+                max: source.shape[2],
+            });
         }
         let size = destination.size() as u64;
         let offset = (T::size() * source.shape[0] * source.shape[1] * batch) as u64;
@@ -282,63 +285,6 @@ impl<'a> TensorOp<'a> {
             pipeline,
             bindings,
             dispatch: [matrix.shape[1] as u32 / 4, shape[1] as u32, shape[2] as u32],
-        })
-    }
-
-    /// Fp32 matrix-matrix multiplication.
-    /// - `matrix` shape: `[K, M, B]`.
-    /// - `input` shape: `[K, N, B]`.
-    /// - `output` shape: `[M, N, B]`.
-    pub fn matmul_mat(
-        xa: TensorView<'a, f16>,
-        xb: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape();
-        xa.check_shape(Shape::new(xa.shape()[0], shape[0], shape[2]))?;
-        xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2]))?;
-
-        let context = &output.tensor.context;
-        let pipeline = context.pipeline("matmul_mat")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: xa.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: xb.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: xa.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: xb.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: output.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::round(Self::round(shape[0] as u32, 4), 8),
-                Self::round(Self::round(shape[1] as u32, 4), 8),
-                shape[2] as u32,
-            ],
         })
     }
 
@@ -708,6 +654,51 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    pub fn blend(
+        factor: &'a TensorGpu<f32, Uniform>,
+        input: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        input.check_shape(shape)?;
+        factor.check_shape(Shape::new(4, 1, 1))?;
+
+        let context = &output.context;
+        let pipeline = context.pipeline("blend")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: factor.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
     pub fn quantize_mat_int8(
         input: &'a TensorGpu<f16, ReadWrite>,
         mx: &'a TensorGpu<f32, ReadWrite>,
@@ -1044,24 +1035,19 @@ mod tests {
         let matrix_dev = context.tensor_from_data(Shape::new(C, R, 1), matrix.clone())?;
         let input_f32_dev = TensorGpu::from_data(&context, Shape::new(C, T, 1), input_f32.clone())?;
         let input_f16_dev = context.init_tensor(input_f32_dev.shape());
-        let output_dev = TensorGpu::init(&context, Shape::new(R, T, 3));
+        let output_dev = TensorGpu::init(&context, Shape::new(R, T, 2));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
         let quant_input = TensorOp::quantize_vec_fp16(&input_f32_dev, &input_f16_dev)?;
         let matmul_vec = TensorOp::matmul_vec(
             &matrix_dev,
-            input_f32_dev.view((.., .., ..))?,
-            output_dev.view((.., .., 0))?,
-        )?;
-        let matmul_mat = TensorOp::matmul_mat(
-            matrix_dev.view((.., .., ..))?,
-            input_f32_dev.view((.., .., ..))?,
-            output_dev.view((.., .., 1))?,
+            input_f32_dev.view(.., .., ..)?,
+            output_dev.view(.., .., 0)?,
         )?;
         let matmul_mat_fp16 = TensorOp::matmul_mat_fp16(
-            matrix_dev.view((.., .., ..))?,
-            input_f16_dev.view((.., .., ..))?,
-            output_dev.view((.., .., 2))?,
+            matrix_dev.view(.., .., ..)?,
+            input_f16_dev.view(.., .., ..)?,
+            output_dev.view(.., .., 1)?,
         )?;
 
         let mut encoder = context
@@ -1086,15 +1072,6 @@ mod tests {
                 &context.device,
             );
             pass.execute_tensor_op(&matmul_vec);
-        }
-        {
-            let mut pass = wgpu_profiler::scope::Scope::start(
-                "matmul_mat",
-                &mut profiler,
-                &mut pass,
-                &context.device,
-            );
-            pass.execute_tensor_op(&matmul_mat);
         }
         {
             let mut pass = wgpu_profiler::scope::Scope::start(
@@ -1136,14 +1113,13 @@ mod tests {
                     .zip(input.iter())
                     .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
                 ans[(0 * T + token) * R + line] = product;
-                ans[(1 * T + token) * R + line] = product;
 
                 let input = &input_f16[token * C..(token + 1) * C];
                 let product = matrix
                     .iter()
                     .zip(input.iter())
                     .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-                ans[(2 * T + token) * R + line] = product;
+                ans[(1 * T + token) * R + line] = product;
             }
         }
 
@@ -1173,14 +1149,14 @@ mod tests {
         let input = (0..8).map(|x| x as f32).collect_vec();
         let input = TensorGpu::from_data(&context, Shape::new(4, 1, 2), input)?;
         ops.push(TensorOp::blit(
-            input.view((.., .., ..))?,
-            output.view((.., 1, ..))?,
+            input.view(.., .., ..)?,
+            output.view(.., 1, ..)?,
         )?);
 
         let input = (8..12).map(|x| x as f32).collect_vec();
         let input = TensorGpu::from_data(&context, Shape::new(4, 1, 1), input)?;
-        let input = input.view((.., .., ..))?;
-        ops.push(TensorOp::blit(input, output.view((.., 2.., 1..2))?)?);
+        let input = input.view(.., .., ..)?;
+        ops.push(TensorOp::blit(input, output.view(.., 2.., 1..2)?)?);
 
         let mut encoder = context
             .device

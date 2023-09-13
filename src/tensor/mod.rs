@@ -12,9 +12,9 @@ use wgpu::{
 };
 
 use crate::{context::Context, num::Scalar};
-use shape::{IntoBytes, Shape, TensorSlice};
+use shape::{IntoBytes, Shape, TensorDimension, TensorSlice};
 
-use self::shape::TensorDimension;
+use self::shape::TensorAxis;
 
 pub mod cache;
 pub mod ops;
@@ -86,10 +86,14 @@ pub struct ReadBack;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TensorError {
     Empty,
+    Type,
     Size(usize, usize),
     Shape(Shape, Shape),
-    DimensionAuto,
-    BatchOutOfRange(usize, usize),
+    Dimension,
+    BatchOutOfRange {
+        batch: usize,
+        max: usize,
+    },
     SliceOutOfRange {
         dim: usize,
         start: usize,
@@ -103,10 +107,11 @@ impl std::fmt::Display for TensorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TensorError::Empty => write!(f, "list must not be empty"),
+            TensorError::Type => write!(f, "data type mismatch"),
             TensorError::Size(a, b) => write!(f, "data size not match: {a} vs. {b}"),
             TensorError::Shape(a, b) => write!(f, "tensor shape {a} doesn't match {b}"),
-            TensorError::DimensionAuto => write!(f, "cannot deduce dimension"),
-            TensorError::BatchOutOfRange(batch, max) => {
+            TensorError::Dimension => write!(f, "cannot deduce dimension"),
+            TensorError::BatchOutOfRange { batch, max } => {
                 write!(f, "batch {batch} out of range of max {max}")
             }
             TensorError::SliceOutOfRange { dim, start, end } => write!(
@@ -187,11 +192,27 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
         data: impl Into<Cow<'a, [T]>>,
     ) -> Result<Self, TensorError>;
     fn init(context: &Context, shape: Shape) -> Self;
+
+    fn from_safetensors(
+        context: &Context,
+        tensor: safetensors::tensor::TensorView<'a>,
+    ) -> Result<Self, TensorError> {
+        if tensor.dtype() != T::DATA_TYPE {
+            return Err(TensorError::Type);
+        }
+        let shape = match tensor.shape() {
+            [] => Shape::new(0, 0, 0),
+            [x] => Shape::new(*x, 1, 1),
+            [y, x] => Shape::new(*x, *y, 1),
+            [z, y, x] | [1, z, y, x] => Shape::new(*x, *y, *z),
+            _ => return Err(TensorError::Dimension),
+        };
+        Self::from_data(context, shape, bytemuck::cast_slice(tensor.data()))
+    }
 }
 
-pub trait TensorExt {
+pub trait TensorExt: Sized {
     fn shape(&self) -> Shape;
-
     fn check_shape(&self, shape: Shape) -> Result<(), TensorError> {
         (self.shape() == shape)
             .then_some(())
@@ -256,6 +277,17 @@ impl<D: Device, T: Scalar> Tensor<D, T> {
     #[inline]
     pub fn data(&self) -> &D::Data {
         &self.data
+    }
+
+    #[inline]
+    pub fn reshape(
+        self,
+        x: TensorDimension,
+        y: TensorDimension,
+        z: TensorDimension,
+    ) -> Result<Self, TensorError> {
+        let shape = TensorDimension::deduce(self.shape, x, y, z)?;
+        Ok(Self { shape, ..self })
     }
 }
 
@@ -401,20 +433,16 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     pub fn load_batch(&self, host: &TensorCpu<'_, T>, batch: usize) -> Result<(), TensorError> {
         host.check_shape(Shape::new(self.shape[0], self.shape[1], 1))?;
         if batch >= self.shape[2] {
-            return Err(TensorError::BatchOutOfRange(batch, self.shape[2]));
+            return Err(TensorError::BatchOutOfRange {
+                batch,
+                max: self.shape[2],
+            });
         }
         let offset = (T::size() * self.shape[0] * self.shape[1] * batch) as u64;
         self.context
             .queue
             .write_buffer(&self.buffer, offset, bytemuck::cast_slice(&host.data[..]));
         Ok(())
-    }
-
-    pub fn reshape(self, shape: Shape) -> Result<Self, TensorError> {
-        if self.shape.len() != shape.len() {
-            return Err(TensorError::Size(self.shape.len(), shape.len()));
-        }
-        Ok(Self { shape, ..self })
     }
 
     pub fn destroy(self) {
@@ -484,13 +512,13 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
     pub fn split(self, axis: usize) -> Result<Vec<Self>, TensorError> {
         match axis {
             0 => (0..self.shape[0])
-                .map(|index| self.slice((index, .., ..)))
+                .map(|index| self.slice(index, .., ..))
                 .try_collect(),
             1 => (0..self.shape[1])
-                .map(|index| self.slice((.., index, ..)))
+                .map(|index| self.slice(.., index, ..))
                 .try_collect(),
             2 => (0..self.shape[2])
-                .map(|index| self.slice((.., .., index)))
+                .map(|index| self.slice(.., .., index))
                 .try_collect(),
             _ => Ok(vec![self]),
         }
@@ -537,17 +565,13 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         })
     }
 
-    pub fn reshape(
-        self,
-        x: TensorDimension,
-        y: TensorDimension,
-        z: TensorDimension,
-    ) -> Result<Self, TensorError> {
-        let shape = TensorDimension::deduce(self.shape, x, y, z)?;
-        Ok(Self { shape, ..self })
-    }
-
-    pub fn slice(&self, slice: impl TensorSlice) -> Result<TensorCpu<'a, T>, TensorError> {
+    pub fn slice(
+        &self,
+        x: impl TensorAxis,
+        y: impl TensorAxis,
+        z: impl TensorAxis,
+    ) -> Result<TensorCpu<'a, T>, TensorError> {
+        let slice = (x, y, z);
         let (start, end) = slice.shape_bounds(self.shape)?;
         let shape = end - start;
 
@@ -565,7 +589,13 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         })
     }
 
-    pub fn into_slice(self, slice: impl TensorSlice) -> Result<Self, TensorError> {
+    pub fn into_slice(
+        self,
+        x: impl TensorAxis,
+        y: impl TensorAxis,
+        z: impl TensorAxis,
+    ) -> Result<Self, TensorError> {
+        let slice = (x, y, z);
         let (start, end) = slice.shape_bounds(self.shape)?;
         let shape = end - start;
 
@@ -620,7 +650,13 @@ impl<T: Scalar> TensorView<'_, T> {
 }
 
 impl<T: Scalar> TensorGpu<T, ReadWrite> {
-    pub fn view(&self, slice: impl TensorSlice) -> Result<TensorView<'_, T>, TensorError> {
+    pub fn view(
+        &self,
+        x: impl TensorAxis,
+        y: impl TensorAxis,
+        z: impl TensorAxis,
+    ) -> Result<TensorView<'_, T>, TensorError> {
+        let slice = (x, y, z);
         let (start, end) = slice.shape_bounds(self.shape)?;
         let view = View {
             stride: self.shape,

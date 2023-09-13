@@ -38,28 +38,26 @@ fn matmul(
     let ra = vec2<u32>(va.shape.x / 4u, va.shape.y);
     let rb = vec2<u32>(vb.shape.x / 4u, vb.shape.y);
     let stride = min(ra.x, rb.x);
-
     let i = index & 0x1fu;
-    let j = min(32u, stride);
 
     var local_sum: mat4x4<f32>;
     for (var k = 0u; k < stride; k += 32u) {
-        // load 8x4 rows from each of the matrix, each with 32x4 columns
-        // use the first 32 threads to load from the 1st matrix, and use the last 32 threads to load from the 2nd
-        for (var y = 0u; y < 32u; y += 1u) {
+        // load 8x4 rows from each of the matrix, each with 64x4 columns
+        var x = k + i;
+        for (var j = 0u; j < 32u; j += 1u) {
             if index < 32u {
-                let ua = vec2<u32>(k + i, b.x + y);
-                if all(ua < ra) {
-                    sa[y][i] = xa[compute_index(va, uid.z, ua.y, ua.x)];
+                let y = b.x + j;
+                if x < ra.x && y < ra.y {
+                    sa[j][i] = xa[compute_index(va, uid.z, y, x)];
                 } else {
-                    sa[y][i] = vec2<u32>(0u);
+                    sa[j][i] = vec2<u32>(0u);
                 }
             } else {
-                let ub = vec2<u32>(k + i, b.y + y);
-                if all(ub < rb) {
-                    sb[y][i] = xb[compute_index(vb, uid.z, ub.y, ub.x)];
+                let y = b.y + j;
+                if x < rb.x && y < rb.y {
+                    sb[j][i] = xb[compute_index(vb, uid.z, y, x)];
                 } else {
-                    sb[y][i] = vec2<u32>(0u);
+                    sb[j][i] = vec2<u32>(0u);
                 }
             }
         }
@@ -67,7 +65,8 @@ fn matmul(
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if u.x < ra.y && u.y < rb.y {
-            for (var x = 0u; x < j; x += 1u) {
+            let reduce = min(32u, stride - k);
+            for (x = 0u; x < reduce; x += 1u) {
                 let aa = mat4x4<f32>(
                     unpack4x16float(sa[t.x][x]),
                     unpack4x16float(sa[t.x + 1u][x]),
