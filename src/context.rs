@@ -336,8 +336,8 @@ impl<'a> ContextBuilder<'a> {
             .with_pipeline("quant_mat_int8_rx", shader, "compute_rx", layout)
             .with_pipeline("quant_mat_int8_ry", shader, "compute_ry", layout)
             .with_pipeline(
-                "quant_vec_fp16",
-                include_str!("shaders/quant_vec_fp16.wgsl"),
+                "quant_fp16",
+                include_str!("shaders/quant_fp16.wgsl"),
                 "quantize",
                 None,
             )

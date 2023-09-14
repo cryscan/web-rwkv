@@ -772,7 +772,7 @@ impl<'a> TensorOp<'a> {
         }
     }
 
-    pub fn quantize_vec_fp16(
+    pub fn quantize_fp16(
         input: &'a TensorGpu<f32, ReadWrite>,
         output: &'a TensorGpu<f16, ReadWrite>,
     ) -> Result<Self, TensorError> {
@@ -780,7 +780,7 @@ impl<'a> TensorOp<'a> {
         input.check_shape(shape)?;
 
         let context = &output.context;
-        let pipeline = context.pipeline("quant_vec_fp16")?;
+        let pipeline = context.pipeline("quant_fp16")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1038,7 +1038,7 @@ mod tests {
         let output_dev = TensorGpu::init(&context, Shape::new(R, T, 2));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
-        let quant_input = TensorOp::quantize_vec_fp16(&input_f32_dev, &input_f16_dev)?;
+        let quant_input = TensorOp::quantize_fp16(&input_f32_dev, &input_f16_dev)?;
         let matmul_vec = TensorOp::matmul_vec(
             &matrix_dev,
             input_f32_dev.view(.., .., ..)?,

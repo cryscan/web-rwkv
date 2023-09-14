@@ -415,15 +415,6 @@ impl BackedState {
     }
 }
 
-pub struct ModelBuilder<'a> {
-    context: Context,
-    data: &'a [u8],
-    lora: Vec<Lora<'a>>,
-    quant: Quantization,
-    head_chunk_size: usize,
-    token_chunk_size: usize,
-}
-
 pub struct Lora<'a> {
     /// Raw lora data from `safetensors`.
     pub data: &'a [u8],
@@ -433,9 +424,43 @@ pub struct Lora<'a> {
 
 pub struct LoraBlend {
     /// A regex pattern that matches tensors in the model.
-    pub pattern: Regex,
+    pattern: Regex,
     /// The blend factor.
-    pub alpha: f32,
+    alpha: f32,
+}
+
+impl Default for LoraBlend {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            pattern: Regex::new("*").unwrap(),
+            alpha: 1.0,
+        }
+    }
+}
+
+impl LoraBlend {
+    #[inline]
+    pub fn new(pattern: &str, alpha: f32) -> Result<Self> {
+        Ok(Self {
+            pattern: Regex::new(pattern)?,
+            alpha,
+        })
+    }
+
+    #[inline]
+    pub fn alpha(&self) -> f32 {
+        self.alpha
+    }
+}
+
+pub struct ModelBuilder<'a> {
+    context: Context,
+    data: &'a [u8],
+    lora: Vec<Lora<'a>>,
+    quant: Quantization,
+    head_chunk_size: usize,
+    token_chunk_size: usize,
 }
 
 impl<'a> ModelBuilder<'a> {
@@ -551,16 +576,16 @@ impl<'a> ModelBuilder<'a> {
             num_vocab,
         };
 
-        let _lora_vectors = |name: &str| -> Vec<(TensorCpu<f32>, f32)> {
+        let lora_vectors = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
             lora.iter()
                 .zip_eq(lora_tensors.iter())
                 .filter_map(|(lora, data)| {
-                    let blend_data = |blend: &LoraBlend| {
+                    let blender = |blend: &LoraBlend| {
                         data.tensor(name).ok().and_then(|tensor| {
                             let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)
                                 .ok()?
                                 .map(|x| x.to_f32());
-                            Some((tensor, blend.alpha))
+                            Some((tensor.into(), blend.alpha))
                         })
                     };
                     // find the last blend that matches the name while the tensor exists in the data
@@ -568,15 +593,15 @@ impl<'a> ModelBuilder<'a> {
                         .iter()
                         .filter(|blend| blend.pattern.is_match(name))
                         .last()
-                        .and_then(blend_data)
+                        .and_then(blender)
                 })
                 .collect()
         };
-        let _lora_matrices = |name: &str| -> Vec<(TensorCpu<f32>, f32)> {
+        let lora_matrices = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
             lora.iter()
                 .zip_eq(lora_tensors.iter())
                 .filter_map(|(lora, data)| {
-                    let blend_data = |blend: &LoraBlend| {
+                    let blender = |blend: &LoraBlend| {
                         let a = data
                             .tensor(&format!("{name}.lora_a"))
                             .ok()
@@ -589,9 +614,12 @@ impl<'a> ModelBuilder<'a> {
                             .and_then(|tensor| {
                                 TensorGpu::<f16, _>::from_safetensors(&context, tensor).ok()
                             })?;
-                        let output =
-                            TensorGpu::init(&context, Shape::new(a.shape()[1], b.shape()[1], 1));
-                        let map = TensorGpu::init(&context, output.shape());
+                        let output: TensorGpu<_, _> =
+                            context.init_tensor(Shape::new(a.shape()[1], b.shape()[1], 1));
+
+                        let mut encoder = context
+                            .device
+                            .create_command_encoder(&CommandEncoderDescriptor::default());
 
                         let op = TensorOp::matmul_mat_fp16(
                             b.view(.., .., ..).ok()?,
@@ -599,24 +627,21 @@ impl<'a> ModelBuilder<'a> {
                             output.view(.., .., ..).ok()?,
                         )
                         .ok()?;
-                        let mut encoder = context
-                            .device
-                            .create_command_encoder(&CommandEncoderDescriptor::default());
                         let mut pass =
                             encoder.begin_compute_pass(&ComputePassDescriptor::default());
                         pass.execute_tensor_op(&op);
                         drop(pass);
-                        context.queue.submit(Some(encoder.finish()));
 
-                        let host = TensorCpu::from(map);
-                        Some((host, blend.alpha))
+                        context.queue.submit(Some(encoder.finish()));
+                        Some((output, blend.alpha))
                     };
+
                     // find the last blend that matches the name while the tensor exists in the data
                     lora.blend
                         .iter()
                         .filter(|blend| blend.pattern.is_match(name))
                         .last()
-                        .and_then(blend_data)
+                        .and_then(blender)
                 })
                 .collect()
         };
@@ -626,35 +651,123 @@ impl<'a> ModelBuilder<'a> {
             let tensor = model.tensor(&name)?;
             let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
                 .map(|x| x.to_f32())
-                .reshape(Auto, Dimension(1), Dimension(1))?;
-            Ok(tensor.into())
+                .reshape(Auto, Dimension(1), Dimension(1))?
+                .into();
+
+            let mut encoder = context
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor::default());
+
+            for (lora, alpha) in lora_vectors(&name) {
+                let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
+                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
+                let op = TensorOp::blend(&factor, &lora, &tensor)?;
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                pass.execute_tensor_op(&op);
+            }
+
+            context.queue.submit(Some(encoder.finish()));
+            Ok(tensor)
         };
         let load_vector_exp_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
             use TensorDimension::{Auto, Dimension};
             let tensor = model.tensor(&name)?;
             let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
                 .map(|x| -x.to_f32().exp())
-                .reshape(Auto, Dimension(1), Dimension(1))?;
-            Ok(tensor.into())
+                .reshape(Auto, Dimension(1), Dimension(1))?
+                .into();
+
+            let mut encoder = context
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor::default());
+
+            for (lora, alpha) in lora_vectors(&name) {
+                let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
+                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
+                let op = TensorOp::blend(&factor, &lora, &tensor)?;
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                pass.execute_tensor_op(&op);
+            }
+
+            context.queue.submit(Some(encoder.finish()));
+            Ok(tensor)
         };
         let load_vector_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
             use TensorDimension::{Auto, Dimension};
+            let lora = lora_vectors(&name);
             let tensor = model.tensor(&name)?;
-            let tensor = TensorGpu::<f16, _>::from_safetensors(&context, tensor)?.reshape(
-                Auto,
-                Dimension(1),
-                Dimension(1),
-            )?;
+            let tensor = if lora.is_empty() {
+                TensorGpu::<f16, _>::from_safetensors(&context, tensor)?.reshape(
+                    Auto,
+                    Dimension(1),
+                    Dimension(1),
+                )?
+            } else {
+                let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
+                    .map(|x| x.to_f32())
+                    .reshape(Auto, Dimension(1), Dimension(1))?;
+                let tensor_f32 = TensorGpu::from(tensor_f32);
+                let tensor_f16 = context.init_tensor(tensor_f32.shape());
+
+                let mut encoder = context
+                    .device
+                    .create_command_encoder(&CommandEncoderDescriptor::default());
+
+                for (lora, alpha) in lora_vectors(&name) {
+                    let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
+                    let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
+                    let op = TensorOp::blend(&factor, &lora, &tensor_f32)?;
+                    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                    pass.execute_tensor_op(&op);
+                }
+
+                let op = TensorOp::quantize_fp16(&tensor_f32, &tensor_f16)?;
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                pass.execute_tensor_op(&op);
+                drop(pass);
+
+                context.queue.submit(Some(encoder.finish()));
+                tensor_f16
+            };
             Ok(tensor)
         };
         let load_matrix_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
             use TensorDimension::{Dimension, Full};
+            let lora = lora_matrices(&name);
             let tensor = model.tensor(&name)?;
-            let tensor = TensorGpu::<f16, _>::from_safetensors(&context, tensor)?.reshape(
-                Full,
-                Full,
-                Dimension(1),
-            )?;
+            let tensor = if lora.is_empty() {
+                TensorGpu::<f16, _>::from_safetensors(&context, tensor)?.reshape(
+                    Full,
+                    Full,
+                    Dimension(1),
+                )?
+            } else {
+                let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
+                    .map(|x| x.to_f32())
+                    .reshape(Full, Full, Dimension(1))?;
+                let tensor_f32 = TensorGpu::from(tensor_f32);
+                let tensor_f16 = context.init_tensor(tensor_f32.shape());
+
+                let mut encoder = context
+                    .device
+                    .create_command_encoder(&CommandEncoderDescriptor::default());
+
+                for (lora, alpha) in lora_vectors(&name) {
+                    let factor = vec![alpha, 1.0, 0.0, 0.0];
+                    let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
+                    let op = TensorOp::blend(&factor, &lora, &tensor_f32)?;
+                    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                    pass.execute_tensor_op(&op);
+                }
+
+                let op = TensorOp::quantize_fp16(&tensor_f32, &tensor_f16)?;
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                pass.execute_tensor_op(&op);
+                drop(pass);
+
+                context.queue.submit(Some(encoder.finish()));
+                tensor_f16
+            };
             Ok(tensor)
         };
 
