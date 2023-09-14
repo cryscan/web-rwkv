@@ -76,6 +76,60 @@ pub enum Quantization {
     Int8(LayerFlags),
 }
 
+pub struct Lora<'a> {
+    pub data: &'a [u8],
+    pub blend: LoraBlend,
+}
+
+#[derive(Debug, Clone)]
+pub enum LoraBlend {
+    Full(f32),
+    Patterns(Vec<LoraBlendPattern>),
+}
+
+impl LoraBlend {
+    fn into_patterns(self) -> Vec<LoraBlendPattern> {
+        match self {
+            LoraBlend::Full(alpha) => {
+                vec![
+                    LoraBlendPattern::new(r"blocks\.[0-9]+\.([0-9a-zA-Z\.]+)", alpha)
+                        .expect("default blend pattern"),
+                ]
+            }
+            LoraBlend::Patterns(patterns) => patterns,
+        }
+    }
+}
+
+impl Default for LoraBlend {
+    fn default() -> Self {
+        Self::Full(1.0)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoraBlendPattern {
+    /// A regex pattern that matches tensors in the model.
+    pattern: Regex,
+    /// The blend factor.
+    alpha: f32,
+}
+
+impl LoraBlendPattern {
+    #[inline]
+    pub fn new(pattern: &str, alpha: f32) -> Result<Self> {
+        Ok(Self {
+            pattern: Regex::new(pattern)?,
+            alpha,
+        })
+    }
+
+    #[inline]
+    pub fn alpha(&self) -> f32 {
+        self.alpha
+    }
+}
+
 #[derive(Debug)]
 enum Matrix {
     Fp16(TensorGpu<f16, ReadWrite>),
@@ -415,45 +469,6 @@ impl BackedState {
     }
 }
 
-pub struct Lora<'a> {
-    /// Raw lora data from `safetensors`.
-    pub data: &'a [u8],
-    /// Blend factors for tensor name pattens.
-    pub blend: Vec<LoraBlend>,
-}
-
-pub struct LoraBlend {
-    /// A regex pattern that matches tensors in the model.
-    pattern: Regex,
-    /// The blend factor.
-    alpha: f32,
-}
-
-impl Default for LoraBlend {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            pattern: Regex::new("*").unwrap(),
-            alpha: 1.0,
-        }
-    }
-}
-
-impl LoraBlend {
-    #[inline]
-    pub fn new(pattern: &str, alpha: f32) -> Result<Self> {
-        Ok(Self {
-            pattern: Regex::new(pattern)?,
-            alpha,
-        })
-    }
-
-    #[inline]
-    pub fn alpha(&self) -> f32 {
-        self.alpha
-    }
-}
-
 pub struct ModelBuilder<'a> {
     context: Context,
     data: &'a [u8],
@@ -582,7 +597,9 @@ impl<'a> ModelBuilder<'a> {
                 .filter_map(|(lora, data)| {
                     // find the last blend that matches the name while the tensor exists in the data
                     lora.blend
-                        .iter()
+                        .clone()
+                        .into_patterns()
+                        .into_iter()
                         .filter(|blend| blend.pattern.is_match(name))
                         .last()
                         .and_then(|blend| {
@@ -604,7 +621,9 @@ impl<'a> ModelBuilder<'a> {
                     .filter_map(|(lora, data)| {
                         // find the last blend that matches the name while the tensor exists in the data
                         lora.blend
-                            .iter()
+                            .clone()
+                            .into_patterns()
+                            .into_iter()
                             .filter(|blend| blend.pattern.is_match(name))
                             .last()
                             .and_then(|blend| {
