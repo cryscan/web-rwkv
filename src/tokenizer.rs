@@ -1,4 +1,5 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+use derive_getters::Getters;
 use std::collections::BTreeMap;
 
 #[derive(Debug)]
@@ -28,7 +29,7 @@ impl std::fmt::Display for TokenizerError {
 
 impl std::error::Error for TokenizerError {}
 
-#[derive(Clone)]
+#[derive(Clone, Getters)]
 pub struct Tokenizer {
     first_bytes_to_lengths: Vec<Box<[u16]>>,
     bytes_to_token_index: HashMap<Vec<u8>, u16>,
