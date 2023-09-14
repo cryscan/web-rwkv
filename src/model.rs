@@ -576,9 +576,6 @@ impl<'a> ModelBuilder<'a> {
             num_vocab,
         };
 
-        fn warn_err(err: impl std::error::Error) {
-            log::warn!("{err}");
-        }
         let lora_vectors = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
             lora.iter()
                 .zip_eq(lora_tensors.iter())
@@ -586,9 +583,9 @@ impl<'a> ModelBuilder<'a> {
                     let blender = |blend: &LoraBlend| {
                         data.tensor(name).ok().and_then(|tensor| {
                             let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)
-                                .map_err(warn_err)
                                 .ok()?
                                 .map(|x| x.to_f32());
+                            log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
                             Some((tensor.into(), blend.alpha))
                         })
                     };
@@ -601,58 +598,52 @@ impl<'a> ModelBuilder<'a> {
                 })
                 .collect()
         };
-        let lora_matrices = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
-            lora.iter()
-                .zip_eq(lora_tensors.iter())
-                .filter_map(|(lora, data)| {
-                    let blender = |blend: &LoraBlend| {
-                        let a = data
-                            .tensor(&format!("{name}.lora_a"))
-                            .map_err(warn_err)
-                            .and_then(|tensor| {
-                                TensorGpu::<f16, _>::from_safetensors(&context, tensor)
-                                    .map_err(warn_err)
-                            })
-                            .ok()?;
-                        let b = data
-                            .tensor(&format!("{name}.lora_b"))
-                            .map_err(warn_err)
-                            .and_then(|tensor| {
-                                TensorGpu::<f16, _>::from_safetensors(&context, tensor)
-                                    .map_err(warn_err)
-                            })
-                            .ok()?;
-                        let output: TensorGpu<_, _> =
-                            context.init_tensor(Shape::new(a.shape()[1], b.shape()[1], 1));
+        let lora_matrices =
+            |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
+                lora.iter()
+                    .zip_eq(lora_tensors.iter())
+                    .filter_map(|(lora, data)| {
+                        let blender =
+                            |blend: &LoraBlend| {
+                                let a = data.tensor(&format!("{name}.lora_a")).ok().and_then(
+                                    |tensor| TensorGpu::from_safetensors(&context, tensor).ok(),
+                                )?;
+                                let b = data.tensor(&format!("{name}.lora_b")).ok().and_then(
+                                    |tensor| TensorGpu::from_safetensors(&context, tensor).ok(),
+                                )?;
+                                let output: TensorGpu<_, _> =
+                                    context.init_tensor(Shape::new(a.shape()[1], b.shape()[1], 1));
 
-                        let mut encoder = context
-                            .device
-                            .create_command_encoder(&CommandEncoderDescriptor::default());
+                                let mut encoder = context
+                                    .device
+                                    .create_command_encoder(&CommandEncoderDescriptor::default());
 
-                        let op = TensorOp::matmul_mat_fp16(
-                            b.view(.., .., ..).ok()?,
-                            a.view(.., .., ..).ok()?,
-                            output.view(.., .., ..).ok()?,
-                        )
-                        .ok()?;
-                        let mut pass =
-                            encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                        pass.execute_tensor_op(&op);
-                        drop(pass);
+                                let op = TensorOp::matmul_mat_fp16(
+                                    b.view(.., .., ..).ok()?,
+                                    a.view(.., .., ..).ok()?,
+                                    output.view(.., .., ..).ok()?,
+                                )
+                                .ok()?;
+                                let mut pass =
+                                    encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                                pass.execute_tensor_op(&op);
+                                drop(pass);
 
-                        context.queue.submit(Some(encoder.finish()));
-                        Some((output, blend.alpha))
-                    };
+                                context.queue.submit(Some(encoder.finish()));
 
-                    // find the last blend that matches the name while the tensor exists in the data
-                    lora.blend
-                        .iter()
-                        .filter(|blend| blend.pattern.is_match(name))
-                        .last()
-                        .and_then(blender)
-                })
-                .collect()
-        };
+                                log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
+                                Some((output, blend.alpha))
+                            };
+
+                        // find the last blend that matches the name while the tensor exists in the data
+                        lora.blend
+                            .iter()
+                            .filter(|blend| blend.pattern.is_match(name))
+                            .last()
+                            .and_then(blender)
+                    })
+                    .collect()
+            };
 
         let load_vector_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
             use TensorDimension::{Auto, Dimension};
