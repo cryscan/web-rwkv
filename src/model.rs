@@ -576,6 +576,9 @@ impl<'a> ModelBuilder<'a> {
             num_vocab,
         };
 
+        fn warn_err(err: impl std::error::Error) {
+            log::warn!("{err}");
+        }
         let lora_vectors = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
             lora.iter()
                 .zip_eq(lora_tensors.iter())
@@ -583,6 +586,7 @@ impl<'a> ModelBuilder<'a> {
                     let blender = |blend: &LoraBlend| {
                         data.tensor(name).ok().and_then(|tensor| {
                             let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)
+                                .map_err(warn_err)
                                 .ok()?
                                 .map(|x| x.to_f32());
                             Some((tensor.into(), blend.alpha))
@@ -604,16 +608,20 @@ impl<'a> ModelBuilder<'a> {
                     let blender = |blend: &LoraBlend| {
                         let a = data
                             .tensor(&format!("{name}.lora_a"))
-                            .ok()
+                            .map_err(warn_err)
                             .and_then(|tensor| {
-                                TensorGpu::<f16, _>::from_safetensors(&context, tensor).ok()
-                            })?;
+                                TensorGpu::<f16, _>::from_safetensors(&context, tensor)
+                                    .map_err(warn_err)
+                            })
+                            .ok()?;
                         let b = data
                             .tensor(&format!("{name}.lora_b"))
-                            .ok()
+                            .map_err(warn_err)
                             .and_then(|tensor| {
-                                TensorGpu::<f16, _>::from_safetensors(&context, tensor).ok()
-                            })?;
+                                TensorGpu::<f16, _>::from_safetensors(&context, tensor)
+                                    .map_err(warn_err)
+                            })
+                            .ok()?;
                         let output: TensorGpu<_, _> =
                             context.init_tensor(Shape::new(a.shape()[1], b.shape()[1], 1));
 
