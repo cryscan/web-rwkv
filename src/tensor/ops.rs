@@ -860,7 +860,7 @@ mod tests {
         let shape = Shape::new(x.len(), 1, 1);
 
         let x_device: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
-        let x_map = context.init_tensor(x_device.shape());
+        let x_map = context.tensor_init(x_device.shape());
 
         let mut encoder = context
             .device
@@ -892,7 +892,7 @@ mod tests {
         let shape = Shape::new(C, T, B);
 
         let x_dev: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
-        let x_map = context.init_tensor(x_dev.shape());
+        let x_map = context.tensor_init(x_dev.shape());
 
         let softmax = TensorOp::softmax(&x_dev)?;
 
@@ -955,7 +955,7 @@ mod tests {
 
         let shape = Shape::new(C, T, B);
         let x_dev = TensorGpu::from_data(&context, shape, &x)?;
-        let x_map = context.init_tensor(shape);
+        let x_map = context.tensor_init(shape);
 
         let shape = Shape::new(C, 1, 1);
         let w_dev = TensorGpu::from_data(&context, shape, &w[..1000])?;
@@ -1034,7 +1034,7 @@ mod tests {
 
         let matrix_dev = context.tensor_from_data(Shape::new(C, R, 1), matrix.clone())?;
         let input_f32_dev = TensorGpu::from_data(&context, Shape::new(C, T, 1), input_f32.clone())?;
-        let input_f16_dev = context.init_tensor(input_f32_dev.shape());
+        let input_f16_dev = context.tensor_init(input_f32_dev.shape());
         let output_dev = TensorGpu::init(&context, Shape::new(R, T, 2));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 

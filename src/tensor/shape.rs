@@ -346,7 +346,7 @@ mod tests {
             Err(_) => return Ok(()),
         };
 
-        let x: TensorCpu<f32> = context.init_tensor(Shape::new(1024, 768, 3));
+        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1024, 768, 3));
         assert_eq!(
             (12..42, 7..8, 1).contiguous_bounds(x.shape)?,
             (793612, 793642)
@@ -360,16 +360,16 @@ mod tests {
         assert!((.., 42..56, 0..2).contiguous_bounds(x.shape).is_err());
         assert!((0, 0..2, 1..2).contiguous_bounds(x.shape).is_err());
 
-        let x: TensorCpu<f32> = context.init_tensor(Shape::new(1, 1024, 6));
+        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1, 1024, 6));
         assert_eq!(
             (.., 0..256, 3..=3).contiguous_bounds(x.shape)?,
             (3072, 3328)
         );
 
-        let x: TensorCpu<f32> = context.init_tensor(Shape::new(1024, 768, 1));
+        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1024, 768, 1));
         assert!((.., 0..256, ..).contiguous_bounds(x.shape).is_ok());
 
-        let x: TensorCpu<f32> = context.init_tensor(Shape::new(1, 768, 1));
+        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1, 768, 1));
         assert!((.., 256..512, ..).contiguous_bounds(x.shape).is_ok());
 
         let shape = Shape::new(4, 2, 3);

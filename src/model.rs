@@ -191,22 +191,22 @@ impl Runtime {
         let hidden_shape = Shape::new(info.num_emb << 2, num_token, 1);
 
         Self {
-            cursors: context.init_tensor(cursors_shape),
-            input: context.init_tensor(shape),
-            att_x: context.init_tensor(shape),
-            att_kx: context.init_tensor(shape),
-            att_vx: context.init_tensor(shape),
-            att_rx: context.init_tensor(shape),
-            att_k: context.init_tensor(shape),
-            att_v: context.init_tensor(shape),
-            att_r: context.init_tensor(shape),
-            att_o: context.init_tensor(shape),
-            ffn_x: context.init_tensor(shape),
-            ffn_kx: context.init_tensor(shape),
-            ffn_rx: context.init_tensor(shape),
-            ffn_k: context.init_tensor(hidden_shape),
-            ffn_v: context.init_tensor(shape),
-            ffn_r: context.init_tensor(shape),
+            cursors: context.tensor_init(cursors_shape),
+            input: context.tensor_init(shape),
+            att_x: context.tensor_init(shape),
+            att_kx: context.tensor_init(shape),
+            att_vx: context.tensor_init(shape),
+            att_rx: context.tensor_init(shape),
+            att_k: context.tensor_init(shape),
+            att_v: context.tensor_init(shape),
+            att_r: context.tensor_init(shape),
+            att_o: context.tensor_init(shape),
+            ffn_x: context.tensor_init(shape),
+            ffn_kx: context.tensor_init(shape),
+            ffn_rx: context.tensor_init(shape),
+            ffn_k: context.tensor_init(hidden_shape),
+            ffn_v: context.tensor_init(shape),
+            ffn_r: context.tensor_init(shape),
         }
     }
 }
@@ -224,9 +224,9 @@ impl Output {
         let output_shape = Shape::new(info.num_vocab, num_batch, 1);
 
         Self {
-            head_x: context.init_tensor(head_shape),
-            head_o: context.init_tensor(output_shape),
-            map: context.init_tensor(output_shape),
+            head_x: context.tensor_init(head_shape),
+            head_o: context.tensor_init(output_shape),
+            map: context.tensor_init(output_shape),
         }
     }
 }
@@ -241,8 +241,8 @@ impl Softmax {
     pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
         let shape = Shape::new(info.num_vocab, 1, num_batch);
         Self {
-            buffer: context.init_tensor(shape),
-            map: context.init_tensor(shape),
+            buffer: context.tensor_init(shape),
+            map: context.tensor_init(shape),
         }
     }
 }
@@ -296,7 +296,7 @@ impl ModelState {
     /// Back the entire device state to host.
     pub fn back(&self) -> BackedState {
         let shape = self.shape();
-        let map = self.context.init_tensor(shape);
+        let map = self.context.tensor_init(shape);
 
         let mut encoder = self
             .context
@@ -316,7 +316,7 @@ impl ModelState {
     pub fn back_batch(&self, batch: usize) -> Result<BackedState, TensorError> {
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1);
-        let map = self.context.init_tensor(shape);
+        let map = self.context.tensor_init(shape);
 
         let mut encoder = self
             .context
@@ -507,12 +507,12 @@ impl<'a> ModelBuilder<'a> {
         // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
         // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
 
-        let w = Box::new(context.init_tensor(matrix.shape()));
+        let w = Box::new(context.tensor_init(matrix.shape()));
 
-        let mx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
-        let rx = Box::new(context.init_tensor(Shape::new(shape[0], 1, 1)));
-        let my = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
-        let ry = Box::new(context.init_tensor(Shape::new(shape[1], 1, 1)));
+        let mx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1)));
+        let rx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1)));
+        let my = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1)));
+        let ry = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1)));
 
         let ops = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
 
@@ -580,21 +580,20 @@ impl<'a> ModelBuilder<'a> {
             lora.iter()
                 .zip_eq(lora_tensors.iter())
                 .filter_map(|(lora, data)| {
-                    let blender = |blend: &LoraBlend| {
-                        data.tensor(name).ok().and_then(|tensor| {
-                            let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)
-                                .ok()?
-                                .map(|x| x.to_f32());
-                            log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
-                            Some((tensor.into(), blend.alpha))
-                        })
-                    };
                     // find the last blend that matches the name while the tensor exists in the data
                     lora.blend
                         .iter()
                         .filter(|blend| blend.pattern.is_match(name))
                         .last()
-                        .and_then(blender)
+                        .and_then(|blend| {
+                            data.tensor(name).ok().and_then(|tensor| {
+                                let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)
+                                    .ok()?
+                                    .map(|x| x.to_f32());
+                                log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
+                                Some((tensor.into(), blend.alpha))
+                            })
+                        })
                 })
                 .collect()
         };
@@ -603,16 +602,22 @@ impl<'a> ModelBuilder<'a> {
                 lora.iter()
                     .zip_eq(lora_tensors.iter())
                     .filter_map(|(lora, data)| {
-                        let blender =
-                            |blend: &LoraBlend| {
+                        // find the last blend that matches the name while the tensor exists in the data
+                        lora.blend
+                            .iter()
+                            .filter(|blend| blend.pattern.is_match(name))
+                            .last()
+                            .and_then(|blend| {
                                 let a = data.tensor(&format!("{name}.lora_a")).ok().and_then(
                                     |tensor| TensorGpu::from_safetensors(&context, tensor).ok(),
                                 )?;
                                 let b = data.tensor(&format!("{name}.lora_b")).ok().and_then(
                                     |tensor| TensorGpu::from_safetensors(&context, tensor).ok(),
                                 )?;
-                                let output: TensorGpu<_, _> =
-                                    context.init_tensor(Shape::new(a.shape()[1], b.shape()[1], 1));
+                                let output = TensorGpu::init(
+                                    &context,
+                                    Shape::new(a.shape()[1], b.shape()[1], 1),
+                                );
 
                                 let mut encoder = context
                                     .device
@@ -633,14 +638,7 @@ impl<'a> ModelBuilder<'a> {
 
                                 log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
                                 Some((output, blend.alpha))
-                            };
-
-                        // find the last blend that matches the name while the tensor exists in the data
-                        lora.blend
-                            .iter()
-                            .filter(|blend| blend.pattern.is_match(name))
-                            .last()
-                            .and_then(blender)
+                            })
                     })
                     .collect()
             };
@@ -696,7 +694,7 @@ impl<'a> ModelBuilder<'a> {
             let lora = lora_vectors(&name);
             let tensor = model.tensor(&name)?;
             let tensor = if lora.is_empty() {
-                TensorGpu::<f16, _>::from_safetensors(&context, tensor)?.reshape(
+                TensorGpu::from_safetensors(&context, tensor)?.reshape(
                     Auto,
                     Dimension(1),
                     Dimension(1),
@@ -706,7 +704,7 @@ impl<'a> ModelBuilder<'a> {
                     .map(|x| x.to_f32())
                     .reshape(Auto, Dimension(1), Dimension(1))?;
                 let tensor_f32 = TensorGpu::from(tensor_f32);
-                let tensor_f16 = context.init_tensor(tensor_f32.shape());
+                let tensor_f16 = context.tensor_init(tensor_f32.shape());
 
                 let mut encoder = context
                     .device
@@ -735,17 +733,13 @@ impl<'a> ModelBuilder<'a> {
             let lora = lora_matrices(&name);
             let tensor = model.tensor(&name)?;
             let tensor = if lora.is_empty() {
-                TensorGpu::<f16, _>::from_safetensors(&context, tensor)?.reshape(
-                    Full,
-                    Full,
-                    Dimension(1),
-                )?
+                TensorGpu::from_safetensors(&context, tensor)?.reshape(Full, Full, Dimension(1))?
             } else {
                 let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
                     .map(|x| x.to_f32())
                     .reshape(Full, Full, Dimension(1))?;
                 let tensor_f32 = TensorGpu::from(tensor_f32);
-                let tensor_f16 = context.init_tensor(tensor_f32.shape());
+                let tensor_f16 = context.tensor_init(tensor_f32.shape());
 
                 let mut encoder = context
                     .device

@@ -833,7 +833,7 @@ impl<'a> Context {
     }
 
     #[inline]
-    pub fn init_tensor<T: Scalar, Tensor: TensorInit<'a, T>>(&self, shape: Shape) -> Tensor {
+    pub fn tensor_init<T: Scalar, Tensor: TensorInit<'a, T>>(&self, shape: Shape) -> Tensor {
         Tensor::init(self, shape)
     }
 }
