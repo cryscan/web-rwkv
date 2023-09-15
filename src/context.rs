@@ -78,8 +78,9 @@ pub struct ContextInner {
     pub queue: Queue,
 
     pipelines: HashMap<String, ComputePipeline>,
-    shapes: ResourceCache<Shape, Buffer>,
-    views: ResourceCache<View, Buffer>,
+
+    shape_cache: ResourceCache<Shape, Buffer>,
+    view_cache: ResourceCache<View, Buffer>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -157,7 +158,7 @@ impl<'a> ContextBuilder<'a> {
                     module,
                     entry_point,
                 });
-                (String::from_str(name).expect("Bad pipeline name"), pipeline)
+                (String::from_str(name).expect("bad pipeline name"), pipeline)
             })
             .collect();
         Ok(Context(
@@ -167,8 +168,8 @@ impl<'a> ContextBuilder<'a> {
                 device,
                 queue,
                 pipelines,
-                shapes: Default::default(),
-                views: Default::default(),
+                shape_cache: Default::default(),
+                view_cache: Default::default(),
             }
             .into(),
         ))
@@ -358,7 +359,7 @@ impl Context {
     }
 
     pub fn request_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
-        self.shapes.request(shape, || {
+        self.shape_cache.request(shape, || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &shape.into_bytes(),
@@ -368,7 +369,7 @@ impl Context {
     }
 
     pub fn request_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.views.request(view, || {
+        self.view_cache.request(view, || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &view.into_bytes(),

@@ -293,13 +293,13 @@ impl<'a> TensorOp<'a> {
     /// - `input` shape: `[K, N, B]`.
     /// - `output` shape: `[M, N, B]`.
     pub fn matmul_mat_fp16(
-        xa: TensorView<'a, f16>,
-        xb: TensorView<'a, f16>,
+        matrix: TensorView<'a, f16>,
+        input: TensorView<'a, f16>,
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        xa.check_shape(Shape::new(xa.shape()[0], shape[0], shape[2]))?;
-        xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2]))?;
+        matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2]))?;
+        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2]))?;
 
         let context = &output.tensor.context;
         let pipeline = context.pipeline("matmul_mat_fp16")?;
@@ -309,11 +309,11 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: xa.meta_binding(),
+                    resource: matrix.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: xb.meta_binding(),
+                    resource: input.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
@@ -321,11 +321,11 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: xa.binding(),
+                    resource: matrix.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: xb.binding(),
+                    resource: input.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
