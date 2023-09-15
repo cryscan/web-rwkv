@@ -615,7 +615,7 @@ impl<'a> ModelBuilder<'a> {
                 .collect()
         };
         let lora_matrices =
-            |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
+            |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32, usize)> {
                 lora.iter()
                     .zip_eq(lora_tensors.iter())
                     .filter_map(|(lora, data)| {
@@ -656,7 +656,7 @@ impl<'a> ModelBuilder<'a> {
                                 context.queue.submit(Some(encoder.finish()));
 
                                 log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
-                                Some((output, blend.alpha))
+                                Some((output, blend.alpha, a.shape()[0]))
                             })
                     })
                     .collect()
@@ -729,7 +729,7 @@ impl<'a> ModelBuilder<'a> {
                     .device
                     .create_command_encoder(&CommandEncoderDescriptor::default());
 
-                for (lora, alpha) in lora_vectors(&name) {
+                for (lora, alpha) in lora {
                     let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
                     let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
                     let op = TensorOp::blend(&factor, &lora, &tensor_f32)?;
@@ -764,8 +764,8 @@ impl<'a> ModelBuilder<'a> {
                     .device
                     .create_command_encoder(&CommandEncoderDescriptor::default());
 
-                for (lora, alpha) in lora_vectors(&name) {
-                    let factor = vec![alpha, 1.0, 0.0, 0.0];
+                for (lora, alpha, dim) in lora {
+                    let factor = vec![alpha / dim as f32, 1.0, 0.0, 0.0];
                     let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
                     let op = TensorOp::blend(&factor, &lora, &tensor_f32)?;
                     let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
