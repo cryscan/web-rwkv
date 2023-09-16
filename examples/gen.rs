@@ -12,7 +12,7 @@ use std::{
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
-    model::{LayerFlags, Model, ModelBuilder, ModelState, Quantization},
+    model::{LayerFlags, Lora, Model, ModelBuilder, ModelState, Quantization},
     tokenizer::Tokenizer,
 };
 
@@ -76,13 +76,33 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(context: &Context, model: PathBuf, quant: Option<u64>) -> Result<Model<'_>> {
+fn load_model(
+    context: &Context,
+    model: PathBuf,
+    lora: Option<PathBuf>,
+    quant: Option<u64>,
+) -> Result<Model<'_>> {
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(context, &map).with_quant(quant).build()?;
+    let model = ModelBuilder::new(&context, &map).with_quant(quant);
+
+    let model = match lora {
+        Some(lora) => {
+            let file = File::open(lora)?;
+            let map = unsafe { Mmap::map(&file)? };
+            model
+                .add_lora(Lora {
+                    data: &map,
+                    blend: Default::default(),
+                })
+                .build()?
+        }
+        None => model.build()?,
+    };
+
     println!("{:#?}", model.info());
     Ok(model)
 }
@@ -94,7 +114,7 @@ async fn run(cli: Cli) -> Result<()> {
     let model = cli
         .model
         .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
-    let model = load_model(&context, model, cli.quant)?;
+    let model = load_model(&context, model, cli.lora, cli.quant)?;
 
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
@@ -134,6 +154,8 @@ async fn run(cli: Cli) -> Result<()> {
 struct Cli {
     #[arg(short, long, value_name = "FILE")]
     model: Option<PathBuf>,
+    #[arg(short, long, value_name = "FILE")]
+    lora: Option<PathBuf>,
     #[arg(short, long, value_name = "LAYERS")]
     quant: Option<u64>,
 }
