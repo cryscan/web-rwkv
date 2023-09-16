@@ -92,7 +92,7 @@ impl LoraBlend {
         match self {
             LoraBlend::Full(alpha) => {
                 vec![
-                    LoraBlendPattern::new(r"blocks\.[0-9]+\.([0-9a-zA-Z\.]+)", alpha)
+                    LoraBlendPattern::new(r"blocks\.[0-9]+\.([0-9a-zA-Z\.\_]+)", alpha)
                         .expect("default blend pattern"),
                 ]
             }
