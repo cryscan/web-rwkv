@@ -10,6 +10,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - Batched inference.
 - Int8 quantization.
 - Very fast.
+- LoRA merging at loading time.
 
 ![chat](screenshots/chat.gif)
 ![batch](screenshots/batch.gif)
