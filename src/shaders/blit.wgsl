@@ -25,9 +25,5 @@ fn blit(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
-    if index >= stride[0] || token >= stride[1] || batch >= stride[2] {
-        return;
-    }
-
     output[compute_index(destination, batch, token, index)] = input[compute_index(source, batch, token, index)];
 }

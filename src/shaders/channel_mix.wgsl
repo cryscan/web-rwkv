@@ -45,10 +45,6 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     let cursor = compute_cursor(cursors[stack]);
     let token = stack - cursor.token;
 
-    if index >= stride || stack >= shape[1] {
-        return;
-    }
-
     let bti = stack * stride + index;
 
     if token + 1u == cursor.len {

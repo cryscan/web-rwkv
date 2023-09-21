@@ -48,10 +48,6 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     let cursor = compute_cursor(cursors[stack]);
     let token = stack - cursor.token;
 
-    if index >= stride || stack >= shape[1] {
-        return;
-    }
-
     let bti = stack * stride + index;
     if token == 0u {
         output[bti] = mix(sx[compute_index(cursor.batch, 0u, index)], x[bti], unpack4x16float(time_mix[index]));

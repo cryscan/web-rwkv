@@ -46,10 +46,6 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
-    if token >= destination.shape[1] || batch >= destination.shape[2] {
-        return;
-    }
-
     let bb = compute_index(source, batch, token, 0u);
     let cb = channel * 4u * stride.x;
 
