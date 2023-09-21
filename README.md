@@ -18,7 +18,8 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 1. [Install Rust](https://rustup.rs/).
 2. Run `cargo run --release --example gen` to generate 100 tokens and measure the time cost.
 3. Run `cargo run --release --example chat` to chat with the model.
-4. To specify the location of your safetensors model, use `cargo run --release --example chat -- --model /path/to/model`.
+4. Run `cargo run --release --example batch` to generate 4 batches of text with various lengths simultaneously.
+5. To specify the location of your safetensors model, use `cargo run --release --example chat -- --model /path/to/model`.
 
 Or you can download the pre-compiled binaries from the release page and run
 ```bash
@@ -61,6 +62,12 @@ An already-converted 0.4B model can be found under [`assets/models`](assets/mode
   
   It's most likely that you are using the D3D backend.
   Please use Vulkan backend instead.
+
+- "thread 'main' panicked at 'Error in Queue::submit: parent device is lost'"
+
+  Your GPU is not responding.
+  Maybe you are running a model that is just too big for your device. If the model doesn't fit into your VRam, the driver needs to constantly swap and transfer the model parameters, causing it to be 10x slower.
+  Try to quantize your model first.
 
 
 ## Credits
