@@ -226,7 +226,11 @@ async fn run(cli: Cli) -> Result<()> {
 
         let logits = model.run(&mut tokens, &state)?;
         let probs = model.softmax(logits)?;
-        for (index, probs) in probs.into_iter().enumerate().filter(|(_, v)| !v.is_empty()) {
+        for (index, probs) in probs
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, x)| x.map(|x| (index, x)))
+        {
             if num_tokens[index] > 0 {
                 let token = sample(probs.to_vec(), 0.5);
                 let word = String::from_utf8(tokenizer.decode(&[token])?)?;

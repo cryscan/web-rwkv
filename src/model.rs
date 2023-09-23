@@ -985,19 +985,22 @@ impl<'a> Model<'a> {
     }
 
     /// Softmax of the input tensors.
-    pub fn softmax(&self, input: Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>> {
+    pub fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
         let max_batch = input.len();
 
         let mut redirect = vec![None; max_batch];
+        let input: Vec<_> = input
+            .into_iter()
+            .enumerate()
+            .filter_map(|(batch, data)| data.map(|data| (batch, data)))
+            .map(|(batch, data)| {
+                TensorCpu::from_data(&self.context, self.head_shape(1), data)
+                    .map(|tensor| (batch, tensor))
+            })
+            .try_collect()?;
         let input = TensorCpu::stack(
             input
                 .into_iter()
-                .enumerate()
-                .filter_map(|(batch, data)| {
-                    TensorCpu::from_data(&self.context, self.head_shape(1), data)
-                        .map(|tensor| (batch, tensor))
-                        .ok()
-                })
                 .enumerate()
                 .map(|(index, (batch, tensor))| {
                     redirect[batch] = Some(index);
@@ -1028,10 +1031,10 @@ impl<'a> Model<'a> {
             .split(2)
             .expect("split buffer map")
             .into_iter()
-            .map(|tensor| tensor.to_vec())
+            .map(|tensor| Some(tensor.to_vec()))
             .collect_vec();
 
-        let mut probs = vec![vec![]; max_batch];
+        let mut probs = vec![None; max_batch];
         for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
             if let Some(redirect) = redirect {
                 std::mem::swap(probs, &mut output[redirect]);
@@ -1044,7 +1047,11 @@ impl<'a> Model<'a> {
     /// Run the model for a batch of tokens as input.
     /// The length of `tokens` must match the number of batches in `state`.
     /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
-    pub fn run(&self, tokens: &mut Vec<Vec<u16>>, state: &ModelState) -> Result<Vec<Vec<f32>>> {
+    pub fn run(
+        &self,
+        tokens: &mut Vec<Vec<u16>>,
+        state: &ModelState,
+    ) -> Result<Vec<Option<Vec<f32>>>> {
         let num_token: usize = tokens.iter().map(Vec::len).sum();
         let max_batch = state.shape()[2];
 
@@ -1052,7 +1059,7 @@ impl<'a> Model<'a> {
             return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
         }
         if num_token == 0 {
-            return Ok(vec![vec![]; max_batch]);
+            return Ok(vec![None; max_batch]);
         }
 
         // we only infer at most `token_chunk_size` tokens at a time
@@ -1080,12 +1087,13 @@ impl<'a> Model<'a> {
 
         Ok(redirect
             .into_iter()
-            .map(|index| match index {
-                Some(index) => output
-                    .slice(.., index, ..)
-                    .expect("this never happens")
-                    .to_vec(),
-                None => vec![],
+            .map(|index| {
+                index.map(|index| {
+                    output
+                        .slice(.., index, ..)
+                        .expect("this never happens")
+                        .to_vec()
+                })
             })
             .collect())
     }

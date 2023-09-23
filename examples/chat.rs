@@ -154,7 +154,7 @@ async fn run(cli: Cli) -> Result<()> {
     // run initial prompt
     loop {
         let logits = model.run(&mut tokens, &state)?;
-        if !logits[0].is_empty() {
+        if logits.iter().any(Option::is_some) {
             break;
         }
     }
@@ -198,30 +198,37 @@ async fn run(cli: Cli) -> Result<()> {
         loop {
             let mut logits = loop {
                 let logits = model.run(&mut tokens, &state)?;
-                if !logits[0].is_empty() {
+                if logits.iter().any(Option::is_some) {
                     break logits;
                 }
             };
-            logits[0][0] = f32::NEG_INFINITY;
-            for (&token, &count) in occurrences.iter() {
-                let penalty = sampler.presence_penalty + count as f32 * sampler.frequency_penalty;
-                logits[0][token as usize] -= penalty;
-            }
+            logits.iter_mut().for_each(|logits| {
+                if let Some(logits) = logits {
+                    logits[0] = f32::NEG_INFINITY;
+                    for (&token, &count) in occurrences.iter() {
+                        let penalty =
+                            sampler.presence_penalty + count as f32 * sampler.frequency_penalty;
+                        logits[token as usize] -= penalty;
+                    }
+                }
+            });
 
             let probs = model.softmax(logits)?;
-            let token = sampler.sample(&probs[0]);
-            let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+            if let Some(probs) = &probs[0] {
+                let token = sampler.sample(probs);
+                let word = String::from_utf8(tokenizer.decode(&[token])?)?;
 
-            model_text += &word;
-            print!("{}", word);
-            std::io::stdout().flush()?;
+                model_text += &word;
+                print!("{}", word);
+                std::io::stdout().flush()?;
 
-            tokens[0] = vec![token];
-            let count = occurrences.get(&token).unwrap_or(&1);
-            occurrences.insert(token, *count);
+                tokens[0] = vec![token];
+                let count = occurrences.get(&token).unwrap_or(&1);
+                occurrences.insert(token, *count);
 
-            if token == 0 || model_text.contains("\n\n") {
-                break;
+                if token == 0 || model_text.contains("\n\n") {
+                    break;
+                }
             }
         }
     }
