@@ -48,6 +48,10 @@ fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let batch = invocation_id.y;
     let cursor = compute_cursor(stack[batch]);
 
+    if index >= stride {
+        return;
+    }
+
     let xi = compute_index(cursor.batch, 0u, index);
     let ai = compute_index(cursor.batch, 1u, index);
     let bi = compute_index(cursor.batch, 2u, index);

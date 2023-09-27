@@ -12,6 +12,8 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
-    let bti = (batch * shape[1] + token) * stride + index;
-    output[bti] = input[bti] + output[bti];
+    if index < stride {
+        let bti = (batch * shape[1] + token) * stride + index;
+        output[bti] = input[bti] + output[bti];
+    }
 }

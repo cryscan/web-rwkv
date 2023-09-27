@@ -32,7 +32,6 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     let bb = (batch * shape[1] + token) * stride;
 
-    sum[index] = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = x[bb + i];
         sum[index] += value;

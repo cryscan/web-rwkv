@@ -240,9 +240,9 @@ struct Runtime {
 
 impl Runtime {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
-        let shape = Shape::new(info.num_emb, num_token, 1);
-        let cursors_shape = Shape::new(num_token, 1, 1);
-        let hidden_shape = Shape::new(info.num_emb << 2, num_token, 1);
+        let shape = Shape::new(info.num_emb, num_token, 1, 1);
+        let cursors_shape = Shape::new(num_token, 1, 1, 1);
+        let hidden_shape = Shape::new(info.num_emb << 2, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
@@ -274,8 +274,8 @@ struct Output {
 
 impl Output {
     pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
-        let head_shape = Shape::new(info.num_emb, num_batch, 1);
-        let output_shape = Shape::new(info.num_vocab, num_batch, 1);
+        let head_shape = Shape::new(info.num_emb, num_batch, 1, 1);
+        let output_shape = Shape::new(info.num_vocab, num_batch, 1, 1);
 
         Self {
             head_x: context.tensor_init(head_shape),
@@ -293,7 +293,7 @@ struct Softmax {
 
 impl Softmax {
     pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
-        let shape = Shape::new(info.num_vocab, 1, num_batch);
+        let shape = Shape::new(info.num_vocab, 1, num_batch, 1);
         Self {
             buffer: context.tensor_init(shape),
             map: context.tensor_init(shape),
@@ -326,7 +326,7 @@ impl ModelState {
             .concat();
         let state = context
             .tensor_from_data(
-                Shape::new(info.num_emb, 5 * info.num_layers, max_batch),
+                Shape::new(info.num_emb, 5 * info.num_layers, max_batch, 1),
                 data,
             )
             .unwrap();
@@ -342,7 +342,7 @@ impl ModelState {
     /// Load one batch from host. The shape of the backed state should be of one batch.
     pub fn load_batch(&self, backed: &BackedState, batch: usize) -> Result<(), TensorError> {
         let shape = self.shape();
-        let shape = Shape::new(shape[0], shape[1], 1);
+        let shape = Shape::new(shape[0], shape[1], 1, 1);
         let host = self.context.tensor_from_data(shape, &backed.data)?;
         self.0.load_batch(&host, batch)
     }
@@ -369,7 +369,7 @@ impl ModelState {
     /// Back one batch of the device state to host.
     pub fn back_batch(&self, batch: usize) -> Result<BackedState, TensorError> {
         let shape = self.shape();
-        let shape = Shape::new(shape[0], shape[1], 1);
+        let shape = Shape::new(shape[0], shape[1], 1, 1);
         let map = self.context.tensor_init(shape);
 
         let mut encoder = self
@@ -405,8 +405,8 @@ impl ModelState {
         to_batch: usize,
     ) -> Result<(), TensorError> {
         let op = TensorOp::blit(
-            self.view(.., .., from_batch)?,
-            other.view(.., .., to_batch)?,
+            self.view(.., .., from_batch, ..)?,
+            other.view(.., .., to_batch, ..)?,
         )?;
         let mut encoder = self
             .context
@@ -429,12 +429,12 @@ impl ModelState {
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer;
         let end = start + 4;
-        self.view(.., start..end, ..)
+        self.view(.., start..end, .., ..)
     }
 
     fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer + 4;
-        self.view(.., start..=start, ..)
+        self.view(.., start..=start, .., ..)
     }
 }
 
@@ -446,7 +446,7 @@ pub struct BackedState {
 
 impl BackedState {
     pub fn new(info: &ModelInfo, max_batch: usize) -> Self {
-        let shape = Shape::new(info.num_emb, 5 * info.num_layers, max_batch);
+        let shape = Shape::new(info.num_emb, 5 * info.num_layers, max_batch, 1);
         let data = (0..max_batch)
             .map(|_| {
                 (0..info.num_layers)
@@ -517,17 +517,17 @@ impl<'a> ModelBuilder<'a> {
         let context = &matrix.context;
         let shape = matrix.shape();
 
-        // let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
-        // let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1));
-        // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
-        // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1));
+        // let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1, 1));
+        // let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1, 1));
+        // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
+        // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
 
         let w = Box::new(context.tensor_init(matrix.shape()));
 
-        let mx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1)));
-        let rx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1)));
-        let my = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1)));
-        let ry = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1)));
+        let mx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1, 1)));
+        let rx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1, 1)));
+        let my = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
+        let ry = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
 
         let ops = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
 
@@ -635,7 +635,7 @@ impl<'a> ModelBuilder<'a> {
                                 )?;
                                 let output = TensorGpu::init(
                                     &context,
-                                    Shape::new(a.shape()[1], b.shape()[1], 1),
+                                    Shape::new(a.shape()[1], b.shape()[1], 1, 1),
                                 );
 
                                 let mut encoder = context
@@ -643,9 +643,9 @@ impl<'a> ModelBuilder<'a> {
                                     .create_command_encoder(&CommandEncoderDescriptor::default());
 
                                 let op = TensorOp::matmul_mat_fp16(
-                                    b.view(.., .., ..).ok()?,
-                                    a.view(.., .., ..).ok()?,
-                                    output.view(.., .., ..).ok()?,
+                                    b.view(.., .., .., ..).ok()?,
+                                    a.view(.., .., .., ..).ok()?,
+                                    output.view(.., .., .., ..).ok()?,
                                 )
                                 .ok()?;
                                 let mut pass =
@@ -667,7 +667,7 @@ impl<'a> ModelBuilder<'a> {
             let tensor = model.tensor(&name)?;
             let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
                 .map(|x| x.to_f32())
-                .reshape(Auto, Dimension(1), Dimension(1))?
+                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
                 .into();
 
             let mut encoder = context
@@ -676,7 +676,7 @@ impl<'a> ModelBuilder<'a> {
 
             for (lora, alpha) in lora_vectors(&name) {
                 let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
-                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
+                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
                 let op = TensorOp::blend(&factor, &lora, &tensor)?;
                 let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
                 pass.execute_tensor_op(&op);
@@ -690,7 +690,7 @@ impl<'a> ModelBuilder<'a> {
             let tensor = model.tensor(&name)?;
             let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
                 .map(|x| -x.to_f32().exp())
-                .reshape(Auto, Dimension(1), Dimension(1))?
+                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
                 .into();
 
             let mut encoder = context
@@ -699,7 +699,7 @@ impl<'a> ModelBuilder<'a> {
 
             for (lora, alpha) in lora_vectors(&name) {
                 let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
-                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
+                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
                 let op = TensorOp::blend(&factor, &lora, &tensor)?;
                 let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
                 pass.execute_tensor_op(&op);
@@ -717,11 +717,12 @@ impl<'a> ModelBuilder<'a> {
                     Auto,
                     Dimension(1),
                     Dimension(1),
+                    Dimension(1),
                 )?
             } else {
                 let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
                     .map(|x| x.to_f32())
-                    .reshape(Auto, Dimension(1), Dimension(1))?;
+                    .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?;
                 let tensor_f32 = TensorGpu::from(tensor_f32);
                 let tensor_f16 = context.tensor_init(tensor_f32.shape());
 
@@ -731,7 +732,7 @@ impl<'a> ModelBuilder<'a> {
 
                 for (lora, alpha) in lora {
                     let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
-                    let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
+                    let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
                     let op = TensorOp::blend(&factor, &lora, &tensor_f32)?;
                     let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
                     pass.execute_tensor_op(&op);
@@ -752,11 +753,16 @@ impl<'a> ModelBuilder<'a> {
             let lora = lora_matrices(&name);
             let tensor = model.tensor(&name)?;
             let tensor = if lora.is_empty() {
-                TensorGpu::from_safetensors(&context, tensor)?.reshape(Full, Full, Dimension(1))?
+                TensorGpu::from_safetensors(&context, tensor)?.reshape(
+                    Full,
+                    Full,
+                    Dimension(1),
+                    Dimension(1),
+                )?
             } else {
                 let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
                     .map(|x| x.to_f32())
-                    .reshape(Full, Full, Dimension(1))?;
+                    .reshape(Full, Full, Dimension(1), Dimension(1))?;
                 let tensor_f32 = TensorGpu::from(tensor_f32);
                 let tensor_f16 = context.tensor_init(tensor_f32.shape());
 
@@ -766,7 +772,7 @@ impl<'a> ModelBuilder<'a> {
 
                 for (lora, alpha, dim) in lora {
                     let factor = vec![alpha / dim as f32, 1.0, 0.0, 0.0];
-                    let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1), &factor)?;
+                    let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
                     let op = TensorOp::blend(&factor, &lora, &tensor_f32)?;
                     let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
                     pass.execute_tensor_op(&op);
@@ -789,7 +795,7 @@ impl<'a> ModelBuilder<'a> {
                 b: load_vector_f16("blocks.0.ln0.bias".into())?,
             },
             w: context.tensor_from_data(
-                Shape::new(num_emb, num_vocab, 1),
+                Shape::new(num_emb, num_vocab, 1, 1),
                 bytemuck::pod_collect_to_vec(embed.data()),
             )?,
         };
@@ -797,7 +803,7 @@ impl<'a> ModelBuilder<'a> {
         let head = {
             let tensor = model.tensor("head.weight")?;
             let shape = tensor.shape();
-            let shape = Shape::new(shape[1], shape[0], 1);
+            let shape = Shape::new(shape[1], shape[0], 1, 1);
             let chunks = shape[1] / head_chunk_size;
             let data = bytemuck::cast_slice(tensor.data());
 
@@ -806,7 +812,7 @@ impl<'a> ModelBuilder<'a> {
                     let start = (chunk * head_chunk_size) * shape[0];
                     let end = start + head_chunk_size * shape[0];
                     context.tensor_from_data(
-                        Shape::new(shape[0], head_chunk_size, 1),
+                        Shape::new(shape[0], head_chunk_size, 1, 1),
                         &data[start..end],
                     )
                 })
@@ -975,13 +981,13 @@ impl<'a> Model<'a> {
     #[inline]
     fn request_stack(&self, num_batch: usize) -> Arc<TensorGpu<u32, ReadWrite>> {
         self.stack_cache.request(num_batch, || {
-            self.context.zeros(Shape::new(num_batch, 1, 1))
+            self.context.zeros(Shape::new(num_batch, 1, 1, 1))
         })
     }
 
     #[inline]
     pub fn head_shape(&self, num_batch: usize) -> Shape {
-        Shape::new(self.info.num_vocab, 1, num_batch)
+        Shape::new(self.info.num_vocab, 1, num_batch, 1)
     }
 
     /// Softmax of the input tensors.
@@ -1090,7 +1096,7 @@ impl<'a> Model<'a> {
             .map(|index| {
                 index.map(|index| {
                     output
-                        .slice(.., index, ..)
+                        .slice(.., index, .., ..)
                         .expect("this never happens")
                         .to_vec()
                 })
@@ -1113,14 +1119,15 @@ impl<'a> Model<'a> {
                 let stack = TensorCpu::stack(
                     tokens
                         .into_iter()
-                        .map(|token| tensor.embed.w.slice(.., token as usize, ..))
+                        .map(|token| tensor.embed.w.slice(.., token as usize, .., ..))
                         .try_collect()?,
                 )
-                .unwrap_or_else(|_| context.zeros(Shape::new(self.info.num_emb, 1, 0)));
+                .unwrap_or_else(|_| context.zeros(Shape::new(self.info.num_emb, 1, 0, 1)));
                 stack.map(|x| x.to_f32()).reshape(
                     TensorDimension::Full,
                     TensorDimension::Auto,
                     TensorDimension::Dimension(1),
+                    TensorDimension::Full,
                 )
             })
             .try_collect()?;
@@ -1164,8 +1171,8 @@ impl<'a> Model<'a> {
                     let last = headers[end - 1];
                     assert_eq!(last - first + 1, end - start);
 
-                    let input = buffer.ffn_x.view(.., first..=last, ..)?;
-                    let output = output.head_x.view(.., start..end, ..)?;
+                    let input = buffer.ffn_x.view(.., first..=last, .., ..)?;
+                    let output = output.head_x.view(.., start..end, .., ..)?;
                     ops.push(TensorOp::blit(input, output)?);
 
                     start = end;
@@ -1243,16 +1250,16 @@ impl<'a> Model<'a> {
                     &buffer.att_rx,
                 )?,
                 layer.att.w_k.matmul_op(
-                    buffer.att_kx.view(.., .., ..)?,
-                    buffer.att_k.view(.., .., ..)?,
+                    buffer.att_kx.view(.., .., .., ..)?,
+                    buffer.att_k.view(.., .., .., ..)?,
                 )?,
                 layer.att.w_v.matmul_op(
-                    buffer.att_vx.view(.., .., ..)?,
-                    buffer.att_v.view(.., .., ..)?,
+                    buffer.att_vx.view(.., .., .., ..)?,
+                    buffer.att_v.view(.., .., .., ..)?,
                 )?,
                 layer.att.w_r.matmul_op(
-                    buffer.att_rx.view(.., .., ..)?,
-                    buffer.att_r.view(.., .., ..)?,
+                    buffer.att_rx.view(.., .., .., ..)?,
+                    buffer.att_r.view(.., .., .., ..)?,
                 )?,
                 TensorOp::time_mix(
                     &stack,
@@ -1265,8 +1272,8 @@ impl<'a> Model<'a> {
                     state.att(index)?,
                 )?,
                 layer.att.w_o.matmul_op(
-                    buffer.att_x.view(.., .., ..)?,
-                    buffer.att_o.view(.., .., ..)?,
+                    buffer.att_x.view(.., .., .., ..)?,
+                    buffer.att_o.view(.., .., .., ..)?,
                 )?,
                 TensorOp::add(&buffer.input, &buffer.att_o)?,
             ];
@@ -1298,17 +1305,17 @@ impl<'a> Model<'a> {
                     &buffer.ffn_rx,
                 )?,
                 layer.ffn.w_k.matmul_op(
-                    buffer.ffn_kx.view(.., .., ..)?,
-                    buffer.ffn_k.view(.., .., ..)?,
+                    buffer.ffn_kx.view(.., .., .., ..)?,
+                    buffer.ffn_k.view(.., .., .., ..)?,
                 )?,
                 TensorOp::squared_relu(&buffer.ffn_k)?,
                 layer.ffn.w_v.matmul_op(
-                    buffer.ffn_k.view(.., .., ..)?,
-                    buffer.ffn_v.view(.., .., ..)?,
+                    buffer.ffn_k.view(.., .., .., ..)?,
+                    buffer.ffn_v.view(.., .., .., ..)?,
                 )?,
                 layer.ffn.w_r.matmul_op(
-                    buffer.ffn_rx.view(.., .., ..)?,
-                    buffer.ffn_r.view(.., .., ..)?,
+                    buffer.ffn_rx.view(.., .., .., ..)?,
+                    buffer.ffn_r.view(.., .., .., ..)?,
                 )?,
                 TensorOp::channel_mix(
                     &buffer.cursors,
@@ -1339,8 +1346,8 @@ impl<'a> Model<'a> {
             for (chunk, matrix) in tensor.head.w.iter().enumerate() {
                 let start = chunk * self.head_chunk_size;
                 let end = start + self.head_chunk_size;
-                let input = head_x.view(.., .., ..)?;
-                let output = output.head_o.view(start..end, .., ..)?;
+                let input = head_x.view(.., .., .., ..)?;
+                let output = output.head_o.view(start..end, .., .., ..)?;
                 ops.push(TensorOp::matmul_vec(matrix, input, output)?);
             }
 

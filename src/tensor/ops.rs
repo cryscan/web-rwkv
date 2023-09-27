@@ -39,7 +39,7 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
         destination: &TensorGpu<T, K>,
         batch: usize,
     ) -> Result<(), TensorError> {
-        destination.check_shape(Shape::new(source.shape[0], source.shape[1], 1))?;
+        destination.check_shape(Shape::new(source.shape[0], source.shape[1], 1, 1))?;
         if batch >= source.shape[2] {
             return Err(TensorError::BatchOutOfRange {
                 batch,
@@ -121,8 +121,8 @@ impl<'a> TensorOp<'a> {
         x: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape();
-        w.check_shape(Shape::new(shape[0], 1, 1))?;
-        b.check_shape(Shape::new(shape[0], 1, 1))?;
+        w.check_shape(Shape::new(shape[0], 1, 1, 1))?;
+        b.check_shape(Shape::new(shape[0], 1, 1, 1))?;
 
         let context = &x.context;
         let pipeline = context.pipeline("layer_norm")?;
@@ -166,8 +166,8 @@ impl<'a> TensorOp<'a> {
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1))?;
-        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
+        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1, 1))?;
+        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
 
         let context = &output.tensor.context;
         let pipeline = context.pipeline("matmul_vec")?;
@@ -225,12 +225,12 @@ impl<'a> TensorOp<'a> {
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1))?;
-        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2]))?;
-        mx.check_shape(Shape::new(matrix.shape[0], 1, 1))?;
-        rx.check_shape(Shape::new(matrix.shape[0], 1, 1))?;
-        my.check_shape(Shape::new(matrix.shape[1], 1, 1))?;
-        ry.check_shape(Shape::new(matrix.shape[1], 1, 1))?;
+        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1, 1))?;
+        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
+        mx.check_shape(Shape::new(matrix.shape[0], 1, 1, 1))?;
+        rx.check_shape(Shape::new(matrix.shape[0], 1, 1, 1))?;
+        my.check_shape(Shape::new(matrix.shape[1], 1, 1, 1))?;
+        ry.check_shape(Shape::new(matrix.shape[1], 1, 1, 1))?;
 
         let context = &matrix.context;
         let pipeline = context.pipeline("matmul_vec_int8")?;
@@ -298,8 +298,8 @@ impl<'a> TensorOp<'a> {
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2]))?;
-        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2]))?;
+        matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
+        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
 
         let context = &output.tensor.context;
         let pipeline = context.pipeline("matmul_mat_fp16")?;
@@ -394,11 +394,11 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
         let max_batch = sx.shape()[2];
-        cursors.check_shape(Shape::new(shape[1], 1, 1))?;
-        time_mix.check_shape(Shape::new(shape[0], 1, 1))?;
+        cursors.check_shape(Shape::new(shape[1], 1, 1, 1))?;
+        time_mix.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         x.check_shape(shape)?;
-        sx.check_shape(Shape::new(shape[0], 1, max_batch))
-            .or(sx.check_shape(Shape::new(shape[0], 4, max_batch)))?;
+        sx.check_shape(Shape::new(shape[0], 1, max_batch, 1))
+            .or(sx.check_shape(Shape::new(shape[0], 4, max_batch, 1)))?;
 
         let context = &output.context;
         let pipeline = context.pipeline("token_shift")?;
@@ -458,13 +458,13 @@ impl<'a> TensorOp<'a> {
         let shape = x.shape;
         let max_batch = state.shape()[2];
         let num_batch = stack.shape[0];
-        stack.check_shape(Shape::new(num_batch, 1, 1))?;
+        stack.check_shape(Shape::new(num_batch, 1, 1, 1))?;
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
-        time_decay.check_shape(Shape::new(shape[0], 1, 1))?;
-        time_first.check_shape(Shape::new(shape[0], 1, 1))?;
-        state.check_shape(Shape::new(shape[0], 4, max_batch))?;
+        time_decay.check_shape(Shape::new(shape[0], 1, 1, 1))?;
+        time_first.check_shape(Shape::new(shape[0], 1, 1, 1))?;
+        state.check_shape(Shape::new(shape[0], 4, max_batch, 1))?;
 
         let context = &x.context;
         let pipeline = context.pipeline("time_mix")?;
@@ -561,10 +561,10 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Self, TensorError> {
         let shape = x.shape;
         let max_batch = state.shape()[2];
-        cursors.check_shape(Shape::new(shape[1], 1, 1))?;
+        cursors.check_shape(Shape::new(shape[1], 1, 1, 1))?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
-        state.check_shape(Shape::new(shape[0], 1, max_batch))?;
+        state.check_shape(Shape::new(shape[0], 1, max_batch, 1))?;
 
         let context = &x.context;
         let pipeline = context.pipeline("channel_mix")?;
@@ -661,7 +661,7 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         input.check_shape(shape)?;
-        factor.check_shape(Shape::new(4, 1, 1))?;
+        factor.check_shape(Shape::new(4, 1, 1, 1))?;
 
         let context = &output.context;
         let pipeline = context.pipeline("blend")?;
@@ -709,10 +709,10 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Vec<Self>, TensorError> {
         let shape = output.shape;
         input.check_shape(shape)?;
-        mx.check_shape(Shape::new(shape[0], 1, 1))?;
-        rx.check_shape(Shape::new(shape[0], 1, 1))?;
-        my.check_shape(Shape::new(shape[1], 1, 1))?;
-        ry.check_shape(Shape::new(shape[1], 1, 1))?;
+        mx.check_shape(Shape::new(shape[0], 1, 1, 1))?;
+        rx.check_shape(Shape::new(shape[0], 1, 1, 1))?;
+        my.check_shape(Shape::new(shape[1], 1, 1, 1))?;
+        ry.check_shape(Shape::new(shape[1], 1, 1, 1))?;
 
         let context = &output.context;
         let entries = &[
@@ -857,7 +857,7 @@ mod tests {
         };
 
         let x = vec![0.0, 1.5, 2.0, -1.0];
-        let shape = Shape::new(x.len(), 1, 1);
+        let shape = Shape::new(x.len(), 1, 1, 1);
 
         let x_device: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
         let x_map = context.tensor_init(x_device.shape());
@@ -889,7 +889,7 @@ mod tests {
         let x = [(); C * T * B]
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
             .to_vec();
-        let shape = Shape::new(C, T, B);
+        let shape = Shape::new(C, T, B, 1);
 
         let x_dev: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
         let x_map = context.tensor_init(x_dev.shape());
@@ -953,11 +953,11 @@ mod tests {
             .repeat(T * B)
             .to_vec();
 
-        let shape = Shape::new(C, T, B);
+        let shape = Shape::new(C, T, B, 1);
         let x_dev = TensorGpu::from_data(&context, shape, &x)?;
         let x_map = context.tensor_init(shape);
 
-        let shape = Shape::new(C, 1, 1);
+        let shape = Shape::new(C, 1, 1, 1);
         let w_dev = TensorGpu::from_data(&context, shape, &w[..1000])?;
         let b_dev = TensorGpu::from_data(&context, shape, &b[..1000])?;
 
@@ -1032,22 +1032,23 @@ mod tests {
             .collect_vec();
         let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
-        let matrix_dev = context.tensor_from_data(Shape::new(C, R, 1), matrix.clone())?;
-        let input_f32_dev = TensorGpu::from_data(&context, Shape::new(C, T, 1), input_f32.clone())?;
+        let matrix_dev = context.tensor_from_data(Shape::new(C, R, 1, 1), matrix.clone())?;
+        let input_f32_dev =
+            TensorGpu::from_data(&context, Shape::new(C, T, 1, 1), input_f32.clone())?;
         let input_f16_dev = context.tensor_init(input_f32_dev.shape());
-        let output_dev = TensorGpu::init(&context, Shape::new(R, T, 2));
+        let output_dev = TensorGpu::init(&context, Shape::new(R, T, 2, 1));
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
         let quant_input = TensorOp::quantize_fp16(&input_f32_dev, &input_f16_dev)?;
         let matmul_vec = TensorOp::matmul_vec(
             &matrix_dev,
-            input_f32_dev.view(.., .., ..)?,
-            output_dev.view(.., .., 0)?,
+            input_f32_dev.view(.., .., .., ..)?,
+            output_dev.view(.., .., 0, ..)?,
         )?;
         let matmul_mat_fp16 = TensorOp::matmul_mat_fp16(
-            matrix_dev.view(.., .., ..)?,
-            input_f16_dev.view(.., .., ..)?,
-            output_dev.view(.., .., 1)?,
+            matrix_dev.view(.., .., .., ..)?,
+            input_f16_dev.view(.., .., .., ..)?,
+            output_dev.view(.., .., 1, ..)?,
         )?;
 
         let mut encoder = context
@@ -1141,22 +1142,22 @@ mod tests {
         };
 
         let output = vec![0.0; 24];
-        let output = TensorGpu::from_data(&context, Shape::new(4, 3, 2), output)?;
+        let output = TensorGpu::from_data(&context, Shape::new(4, 3, 2, 1), output)?;
 
         let map = TensorGpu::init(&context, output.shape());
         let mut ops = vec![];
 
         let input = (0..8).map(|x| x as f32).collect_vec();
-        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 2), input)?;
+        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 2, 1), input)?;
         ops.push(TensorOp::blit(
-            input.view(.., .., ..)?,
-            output.view(.., 1, ..)?,
+            input.view(.., .., .., ..)?,
+            output.view(.., 1, .., ..)?,
         )?);
 
         let input = (8..12).map(|x| x as f32).collect_vec();
-        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 1), input)?;
-        let input = input.view(.., .., ..)?;
-        ops.push(TensorOp::blit(input, output.view(.., 2.., 1..2)?)?);
+        let input = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), input)?;
+        let input = input.view(.., .., .., ..)?;
+        ops.push(TensorOp::blit(input, output.view(.., 2.., 1..2, ..)?)?);
 
         let mut encoder = context
             .device

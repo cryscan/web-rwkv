@@ -20,10 +20,12 @@ fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
 
 @compute @workgroup_size(128, 1, 1)
 fn blit(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
-    let stride = vec4<u32>(destination.shape.x / 4u, destination.shape.yzw);
+    let stride = destination.shape.x / 4u;
     let index = invocation_id.x;
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
-    output[compute_index(destination, batch, token, index)] = input[compute_index(source, batch, token, index)];
+    if index < stride {
+        output[compute_index(destination, batch, token, index)] = input[compute_index(source, batch, token, index)];
+    }
 }

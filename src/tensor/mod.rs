@@ -89,7 +89,7 @@ pub enum TensorError {
     Type,
     Size(usize, usize),
     Shape(Shape, Shape),
-    Dimension,
+    Deduce,
     BatchOutOfRange {
         batch: usize,
         max: usize,
@@ -110,7 +110,7 @@ impl std::fmt::Display for TensorError {
             TensorError::Type => write!(f, "data type mismatch"),
             TensorError::Size(a, b) => write!(f, "data size not match: {a} vs. {b}"),
             TensorError::Shape(a, b) => write!(f, "tensor shape {a} doesn't match {b}"),
-            TensorError::Dimension => write!(f, "cannot deduce dimension"),
+            TensorError::Deduce => write!(f, "cannot deduce dimension"),
             TensorError::BatchOutOfRange { batch, max } => {
                 write!(f, "batch {batch} out of range of max {max}")
             }
@@ -200,12 +200,13 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
         if tensor.dtype() != T::DATA_TYPE {
             return Err(TensorError::Type);
         }
-        let shape = match tensor.shape() {
-            [] => Shape::new(0, 0, 0),
-            [x] => Shape::new(*x, 1, 1),
-            [y, x] => Shape::new(*x, *y, 1),
-            [z, y, x] | [1, z, y, x] => Shape::new(*x, *y, *z),
-            _ => return Err(TensorError::Dimension),
+        let shape = match *tensor.shape() {
+            [] => Shape::new(0, 0, 0, 0),
+            [x] => Shape::new(x, 1, 1, 1),
+            [y, x] => Shape::new(x, y, 1, 1),
+            [z, y, x] => Shape::new(x, y, z, 1),
+            [w, z, y, x] => Shape::new(x, y, z, w),
+            _ => return Err(TensorError::Deduce),
         };
         Self::from_data(context, shape, bytemuck::cast_slice(tensor.data()))
     }
@@ -285,8 +286,9 @@ impl<D: Device, T: Scalar> Tensor<D, T> {
         x: TensorDimension,
         y: TensorDimension,
         z: TensorDimension,
+        w: TensorDimension,
     ) -> Result<Self, TensorError> {
-        let shape = TensorDimension::deduce(self.shape, x, y, z)?;
+        let shape = TensorDimension::deduce(self.shape, x, y, z, w)?;
         Ok(Self { shape, ..self })
     }
 }
@@ -431,7 +433,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     }
 
     pub fn load_batch(&self, host: &TensorCpu<'_, T>, batch: usize) -> Result<(), TensorError> {
-        host.check_shape(Shape::new(self.shape[0], self.shape[1], 1))?;
+        host.check_shape(Shape::new(self.shape[0], self.shape[1], 1, 1))?;
         if batch >= self.shape[2] {
             return Err(TensorError::BatchOutOfRange {
                 batch,
@@ -457,11 +459,11 @@ impl<T: Scalar> From<TensorCpu<'_, T>> for Vec<T> {
     }
 }
 
-impl<T: Scalar> std::ops::Index<(usize, usize, usize)> for TensorCpu<'_, T> {
+impl<T: Scalar> std::ops::Index<(usize, usize, usize, usize)> for TensorCpu<'_, T> {
     type Output = T;
 
-    fn index(&self, (x, y, z): (usize, usize, usize)) -> &Self::Output {
-        &self.data[self.shape.shape_index(Shape::new(x, y, z))]
+    fn index(&self, (x, y, z, w): (usize, usize, usize, usize)) -> &Self::Output {
+        &self.data[self.shape.shape_index(Shape::new(x, y, z, w))]
     }
 }
 
@@ -512,13 +514,16 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
     pub fn split(self, axis: usize) -> Result<Vec<Self>, TensorError> {
         match axis {
             0 => (0..self.shape[0])
-                .map(|index| self.slice(index, .., ..))
+                .map(|index| self.slice(index, .., .., ..))
                 .try_collect(),
             1 => (0..self.shape[1])
-                .map(|index| self.slice(.., index, ..))
+                .map(|index| self.slice(.., index, .., ..))
                 .try_collect(),
             2 => (0..self.shape[2])
-                .map(|index| self.slice(.., .., index))
+                .map(|index| self.slice(.., .., index, ..))
+                .try_collect(),
+            3 => (0..self.shape[3])
+                .map(|index| self.slice(.., .., .., index))
                 .try_collect(),
             _ => Ok(vec![self]),
         }
@@ -545,7 +550,7 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         };
 
         batches.iter().try_for_each(|batch| {
-            batch.check_shape(Shape::new(shape[0], shape[1], batch.shape[2]))
+            batch.check_shape(Shape::new(shape[0], shape[1], batch.shape[2], 1))
         })?;
 
         let num_batch: usize = batches.iter().map(|batch| batch.shape[2]).sum();
@@ -570,8 +575,9 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         x: impl TensorAxis,
         y: impl TensorAxis,
         z: impl TensorAxis,
+        w: impl TensorAxis,
     ) -> Result<TensorCpu<'a, T>, TensorError> {
-        let slice = (x, y, z);
+        let slice = (x, y, z, w);
         let (start, end) = slice.shape_bounds(self.shape)?;
         let shape = end - start;
 
@@ -594,8 +600,9 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         x: impl TensorAxis,
         y: impl TensorAxis,
         z: impl TensorAxis,
+        w: impl TensorAxis,
     ) -> Result<Self, TensorError> {
-        let slice = (x, y, z);
+        let slice = (x, y, z, w);
         let (start, end) = slice.shape_bounds(self.shape)?;
         let shape = end - start;
 
@@ -655,8 +662,9 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
         x: impl TensorAxis,
         y: impl TensorAxis,
         z: impl TensorAxis,
+        w: impl TensorAxis,
     ) -> Result<TensorView<'_, T>, TensorError> {
-        let slice = (x, y, z);
+        let slice = (x, y, z, w);
         let (start, end) = slice.shape_bounds(self.shape)?;
         let view = View {
             stride: self.shape,
@@ -708,7 +716,7 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
 
         value
             .iter()
-            .try_for_each(|batch| batch.check_shape(Shape::new(shape[0], batch.shape[1], 1)))?;
+            .try_for_each(|batch| batch.check_shape(Shape::new(shape[0], batch.shape[1], 1, 1)))?;
 
         // erase empty batches and pack them tightly
         // let mut redirect = vec![None; value.len()];
@@ -735,7 +743,7 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
             .collect_vec();
 
         let (shape, data) = value.into_iter().fold(
-            (Shape::new(shape[0], 0, 1), vec![]),
+            (Shape::new(shape[0], 0, 1, 1), vec![]),
             |(mut shape, mut data), tensor| {
                 shape[1] += tensor.shape[1];
                 data.append(&mut tensor.data.to_vec());
@@ -883,7 +891,7 @@ mod tests {
             Err(_) => return Ok(()),
         };
 
-        let shape = Shape::new(5, 1, 2);
+        let shape = Shape::new(5, 1, 2, 1);
         let x: Vec<_> = (0..10).map(|x| x as f32).collect();
         let x = TensorCpu::from_data(&context, shape, x)?;
 
@@ -893,16 +901,16 @@ mod tests {
             vec![5.0, 6.0, 7.0, 8.0, 9.0].repeat(3),
         ]
         .concat();
-        y.check_shape(Shape::new(5, 3, 2))?;
+        y.check_shape(Shape::new(5, 3, 2, 1))?;
         assert_eq!(y.to_vec(), ans);
 
         let y = x.clone().repeat(0, 3);
-        y.check_shape(Shape::new(15, 1, 2))?;
+        y.check_shape(Shape::new(15, 1, 2, 1))?;
         assert_eq!(y.to_vec(), ans);
 
         let y = x.repeat(2, 3);
         let ans = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].repeat(3);
-        y.check_shape(Shape::new(5, 1, 6))?;
+        y.check_shape(Shape::new(5, 1, 6, 1))?;
         assert_eq!(y.to_vec(), ans);
 
         Ok(())

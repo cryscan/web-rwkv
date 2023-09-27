@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, hash::Hash};
 
+use itertools::Itertools;
 use web_rwkv_derive::{Deref, DerefMut};
 
 use super::TensorError;
@@ -11,16 +12,16 @@ pub trait IntoBytes {
 /// The shape of a [`Tensor`].
 /// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
 #[derive(Debug, Default, Clone, Copy, Deref, DerefMut, PartialEq, Eq, Hash)]
-pub struct Shape([usize; 3]);
+pub struct Shape([usize; 4]);
 
 impl Shape {
-    pub fn new(x: usize, y: usize, z: usize) -> Self {
-        Self([x, y, z])
+    pub fn new(x: usize, y: usize, z: usize, w: usize) -> Self {
+        Self([x, y, z, w])
     }
 
     pub fn from_slice(slice: &[usize]) -> Self {
-        let mut shape = Self::new(1, 1, 1);
-        for (index, &dim) in slice.iter().take(3).enumerate() {
+        let mut shape = Self::new(1, 1, 1, 1);
+        for (index, &dim) in slice.iter().take(4).enumerate() {
             shape[index] = dim;
         }
         shape
@@ -43,25 +44,35 @@ impl Shape {
 
 impl IntoBytes for Shape {
     fn into_bytes(self) -> Vec<u8> {
-        let data = vec![self.0[0] as u32, self.0[1] as u32, self.0[2] as u32, 1];
+        let data = self.0.map(|x| x as u32);
         bytemuck::pod_collect_to_vec(&data)
     }
 }
 
 impl std::cmp::PartialOrd for Shape {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        use Ordering::Equal;
         match (
             self[0].cmp(&other[0]),
             self[1].cmp(&other[1]),
             self[2].cmp(&other[2]),
+            self[3].cmp(&other[3]),
         ) {
-            (x, y, z) if x == y && y == z => Some(x),
-            (x, y, Ordering::Equal) if x == y => Some(x),
-            (x, Ordering::Equal, z) if x == z => Some(x),
-            (Ordering::Equal, y, z) if y == z => Some(y),
-            (x, Ordering::Equal, Ordering::Equal) => Some(x),
-            (Ordering::Equal, y, Ordering::Equal) => Some(y),
-            (Ordering::Equal, Ordering::Equal, z) => Some(z),
+            (x, y, z, w) if x == y && y == z && z == w => Some(x),
+            (x, y, z, Equal) if x == y && y == z => Some(x),
+            (x, y, Equal, w) if x == y && y == w => Some(y),
+            (x, Equal, z, w) if x == z && z == w => Some(z),
+            (Equal, y, z, w) if y == z && z == w => Some(w),
+            (x, y, Equal, Equal) if x == y => Some(x),
+            (x, Equal, z, Equal) if x == z => Some(x),
+            (x, Equal, Equal, w) if x == w => Some(x),
+            (Equal, y, z, Equal) if y == z => Some(y),
+            (Equal, y, Equal, w) if y == w => Some(y),
+            (Equal, Equal, z, w) if z == w => Some(z),
+            (x, Equal, Equal, Equal) => Some(x),
+            (Equal, y, Equal, Equal) => Some(y),
+            (Equal, Equal, z, Equal) => Some(z),
+            (Equal, Equal, Equal, w) => Some(w),
             _ => None,
         }
     }
@@ -69,7 +80,7 @@ impl std::cmp::PartialOrd for Shape {
 
 impl std::fmt::Display for Shape {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({}, {}, {})", self[0], self[1], self[2])
+        write!(f, "({}, {}, {}, {})", self[0], self[1], self[2], self[3])
     }
 }
 
@@ -91,7 +102,12 @@ impl std::ops::Add<Shape> for Shape {
     type Output = Self;
 
     fn add(self, rhs: Shape) -> Self::Output {
-        Self::new(self[0] + rhs[0], self[1] + rhs[1], self[2] + rhs[2])
+        Self::new(
+            self[0] + rhs[0],
+            self[1] + rhs[1],
+            self[2] + rhs[2],
+            self[3] + rhs[3],
+        )
     }
 }
 
@@ -99,7 +115,12 @@ impl std::ops::Sub<Shape> for Shape {
     type Output = Self;
 
     fn sub(self, rhs: Shape) -> Self::Output {
-        Self::new(self[0] - rhs[0], self[1] - rhs[1], self[2] - rhs[2])
+        Self::new(
+            self[0] - rhs[0],
+            self[1] - rhs[1],
+            self[2] - rhs[2],
+            self[3] - rhs[3],
+        )
     }
 }
 
@@ -203,7 +224,7 @@ impl TensorAxis for std::ops::RangeToInclusive<usize> {
 enum SliceQuantState {
     Zero,
     One,
-    Multi,
+    Plural,
 }
 
 enum SliceFillState {
@@ -211,11 +232,12 @@ enum SliceFillState {
     Full,
 }
 
-impl<X, Y, Z> TensorSlice for (X, Y, Z)
+impl<X, Y, Z, W> TensorSlice for (X, Y, Z, W)
 where
     X: TensorAxis,
     Y: TensorAxis,
     Z: TensorAxis,
+    W: TensorAxis,
 {
     fn shape_bounds(&self, shape: Shape) -> Result<(Shape, Shape), TensorError> {
         let mut start = Shape::default();
@@ -223,32 +245,33 @@ where
         (start[0], end[0]) = self.0.bounds(shape[0])?;
         (start[1], end[1]) = self.1.bounds(shape[1])?;
         (start[2], end[2]) = self.2.bounds(shape[2])?;
+        (start[3], end[3]) = self.3.bounds(shape[3])?;
         Ok((start, end))
     }
 
     fn contiguous_bounds(&self, shape: Shape) -> Result<(usize, usize), TensorError> {
+        use SliceFillState::{Full, NotFull};
+        use SliceQuantState::{One, Plural, Zero};
+
         let quant_state = |start, end| match end - start {
-            0 => SliceQuantState::Zero,
-            1 => SliceQuantState::One,
-            _ => SliceQuantState::Multi,
+            0 => Zero,
+            1 => One,
+            _ => Plural,
         };
 
         let fill_state = |start, end, dim| match (start, end) {
-            (0, end) if end == dim => SliceFillState::Full,
-            (start, end) if start == end => SliceFillState::Full,
-            _ => SliceFillState::NotFull,
+            (0, end) if end == dim => Full,
+            (start, end) if start == end => Full,
+            _ => NotFull,
         };
 
         let (start, end) = self.shape_bounds(shape)?;
         let (_, valid) = start.iter().zip(end.iter()).zip(shape.iter()).fold(
-            (SliceFillState::Full, true),
+            (Full, true),
             |(state, valid), ((&start, &end), &dim)| match (state, valid) {
-                (SliceFillState::Full, valid) => (fill_state(start, end, dim), valid),
-                (SliceFillState::NotFull, true) => (
-                    SliceFillState::NotFull,
-                    quant_state(start, end) < SliceQuantState::Multi,
-                ),
-                (SliceFillState::NotFull, false) => (SliceFillState::NotFull, false),
+                (Full, valid) => (fill_state(start, end, dim), valid),
+                (NotFull, true) => (NotFull, quant_state(start, end) < Plural),
+                (NotFull, false) => (NotFull, false),
             },
         );
         if !valid {
@@ -270,33 +293,26 @@ pub enum TensorDimension {
 }
 
 impl TensorDimension {
-    pub fn deduce(shape: Shape, x: Self, y: Self, z: Self) -> Result<Shape, TensorError> {
+    pub fn deduce(shape: Shape, x: Self, y: Self, z: Self, w: Self) -> Result<Shape, TensorError> {
         use TensorDimension::{Auto, Dimension, Full};
         let len = shape.len();
-        let Shape([a, b, c]) = shape;
 
-        let deduced = match (x, y, z) {
-            (Auto, Auto, _) | (Auto, _, Auto) | (_, Auto, Auto) => Err(TensorError::Dimension),
-            (Full, Full, Full) | (Full, Full, Auto) | (Full, Auto, Full) | (Auto, Full, Full) => {
-                Ok(shape)
-            }
-            (Full, Full, Dimension(z)) => Ok(Shape([a, b, z])),
-            (Full, Auto, Dimension(z)) => Ok(Shape([a, len / a / z, z])),
-            (Full, Dimension(y), Full) => Ok(Shape([a, y, c])),
-            (Full, Dimension(y), Auto) => Ok(Shape([a, y, len / a / y])),
-            (Full, Dimension(y), Dimension(z)) => Ok(Shape([a, y, z])),
-            (Auto, Full, Dimension(z)) => Ok(Shape([len / b / z, b, z])),
-            (Auto, Dimension(y), Full) => Ok(Shape([len / y / c, y, c])),
-            (Auto, Dimension(y), Dimension(z)) => Ok(Shape([len / y / z, y, z])),
-            (Dimension(x), Full, Full) => Ok(Shape([x, b, c])),
-            (Dimension(x), Full, Auto) => Ok(Shape([x, b, len / x / b])),
-            (Dimension(x), Full, Dimension(z)) => Ok(Shape([x, b, z])),
-            (Dimension(x), Auto, Full) => Ok(Shape([x, len / x / c, c])),
-            (Dimension(x), Auto, Dimension(z)) => Ok(Shape([x, len / x / z, z])),
-            (Dimension(x), Dimension(y), Full) => Ok(Shape([x, y, c])),
-            (Dimension(x), Dimension(y), Auto) => Ok(Shape([x, y, len / x / y])),
-            (Dimension(x), Dimension(y), Dimension(z)) => Ok(Shape([x, y, z])),
-        }?;
+        let deduced = [x, y, z, w]
+            .into_iter()
+            .enumerate()
+            .map(|(index, dim)| match dim {
+                Full => Some(shape[index]),
+                Auto => None,
+                Dimension(dim) => Some(dim),
+            });
+        let remain: usize = deduced.clone().flatten().product();
+
+        if remain == 0 || deduced.clone().filter(|x| x.is_none()).count() > 1 {
+            return Err(TensorError::Deduce);
+        };
+
+        let deduced = deduced.map(|x| x.unwrap_or(len / remain)).collect_vec();
+        let deduced = Shape::from_slice(&deduced);
 
         if deduced.len() != len {
             Err(TensorError::Size(deduced.len(), len))
@@ -333,8 +349,8 @@ mod tests {
 
     #[test]
     fn test_shape_index() {
-        let shape = Shape::new(1024, 768, 12);
-        let indices = Shape::new(35, 42, 9);
+        let shape = Shape::new(1024, 768, 12, 1);
+        let indices = Shape::new(35, 42, 9, 0);
         let index = shape.shape_index(indices);
         assert_eq!(index, 35 + 42 * 1024 + 9 * 1024 * 768);
     }
@@ -346,43 +362,43 @@ mod tests {
             Err(_) => return Ok(()),
         };
 
-        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1024, 768, 3));
+        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1024, 768, 3, 1));
         assert_eq!(
-            (12..42, 7..8, 1).contiguous_bounds(x.shape)?,
+            (12..42, 7..8, 1, 0).contiguous_bounds(x.shape)?,
             (793612, 793642)
         );
         assert_eq!(
-            (.., 42..56, 2..=2).shape_bounds(x.shape)?,
-            (Shape::new(0, 42, 2), Shape::new(1024, 56, 3))
+            (.., 42..56, 2..=2, ..).shape_bounds(x.shape)?,
+            (Shape::new(0, 42, 2, 0), Shape::new(1024, 56, 3, 1))
         );
-        assert!((.., 42..56, 2..3).contiguous_bounds(x.shape).is_ok());
-        assert!((0..1, 0..1, 0..1).contiguous_bounds(x.shape).is_ok());
-        assert!((.., 42..56, 0..2).contiguous_bounds(x.shape).is_err());
-        assert!((0, 0..2, 1..2).contiguous_bounds(x.shape).is_err());
+        assert!((.., 42..56, 2..3, ..).contiguous_bounds(x.shape).is_ok());
+        assert!((0..1, 0..1, 0..1, ..).contiguous_bounds(x.shape).is_ok());
+        assert!((.., 42..56, 0..2, ..).contiguous_bounds(x.shape).is_err());
+        assert!((0, 0..2, 1..2, ..).contiguous_bounds(x.shape).is_err());
 
-        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1, 1024, 6));
+        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1, 1024, 6, 1));
         assert_eq!(
-            (.., 0..256, 3..=3).contiguous_bounds(x.shape)?,
+            (.., 0..256, 3..=3, ..).contiguous_bounds(x.shape)?,
             (3072, 3328)
         );
 
-        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1024, 768, 1));
-        assert!((.., 0..256, ..).contiguous_bounds(x.shape).is_ok());
+        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1024, 768, 1, 1));
+        assert!((.., 0..256, .., ..).contiguous_bounds(x.shape).is_ok());
 
-        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1, 768, 1));
-        assert!((.., 256..512, ..).contiguous_bounds(x.shape).is_ok());
+        let x: TensorCpu<f32> = context.tensor_init(Shape::new(1, 768, 1, 1));
+        assert!((.., 256..512, .., ..).contiguous_bounds(x.shape).is_ok());
 
-        let shape = Shape::new(4, 2, 3);
+        let shape = Shape::new(4, 2, 3, 1);
         let x = (0..shape.len()).map(|x| x as f32).collect_vec();
         let x = TensorCpu::from_data(&context, shape, x)?;
 
-        let y: Vec<_> = x.slice(.., 1..2, 1..2)?.into();
+        let y: Vec<_> = x.slice(.., 1..2, 1..2, ..)?.into();
         assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);
 
-        let y: Vec<_> = x.slice(.., .., 1..2)?.into();
+        let y: Vec<_> = x.slice(.., .., 1..2, ..)?.into();
         assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
 
-        let y: Vec<_> = x.into_slice(2.., 1.., ..0)?.into();
+        let y: Vec<_> = x.into_slice(2.., 1.., ..0, ..)?.into();
         assert_eq!(y, Vec::<f32>::new());
 
         Ok(())
