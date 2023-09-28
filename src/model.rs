@@ -149,7 +149,7 @@ impl<'a> Matrix {
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'a>, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => TensorOp::matmul_vec(matrix, input, output),
+            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output),
             Matrix::Int8 { w, mx, rx, my, ry } => {
                 TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
             }
@@ -1348,7 +1348,7 @@ impl<'a> Model<'a> {
                 let end = start + self.head_chunk_size;
                 let input = head_x.view(.., .., .., ..)?;
                 let output = output.head_o.view(start..end, .., .., ..)?;
-                ops.push(TensorOp::matmul_vec(matrix, input, output)?);
+                ops.push(TensorOp::matmul_vec_fp16(matrix, input, output)?);
             }
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());

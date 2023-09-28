@@ -160,7 +160,7 @@ impl<'a> TensorOp<'a> {
     /// - `matrix` shape: `[C, R, 1]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn matmul_vec(
+    pub fn matmul_vec_fp16(
         matrix: &'a TensorGpu<f16, ReadWrite>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
@@ -170,7 +170,7 @@ impl<'a> TensorOp<'a> {
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
 
         let context = &output.tensor.context;
-        let pipeline = context.pipeline("matmul_vec")?;
+        let pipeline = context.pipeline("matmul_vec_fp16")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1040,7 +1040,7 @@ mod tests {
         let output_map = TensorGpu::init(&context, output_dev.shape());
 
         let quant_input = TensorOp::quantize_fp16(&input_f32_dev, &input_f16_dev)?;
-        let matmul_vec = TensorOp::matmul_vec(
+        let matmul_vec_fp16 = TensorOp::matmul_vec_fp16(
             &matrix_dev,
             input_f32_dev.view(.., .., .., ..)?,
             output_dev.view(.., .., 0, ..)?,
@@ -1067,12 +1067,12 @@ mod tests {
         }
         {
             let mut pass = wgpu_profiler::scope::Scope::start(
-                "matmul_vec",
+                "matmul_vec_fp16",
                 &mut profiler,
                 &mut pass,
                 &context.device,
             );
-            pass.execute_tensor_op(&matmul_vec);
+            pass.execute_tensor_op(&matmul_vec_fp16);
         }
         {
             let mut pass = wgpu_profiler::scope::Scope::start(

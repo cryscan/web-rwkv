@@ -22,7 +22,7 @@ struct Cursor {
 @group(0) @binding(7) var<storage, read> r: array<vec4<f32>>;               // (1, A, C)
 
 @group(0) @binding(8) var<storage, read_write> x: array<vec4<f32>>;         // (1, A, C)
-@group(0) @binding(9) var<storage, read_write> state: array<vec4<f32>>;    // (B, 4, C)
+@group(0) @binding(9) var<storage, read_write> state: array<vec4<f32>>;     // (B, 4, C)
 
 const BLOCK_SIZE: u32 = 128u;
 
