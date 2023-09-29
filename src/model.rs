@@ -23,7 +23,7 @@ use crate::{
 
 #[derive(Debug, Getters)]
 pub struct Model<'a> {
-    pub context: Context,
+    context: Context,
 
     info: ModelInfo,
     quant: Quantization,
@@ -49,6 +49,7 @@ pub struct Model<'a> {
 pub struct ModelInfo {
     pub num_layers: usize,
     pub num_emb: usize,
+    pub num_hidden: usize,
     pub num_vocab: usize,
 }
 
@@ -242,7 +243,7 @@ impl Runtime {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
-        let hidden_shape = Shape::new(info.num_emb << 2, num_token, 1, 1);
+        let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
@@ -562,6 +563,7 @@ impl<'a> ModelBuilder<'a> {
 
         let model = SafeTensors::deserialize(data)?;
         let embed = model.tensor("emb.weight")?;
+        let ffn = model.tensor("blocks.0.ffn.key.weight")?;
 
         let lora_tensors: Vec<_> = lora
             .iter()
@@ -579,16 +581,12 @@ impl<'a> ModelBuilder<'a> {
             }
             r + 1
         };
-        let (num_emb, num_vocab) = {
-            let num_emb = embed.shape()[1];
-            let num_vocab = embed.shape()[0];
-            (num_emb, num_vocab)
-        };
 
         let info = ModelInfo {
             num_layers,
-            num_emb,
-            num_vocab,
+            num_emb: embed.shape()[1],
+            num_hidden: ffn.shape()[0],
+            num_vocab: embed.shape()[0],
         };
 
         let lora_vectors = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
@@ -795,7 +793,7 @@ impl<'a> ModelBuilder<'a> {
                 b: load_vector_f16("blocks.0.ln0.bias".into())?,
             },
             w: context.tensor_from_data(
-                Shape::new(num_emb, num_vocab, 1, 1),
+                Shape::new(info.num_emb, info.num_vocab, 1, 1),
                 bytemuck::pod_collect_to_vec(embed.data()),
             )?,
         };
