@@ -238,6 +238,12 @@ impl<'a> ContextBuilder<'a> {
             "time_mix",
             None,
         )
+        .with_pipeline(
+            "time_mix_v5",
+            include_str!("shaders/time_mix_v5.wgsl"),
+            "time_mix",
+            None,
+        )
         .with_pipeline("add", include_str!("shaders/add.wgsl"), "add", None)
         .with_pipeline(
             "squared_relu",

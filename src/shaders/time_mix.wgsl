@@ -57,6 +57,13 @@ fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let bi = compute_index(cursor.batch, 2u, index);
     let pi = compute_index(cursor.batch, 3u, index);
 
+    var aa = state[ai];
+    var bb = state[bi];
+    var pp = state[pi];
+
+    let u = time_first[index];
+    let w = time_decay[index];
+
     state[xi] = x[(cursor.token + cursor.len - 1u) * stride + index];
 
     for (var t = 0u; t < cursor.len; t += 1u) {
@@ -65,10 +72,7 @@ fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let kk = k[bti];
         let vv = v[bti];
 
-        let aa = state[ai];
-        let bb = state[bi];
-        let pp = state[pi];
-        var ww = time_first[index] + kk;
+        var ww = u + kk;
         var q = max(pp, ww);
         var e1 = exp(pp - q);
         var e2 = exp(ww - q);
@@ -76,13 +80,17 @@ fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let rr = 1.0 / (1.0 + exp(-r[bti]));
         x[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
 
-        ww = time_decay[index] + pp;
+        ww = w + pp;
         q = max(ww, kk);
         e1 = exp(ww - q);
         e2 = exp(kk - q);
 
-        state[ai] = e1 * aa + e2 * vv;
-        state[bi] = e1 * bb + e2;
-        state[pi] = q;
+        aa = e1 * aa + e2 * vv;
+        bb = e1 * bb + e2;
+        pp = q;
     }
+
+    state[ai] = aa;
+    state[bi] = bb;
+    state[pi] = pp;
 }

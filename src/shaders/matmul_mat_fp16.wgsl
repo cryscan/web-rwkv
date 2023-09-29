@@ -4,6 +4,13 @@ struct View {
     shape: vec4<u32>,  
 };
 
+struct Input {
+    @builtin(workgroup_id) bid: vec3<u32>,
+    @builtin(global_invocation_id) uid: vec3<u32>,
+    @builtin(local_invocation_id) tid: vec3<u32>,
+    @builtin(local_invocation_index) index: u32,
+};
+
 @group(0) @binding(0) var<uniform> va: View;                                // [K, M, B]
 @group(0) @binding(1) var<uniform> vb: View;                                // [K, N, B]
 @group(0) @binding(2) var<uniform> destination: View;                       // [M, N, B]
@@ -26,36 +33,31 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn matmul(
-    @builtin(workgroup_id) bid: vec3<u32>,
-    @builtin(global_invocation_id) uid: vec3<u32>,
-    @builtin(local_invocation_id) tid: vec3<u32>,
-    @builtin(local_invocation_index) index: u32
-) {
-    let b = bid.xy * 32u;
-    let u = uid.xy * 4u;
-    let t = tid.xy * 4u;
+fn matmul(in: Input) {
+    let b = in.bid.xy * 32u;
+    let u = in.uid.xy * 4u;
+    let t = in.tid.xy * 4u;
     let ra = vec2<u32>(va.shape.x / 4u, va.shape.y);
     let rb = vec2<u32>(vb.shape.x / 4u, vb.shape.y);
     let stride = min(ra.x, rb.x);
-    let i = index & 0x1fu;
+    let i = in.index & 0x1fu;
 
     var local_sum: mat4x4<f32>;
     for (var k = 0u; k < stride; k += 32u) {
         // load 8x4 rows from each of the matrix, each with 64x4 columns
         var x = k + i;
         for (var j = 0u; j < 32u; j += 1u) {
-            if index < 32u {
+            if in.index < 32u {
                 let y = b.x + j;
                 if x < ra.x && y < ra.y {
-                    sa[j][i] = xa[compute_index(va, uid.z, y, x)];
+                    sa[j][i] = xa[compute_index(va, in.uid.z, y, x)];
                 } else {
                     sa[j][i] = vec2<u32>(0u);
                 }
             } else {
                 let y = b.y + j;
                 if x < rb.x && y < rb.y {
-                    sb[j][i] = xb[compute_index(vb, uid.z, y, x)];
+                    sb[j][i] = xb[compute_index(vb, in.uid.z, y, x)];
                 } else {
                     sb[j][i] = vec2<u32>(0u);
                 }
@@ -85,10 +87,10 @@ fn matmul(
         workgroupBarrier();
     }
 
-    if uid.x < ra.y / 4u && u.y < rb.y {
-        output[compute_index(destination, uid.z, u.y, uid.x)] = local_sum[0];
-        output[compute_index(destination, uid.z, u.y + 1u, uid.x)] = local_sum[1];
-        output[compute_index(destination, uid.z, u.y + 2u, uid.x)] = local_sum[2];
-        output[compute_index(destination, uid.z, u.y + 3u, uid.x)] = local_sum[3];
+    if in.uid.x < ra.y / 4u && u.y < rb.y {
+        output[compute_index(destination, in.uid.z, u.y, in.uid.x)] = local_sum[0];
+        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x)] = local_sum[1];
+        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x)] = local_sum[2];
+        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x)] = local_sum[3];
     }
 }
