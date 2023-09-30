@@ -522,6 +522,128 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn time_mix_v5(
+        stack: &'a TensorGpu<u32, ReadWrite>,
+        time_decay: &'a TensorGpu<f32, ReadWrite>,
+        time_first: &'a TensorGpu<f32, ReadWrite>,
+        k: &'a TensorGpu<f32, ReadWrite>,
+        v: &'a TensorGpu<f32, ReadWrite>,
+        r: &'a TensorGpu<f32, ReadWrite>,
+        x: &'a TensorGpu<f32, ReadWrite>,
+        state: TensorView<f32>,
+    ) -> Result<Self, TensorError> {
+        let shape = x.shape;
+        let max_batch = state.shape()[2];
+        let num_batch = stack.shape[0];
+
+        stack.check_shape(Shape::new(num_batch, 1, 1, 1))?;
+        k.check_shape(shape)?;
+        v.check_shape(shape)?;
+        r.check_shape(shape)?;
+        time_decay.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
+        time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
+        state.check_shape(Shape::new(shape[0], shape[1], shape[0] + 1, max_batch))?;
+
+        let context = &x.context;
+        let pipeline = context.pipeline("time_mix_v5")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: state.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: stack.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: time_decay.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: time_first.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: k.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: v.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: r.binding(),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 9,
+                    resource: state.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::round((shape[0] * shape[1]) as u32 / 4, 32),
+                num_batch as u32,
+                1,
+            ],
+        })
+    }
+
+    pub fn silu(
+        input: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape;
+        input.check_shape(shape)?;
+
+        let context = &output.context;
+        let pipeline = context.pipeline("silu")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
     pub fn squared_relu(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape;
         let context = &x.context;

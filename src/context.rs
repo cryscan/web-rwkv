@@ -245,6 +245,7 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline("add", include_str!("shaders/add.wgsl"), "add", None)
+        .with_pipeline("silu", include_str!("shaders/silu.wgsl"), "silu", None)
         .with_pipeline(
             "squared_relu",
             include_str!("shaders/squared_relu.wgsl"),
