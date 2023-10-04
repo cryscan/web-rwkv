@@ -214,11 +214,22 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
 
 pub trait TensorExt: Sized {
     fn shape(&self) -> Shape;
+
     fn check_shape(&self, shape: Shape) -> Result<(), TensorError> {
         (self.shape() == shape)
             .then_some(())
             .ok_or(TensorError::Shape(self.shape(), shape))
     }
+}
+
+pub trait TensorReshape: Sized {
+    fn reshape(
+        &self,
+        x: TensorDimension,
+        y: TensorDimension,
+        z: TensorDimension,
+        w: TensorDimension,
+    ) -> Result<Self, TensorError>;
 }
 
 #[derive(Debug)]
@@ -279,18 +290,6 @@ impl<D: Device, T: Scalar> Tensor<D, T> {
     pub fn data(&self) -> &D::Data {
         &self.data
     }
-
-    #[inline]
-    pub fn reshape(
-        self,
-        x: TensorDimension,
-        y: TensorDimension,
-        z: TensorDimension,
-        w: TensorDimension,
-    ) -> Result<Self, TensorError> {
-        let shape = TensorDimension::deduce(self.shape, x, y, z, w)?;
-        Ok(Self { shape, ..self })
-    }
 }
 
 impl<'a, T: Scalar> TensorInit<'a, T> for TensorCpu<'a, T> {
@@ -321,6 +320,23 @@ impl<T: Scalar> TensorExt for TensorCpu<'_, T> {
     #[inline]
     fn shape(&self) -> Shape {
         self.shape
+    }
+}
+
+impl<T: Scalar> TensorReshape for TensorCpu<'_, T> {
+    #[inline]
+    fn reshape(
+        &self,
+        x: TensorDimension,
+        y: TensorDimension,
+        z: TensorDimension,
+        w: TensorDimension,
+    ) -> Result<Self, TensorError> {
+        let shape = TensorDimension::deduce(self.shape, x, y, z, w)?;
+        Ok(Self {
+            shape,
+            ..self.clone()
+        })
     }
 }
 
@@ -363,6 +379,28 @@ impl<T: Scalar, K: Kind> TensorExt for TensorGpu<T, K> {
     #[inline]
     fn shape(&self) -> Shape {
         self.shape
+    }
+}
+
+impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
+    #[inline]
+    fn reshape(
+        &self,
+        x: TensorDimension,
+        y: TensorDimension,
+        z: TensorDimension,
+        w: TensorDimension,
+    ) -> Result<Self, TensorError> {
+        let shape = TensorDimension::deduce(self.shape, x, y, z, w)?;
+        let meta = self.context.request_shape_uniform(shape);
+        Ok(Self {
+            shape,
+            data: TensorBuffer {
+                meta,
+                buffer: self.data.buffer.clone(),
+            },
+            ..self.clone()
+        })
     }
 }
 
@@ -527,19 +565,6 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
                 .try_collect(),
             _ => Ok(vec![self]),
         }
-        // match (self.shape[0], self.shape[1], self.shape[2]) {
-        //     (0, _, _) | (_, 0, _) | (_, _, 0) => vec![],
-        //     (1, 1, 1) => vec![self],
-        //     (x, 1, 1) => (0..x)
-        //         .map(|batch| self.as_slice((batch, .., ..)).unwrap())
-        //         .collect(),
-        //     (_, x, 1) => (0..x)
-        //         .map(|batch| self.as_slice((.., batch, ..)).unwrap())
-        //         .collect(),
-        //     (_, _, x) => (0..x)
-        //         .map(|batch| self.as_slice((.., .., batch)).unwrap())
-        //         .collect(),
-        // }
     }
 
     /// Concat a batch of tensors.

@@ -7,7 +7,6 @@ use half::f16;
 use itertools::Itertools;
 use regex::Regex;
 use safetensors::SafeTensors;
-use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use crate::{
@@ -17,7 +16,7 @@ use crate::{
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
         IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorExt, TensorGpu,
-        TensorInit, TensorStack, TensorView,
+        TensorInit, TensorReshape, TensorStack, TensorView,
     },
 };
 
@@ -51,6 +50,7 @@ pub struct ModelInfo {
     pub num_emb: usize,
     pub num_hidden: usize,
     pub num_vocab: usize,
+    pub head_size: usize,
 }
 
 bitflags! {
@@ -179,11 +179,15 @@ struct Att {
     time_mix_k: TensorGpu<f16, ReadWrite>,
     time_mix_v: TensorGpu<f16, ReadWrite>,
     time_mix_r: TensorGpu<f16, ReadWrite>,
+    time_mix_g: TensorGpu<f16, ReadWrite>,
 
     w_k: Matrix,
     w_v: Matrix,
     w_r: Matrix,
+    w_g: Matrix,
     w_o: Matrix,
+
+    group_norm: LayerNorm,
 }
 
 #[derive(Debug)]
@@ -226,9 +230,11 @@ struct Runtime {
     att_kx: TensorGpu<f32, ReadWrite>,
     att_vx: TensorGpu<f32, ReadWrite>,
     att_rx: TensorGpu<f32, ReadWrite>,
+    att_gx: TensorGpu<f32, ReadWrite>,
     att_k: TensorGpu<f32, ReadWrite>,
     att_v: TensorGpu<f32, ReadWrite>,
     att_r: TensorGpu<f32, ReadWrite>,
+    att_g: TensorGpu<f32, ReadWrite>,
     att_o: TensorGpu<f32, ReadWrite>,
 
     ffn_x: TensorGpu<f32, ReadWrite>,
@@ -252,9 +258,11 @@ impl Runtime {
             att_kx: context.tensor_init(shape),
             att_vx: context.tensor_init(shape),
             att_rx: context.tensor_init(shape),
+            att_gx: context.tensor_init(shape),
             att_k: context.tensor_init(shape),
             att_v: context.tensor_init(shape),
             att_r: context.tensor_init(shape),
+            att_g: context.tensor_init(shape),
             att_o: context.tensor_init(shape),
             ffn_x: context.tensor_init(shape),
             ffn_kx: context.tensor_init(shape),
@@ -302,24 +310,26 @@ impl Softmax {
     }
 }
 
-#[derive(Debug, Clone, Deref, DerefMut)]
-pub struct ModelState(pub TensorGpu<f32, ReadWrite>);
+#[derive(Debug, Clone)]
+pub struct ModelState {
+    info: ModelInfo,
+    state: TensorGpu<f32, ReadWrite>,
+}
+
+impl std::ops::Deref for ModelState {
+    type Target = TensorGpu<f32, ReadWrite>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
 
 impl ModelState {
     pub fn new(context: &Context, info: &ModelInfo, max_batch: usize) -> Self {
         let data = (0..max_batch)
             .map(|_| {
                 (0..info.num_layers)
-                    .map(|_| {
-                        [
-                            vec![0.0; info.num_emb],
-                            vec![0.0; info.num_emb],
-                            vec![0.0; info.num_emb],
-                            vec![f32::MIN; info.num_emb],
-                            vec![0.0; info.num_emb],
-                        ]
-                        .concat()
-                    })
+                    .map(|_| vec![0.0; info.num_emb * (info.head_size + 2)])
                     .collect_vec()
                     .concat()
             })
@@ -327,17 +337,27 @@ impl ModelState {
             .concat();
         let state = context
             .tensor_from_data(
-                Shape::new(info.num_emb, 5 * info.num_layers, max_batch, 1),
+                Shape::new(
+                    info.num_emb,
+                    info.num_layers * (info.head_size + 2),
+                    max_batch,
+                    1,
+                ),
                 data,
             )
             .unwrap();
-        Self(state)
+        let info = info.clone();
+        Self { info, state }
+    }
+
+    pub fn info(&self) -> &ModelInfo {
+        &self.info
     }
 
     /// Load the state from host. Their shapes must match.
     pub fn load(&self, backed: &BackedState) -> Result<(), TensorError> {
         let host = self.context.tensor_from_data(self.shape(), &backed.data)?;
-        self.0.load(&host)
+        self.state.load(&host)
     }
 
     /// Load one batch from host. The shape of the backed state should be of one batch.
@@ -345,7 +365,7 @@ impl ModelState {
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
         let host = self.context.tensor_from_data(shape, &backed.data)?;
-        self.0.load_batch(&host, batch)
+        self.state.load_batch(&host, batch)
     }
 
     /// Back the entire device state to host.
@@ -424,17 +444,17 @@ impl ModelState {
 
     #[inline]
     pub fn max_batch(&self) -> usize {
-        self.0.shape()[2]
+        self.shape()[2]
     }
 
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
-        let start = 5 * layer;
-        let end = start + 4;
+        let start = (self.info.head_size + 2) * layer;
+        let end = start + self.info.head_size + 1;
         self.view(.., start..end, .., ..)
     }
 
     fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
-        let start = 5 * layer + 4;
+        let start = (self.info.head_size + 2) * layer + self.info.head_size + 1;
         self.view(.., start..=start, .., ..)
     }
 }
@@ -447,20 +467,16 @@ pub struct BackedState {
 
 impl BackedState {
     pub fn new(info: &ModelInfo, max_batch: usize) -> Self {
-        let shape = Shape::new(info.num_emb, 5 * info.num_layers, max_batch, 1);
+        let shape = Shape::new(
+            info.num_emb,
+            info.num_layers * (info.head_size + 2),
+            max_batch,
+            1,
+        );
         let data = (0..max_batch)
             .map(|_| {
                 (0..info.num_layers)
-                    .map(|_| {
-                        [
-                            vec![0.0; info.num_emb],
-                            vec![0.0; info.num_emb],
-                            vec![0.0; info.num_emb],
-                            vec![f32::MIN; info.num_emb],
-                            vec![0.0; info.num_emb],
-                        ]
-                        .concat()
-                    })
+                    .map(|_| vec![0.0; info.num_emb * (info.head_size + 2)])
                     .collect_vec()
                     .concat()
             })
@@ -582,11 +598,19 @@ impl<'a> ModelBuilder<'a> {
             r + 1
         };
 
-        let info = ModelInfo {
-            num_layers,
-            num_emb: embed.shape()[1],
-            num_hidden: ffn.shape()[0],
-            num_vocab: embed.shape()[0],
+        let info = {
+            let num_emb = embed.shape()[1];
+            let num_hidden = ffn.shape()[0];
+            let num_vocab = embed.shape()[0];
+            let head_size = if num_emb <= 2048 { 64 } else { 128 };
+
+            ModelInfo {
+                num_layers,
+                num_emb,
+                num_hidden,
+                num_vocab,
+                head_size,
+            }
         };
 
         let lora_vectors = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
@@ -683,11 +707,37 @@ impl<'a> ModelBuilder<'a> {
             context.queue.submit(Some(encoder.finish()));
             Ok(tensor)
         };
+        #[allow(unused)]
         let load_vector_exp_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
             use TensorDimension::{Auto, Dimension};
             let tensor = model.tensor(&name)?;
             let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
                 .map(|x| -x.to_f32().exp())
+                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+                .into();
+
+            let mut encoder = context
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor::default());
+
+            for (lora, alpha) in lora_vectors(&name) {
+                let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
+                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
+                let op = TensorOp::blend(&factor, &lora, &tensor)?;
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                pass.execute_tensor_op(&op);
+            }
+
+            context.queue.submit(Some(encoder.finish()));
+            Ok(tensor)
+        };
+        #[allow(unused)]
+        let load_vector_exp_f32_v5 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
+            use TensorDimension::{Auto, Dimension};
+            let tensor = model.tensor(&name)?;
+            let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
+                .map(|x| -x.to_f32().exp())
+                .map(|x| x.exp())
                 .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
                 .into();
 
@@ -836,16 +886,33 @@ impl<'a> ModelBuilder<'a> {
                 };
 
                 let att = format!("blocks.{layer}.att");
-                let time_decay = load_vector_exp_f32(format!("{att}.time_decay"))?;
+                let time_decay = load_vector_exp_f32_v5(format!("{att}.time_decay"))?;
                 let time_first = load_vector_f32(format!("{att}.time_first"))?;
                 let time_mix_k = load_vector_f16(format!("{att}.time_mix_k"))?;
                 let time_mix_v = load_vector_f16(format!("{att}.time_mix_v"))?;
                 let time_mix_r = load_vector_f16(format!("{att}.time_mix_r"))?;
+                let time_mix_g = load_vector_f16(format!("{att}.time_mix_g"))?;
 
                 let w_k = load_matrix_f16(format!("{att}.key.weight"))?;
                 let w_v = load_matrix_f16(format!("{att}.value.weight"))?;
                 let w_r = load_matrix_f16(format!("{att}.receptance.weight"))?;
+                let w_g = load_matrix_f16(format!("{att}.gate.weight"))?;
                 let w_o = load_matrix_f16(format!("{att}.output.weight"))?;
+
+                let group_norm = LayerNorm {
+                    w: load_vector_f16(format!("{att}.ln_x.weight"))?.reshape(
+                        TensorDimension::Dimension(info.head_size),
+                        TensorDimension::Auto,
+                        TensorDimension::Dimension(1),
+                        TensorDimension::Dimension(1),
+                    )?,
+                    b: load_vector_f16(format!("{att}.ln_x.bias"))?.reshape(
+                        TensorDimension::Dimension(info.head_size),
+                        TensorDimension::Auto,
+                        TensorDimension::Dimension(1),
+                        TensorDimension::Dimension(1),
+                    )?,
+                };
 
                 let att = match quant {
                     Quantization::Int8(x) if x.contains_layer(layer as u64) => Att {
@@ -854,10 +921,13 @@ impl<'a> ModelBuilder<'a> {
                         time_mix_k,
                         time_mix_v,
                         time_mix_r,
+                        time_mix_g,
                         w_k: Self::quant_matrix_u8(w_k)?,
                         w_v: Self::quant_matrix_u8(w_v)?,
                         w_r: Self::quant_matrix_u8(w_r)?,
+                        w_g: Self::quant_matrix_u8(w_g)?,
                         w_o: Self::quant_matrix_u8(w_o)?,
+                        group_norm,
                     },
                     _ => Att {
                         time_decay,
@@ -865,10 +935,13 @@ impl<'a> ModelBuilder<'a> {
                         time_mix_k,
                         time_mix_v,
                         time_mix_r,
+                        time_mix_g,
                         w_k: Matrix::Fp16(w_k),
                         w_v: Matrix::Fp16(w_v),
                         w_r: Matrix::Fp16(w_r),
+                        w_g: Matrix::Fp16(w_g),
                         w_o: Matrix::Fp16(w_o),
+                        group_norm,
                     },
                 };
 
@@ -1137,6 +1210,8 @@ impl<'a> Model<'a> {
         assert_ne!(num_token, 0);
         assert_ne!(num_batch, 0);
 
+        let head_size = state.info().head_size;
+
         // collect batch output copy commands for later
         let mut redirect = vec![None; max_batch];
         let headers = input
@@ -1218,6 +1293,44 @@ impl<'a> Model<'a> {
         drop(pass);
 
         for (index, layer) in tensor.layers.iter().enumerate() {
+            use TensorDimension::{Auto, Dimension};
+            let time_first = layer.att.time_first.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(1),
+                Dimension(1),
+            )?;
+            let time_decay = layer.att.time_decay.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(1),
+                Dimension(1),
+            )?;
+            let att_x = buffer.att_x.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(num_token),
+                Dimension(1),
+            )?;
+            let att_k = buffer.att_k.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(num_token),
+                Dimension(1),
+            )?;
+            let att_v = buffer.att_v.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(num_token),
+                Dimension(1),
+            )?;
+            let att_r = buffer.att_r.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(num_token),
+                Dimension(1),
+            )?;
+
             encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
 
             let ops = vec![
@@ -1247,6 +1360,13 @@ impl<'a> Model<'a> {
                     state.att(index)?,
                     &buffer.att_rx,
                 )?,
+                TensorOp::token_shift(
+                    &buffer.cursors,
+                    &layer.att.time_mix_g,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_gx,
+                )?,
                 layer.att.w_k.matmul_op(
                     buffer.att_kx.view(.., .., .., ..)?,
                     buffer.att_k.view(.., .., .., ..)?,
@@ -1259,16 +1379,22 @@ impl<'a> Model<'a> {
                     buffer.att_rx.view(.., .., .., ..)?,
                     buffer.att_r.view(.., .., .., ..)?,
                 )?,
-                TensorOp::time_mix(
+                layer.att.w_g.matmul_op(
+                    buffer.att_gx.view(.., .., .., ..)?,
+                    buffer.att_g.view(.., .., .., ..)?,
+                )?,
+                TensorOp::time_mix_v5(
                     &stack,
-                    &layer.att.time_decay,
-                    &layer.att.time_first,
-                    &buffer.att_k,
-                    &buffer.att_v,
-                    &buffer.att_r,
-                    &buffer.att_x,
+                    &time_decay,
+                    &time_first,
+                    &att_k,
+                    &att_v,
+                    &att_r,
+                    &att_x,
                     state.att(index)?,
                 )?,
+                TensorOp::group_norm(&layer.att.group_norm.w, &layer.att.group_norm.b, &att_x)?,
+                TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
                 layer.att.w_o.matmul_op(
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,

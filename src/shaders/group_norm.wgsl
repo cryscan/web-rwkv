@@ -4,7 +4,7 @@
 @group(0) @binding(2) var<storage, read> b: array<vec2<u32>>;               // (S, H)
 @group(0) @binding(3) var<storage, read_write> x: array<vec4<f32>>;         // (S, H, A)
 
-const BLOCK_SIZE: u32 = 128u;
+const BLOCK_SIZE: u32 = 32u;
 
 var<workgroup> sum: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> sum_squared: array<vec4<f32>, BLOCK_SIZE>;
@@ -23,7 +23,7 @@ fn reduce_step(index: u32, stride: u32) {
     workgroupBarrier();
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(32, 1, 1)
 fn group_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
@@ -31,7 +31,7 @@ fn group_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.z;
 
     let h = head * stride;
-    let th = token * shape[1] * stride + h;
+    let th = (token * shape[1] + head) * stride;
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let value = x[th + i];
@@ -40,8 +40,6 @@ fn group_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     }
     workgroupBarrier();
 
-    reduce_step(index, 64u);
-    reduce_step(index, 32u);
     reduce_step(index, 16u);
     reduce_step(index, 8u);
     reduce_step(index, 4u);

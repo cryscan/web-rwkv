@@ -10,6 +10,11 @@ struct Cursor {
     len: u32,
 };
 
+struct Input {
+    @builtin(global_invocation_id) uid: vec3<u32>,
+    @builtin(local_invocation_id) tid: vec3<u32>,
+};
+
 @group(0) @binding(0) var<uniform> shape: vec4<u32>;                    // [S, H, A]
 @group(0) @binding(1) var<uniform> view: View;                          // [C, S + 1, B]
 @group(0) @binding(2) var<storage, read> stack: array<u32>;             // [B]
@@ -47,33 +52,32 @@ fn compute_cursor(x: u32) -> Cursor {
 }
 
 @compute @workgroup_size(32, 1, 1)
-fn time_mix(
-    @builtin(global_invocation_id) invocation_id: vec3<u32>,
-    @builtin(local_invocation_id) local_id: vec3<u32>,
-) {
+fn time_mix(in: Input) {
     let stride = shape[0] / 4u;
-    let channel = shape[1] * stride;
+    let dim = shape[1] * stride;
 
-    let index = invocation_id.x;
-    let batch = invocation_id.y;
+    let index = in.uid.x;
+    let batch = in.uid.y;
     let cursor = compute_cursor(stack[batch]);
 
-    let head = index / stride;
+    let head = in.tid.x / stride;
     let h = head * stride;
 
-    shared_u[local_id.x] = time_first[index];
-    shared_w[local_id.x] = time_decay[index];
+    shared_u[in.tid.x] = time_first[index];
+    shared_w[in.tid.x] = time_decay[index];
 
-    state[compute_index(batch, shape[0], index)] = x[(cursor.token + cursor.len - 1u) * channel + index];
+    state[compute_index(batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * dim + index];
 
     for (var t = 0u; t < cursor.len; t += 1u) {
-        let ti = (cursor.token + t) * channel + index;
-        let vv = v[ti];
-        shared_k[local_id.x] = k[ti];
-        shared_r[local_id.x] = r[ti];
+        let bti = (cursor.token + t) * dim + index;
+
+        workgroupBarrier();
+        shared_k[in.tid.x] = k[bti];
+        shared_r[in.tid.x] = r[bti];
         workgroupBarrier();
 
-        var y: vec4<f32>;
+        let vv = v[bti];
+        var y = vec4<f32>(0.0);
         for (var j = 0u; j < stride; j += 1u) {
             let kk = shared_k[h + j];
             let rr = shared_r[h + j];
@@ -83,31 +87,28 @@ fn time_mix(
             var ss: array<vec4<f32>, 4>;
             var kv: array<vec4<f32>, 4>;
 
-            let bji = compute_index(batch, j << 2u, index);
+            let bji = compute_index(batch, j * 4u + 1u, index);
 
-            ss[0] = state[bji + channel * 0u];
-            ss[1] = state[bji + channel * 1u];
-            ss[2] = state[bji + channel * 2u];
-            ss[3] = state[bji + channel * 3u];
+            ss[0] = state[bji + dim * 0u];
+            ss[1] = state[bji + dim * 1u];
+            ss[2] = state[bji + dim * 2u];
+            ss[3] = state[bji + dim * 3u];
 
             kv[0] = kk[0] * vv;
             kv[1] = kk[1] * vv;
             kv[2] = kk[2] * vv;
             kv[3] = kk[3] * vv;
 
-            state[bji + channel * 0u] = fma(vec4<f32>(ww[0]), ss[0], kv[0]);
-            state[bji + channel * 1u] = fma(vec4<f32>(ww[1]), ss[1], kv[1]);
-            state[bji + channel * 2u] = fma(vec4<f32>(ww[2]), ss[2], kv[2]);
-            state[bji + channel * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
-
             y += rr[0] * fma(vec4<f32>(uu[0]), kv[0], ss[0]);
             y += rr[1] * fma(vec4<f32>(uu[1]), kv[1], ss[1]);
             y += rr[2] * fma(vec4<f32>(uu[2]), kv[2], ss[2]);
             y += rr[3] * fma(vec4<f32>(uu[3]), kv[3], ss[3]);
+
+            state[bji + dim * 0u] = fma(vec4<f32>(ww[0]), ss[0], kv[0]);
+            state[bji + dim * 1u] = fma(vec4<f32>(ww[1]), ss[1], kv[1]);
+            state[bji + dim * 2u] = fma(vec4<f32>(ww[2]), ss[2], kv[2]);
+            state[bji + dim * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
         }
-
-        x[ti] = y;
-
-        workgroupBarrier();
+        x[bti] = y;
     }
 }

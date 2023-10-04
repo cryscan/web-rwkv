@@ -111,9 +111,9 @@ async fn run(cli: Cli) -> Result<()> {
     let context = create_context().await?;
 
     let tokenizer = load_tokenizer()?;
-    let model = cli
-        .model
-        .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
+    let model = cli.model.unwrap_or(
+        "assets/models/RWKV-5-World-1.5B-v2-OnlyForTest_7%_trained-20230929-ctx4096.st".into(),
+    );
     let model = load_model(&context, model, cli.lora, cli.quant)?;
 
     let prompt = "The Eiffel Tower is located in the city of";
