@@ -112,7 +112,13 @@ async fn run(cli: Cli) -> Result<()> {
 
     let tokenizer = load_tokenizer()?;
     let model = cli.model.unwrap_or(
-        "assets/models/RWKV-5-World-1.5B-v2-OnlyForTest_7%_trained-20230929-ctx4096.st".into(),
+        std::fs::read_dir("assets/models")
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .filter(|x| x.path().extension().is_some_and(|x| x == "st"))
+            .next()
+            .unwrap()
+            .path(),
     );
     let model = load_model(&context, model, cli.lora, cli.quant)?;
 
@@ -120,7 +126,7 @@ async fn run(cli: Cli) -> Result<()> {
     let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
     print!("{}", prompt);
 
-    let state = ModelState::new(&context, model.info(), 1);
+    let state = ModelState::new(&context, model.info(), 1, model.info().num_layers);
 
     let mut instant;
     let mut duration = Duration::default();

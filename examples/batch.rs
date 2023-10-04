@@ -140,7 +140,13 @@ async fn run(cli: Cli) -> Result<()> {
 
     let tokenizer = load_tokenizer()?;
     let model = cli.model.unwrap_or(
-        "assets/models/RWKV-5-World-1.5B-v2-OnlyForTest_7%_trained-20230929-ctx4096.st".into(),
+        std::fs::read_dir("assets/models")
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .filter(|x| x.path().extension().is_some_and(|x| x == "st"))
+            .next()
+            .unwrap()
+            .path(),
     );
     let model = load_model(&context, model, cli.lora, cli.quant)?;
 
@@ -164,7 +170,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     // The model state should keep the same batch as input.
     // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
-    let state = ModelState::new(&context, model.info(), tokens.len());
+    let state = ModelState::new(&context, model.info(), tokens.len(), 4);
 
     let mut num_tokens = [100usize, 400, 200, 300]
         .to_vec()

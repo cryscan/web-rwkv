@@ -66,7 +66,7 @@ fn time_mix(in: Input) {
     shared_u[in.tid.x] = time_first[index];
     shared_w[in.tid.x] = time_decay[index];
 
-    state[compute_index(batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * dim + index];
+    state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * dim + index];
 
     for (var t = 0u; t < cursor.len; t += 1u) {
         let bti = (cursor.token + t) * dim + index;
@@ -87,7 +87,7 @@ fn time_mix(in: Input) {
             var ss: array<vec4<f32>, 4>;
             var kv: array<vec4<f32>, 4>;
 
-            let bji = compute_index(batch, j * 4u + 1u, index);
+            let bji = compute_index(cursor.batch, j * 4u + 1u, index);
 
             ss[0] = state[bji + dim * 0u];
             ss[1] = state[bji + dim * 1u];
