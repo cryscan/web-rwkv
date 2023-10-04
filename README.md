@@ -11,6 +11,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - Int8 quantization.
 - Very fast.
 - LoRA merging at loading time.
+- Support RWKV V4 and V5.
 
 ![chat](screenshots/chat.gif)
 ![batch](screenshots/batch.gif)
@@ -51,8 +52,6 @@ Since there are only `token_chunk_size` tokens are processed during each `run()`
 You can now download the coverted models [here](https://huggingface.co/cgisky/RWKV-safetensors-fp16).
 
 You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-4-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
-
-An already-converted 0.4B model can be found under [`assets/models`](assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st).
 
 ## Troubleshoot
 - "thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: HeaderTooLarge'"

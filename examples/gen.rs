@@ -12,7 +12,10 @@ use std::{
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
-    model::{LayerFlags, Lora, Model, ModelBuilder, ModelState, Quantization},
+    model::{
+        v5::{LayerFlags, Lora, Model, ModelBuilder, ModelState, Quantization},
+        ModelExt,
+    },
     tokenizer::Tokenizer,
 };
 
@@ -111,16 +114,22 @@ async fn run(cli: Cli) -> Result<()> {
     let context = create_context().await?;
 
     let tokenizer = load_tokenizer()?;
-    let model = cli
-        .model
-        .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
+    let model = cli.model.unwrap_or(
+        std::fs::read_dir("assets/models")
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .filter(|x| x.path().extension().is_some_and(|x| x == "st"))
+            .next()
+            .unwrap()
+            .path(),
+    );
     let model = load_model(&context, model, cli.lora, cli.quant)?;
 
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
     print!("{}", prompt);
 
-    let state = ModelState::new(&context, model.info(), 1);
+    let state = ModelState::new(&context, model.info(), 1, model.info().num_layers);
 
     let mut instant;
     let mut duration = Duration::default();

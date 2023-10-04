@@ -10,6 +10,7 @@ use safetensors::SafeTensors;
 use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
+use super::{BackedStateExt, ModelError, ModelExt, ModelInfo, ModelStateExt};
 use crate::{
     context::Context,
     tensor::{
@@ -17,7 +18,7 @@ use crate::{
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
         IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorExt, TensorGpu,
-        TensorInit, TensorStack, TensorView,
+        TensorInit, TensorReshape, TensorStack, TensorView,
     },
 };
 
@@ -43,14 +44,6 @@ pub struct Model<'a> {
     softmax_cache: ResourceCache<usize, Softmax>,
     #[getter(skip)]
     stack_cache: ResourceCache<usize, TensorGpu<u32, ReadWrite>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ModelInfo {
-    pub num_layers: usize,
-    pub num_emb: usize,
-    pub num_hidden: usize,
-    pub num_vocab: usize,
 }
 
 bitflags! {
@@ -334,22 +327,44 @@ impl ModelState {
         Self(state)
     }
 
-    /// Load the state from host. Their shapes must match.
-    pub fn load(&self, backed: &BackedState) -> Result<(), TensorError> {
-        let host = self.context.tensor_from_data(self.shape(), &backed.data)?;
-        self.0.load(&host)
+    fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+        let start = 5 * layer;
+        let end = start + 4;
+        self.view(.., start..end, .., ..)
     }
 
-    /// Load one batch from host. The shape of the backed state should be of one batch.
-    pub fn load_batch(&self, backed: &BackedState, batch: usize) -> Result<(), TensorError> {
+    fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+        let start = 5 * layer + 4;
+        self.view(.., start..=start, .., ..)
+    }
+}
+
+impl ModelStateExt for ModelState {
+    type BackedState = BackedState;
+
+    fn max_batch(&self) -> usize {
+        self.0.shape()[2]
+    }
+
+    fn load(&self, backed: &Self::BackedState) -> Result<()> {
+        if self.max_batch() != backed.max_batch() {
+            return Err(ModelError::BatchSize(self.max_batch(), backed.max_batch()).into());
+        }
+        let host = self.context.tensor_from_data(self.shape(), &backed.data)?;
+        self.0.load(&host).map_err(|err| err.into())
+    }
+
+    fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<()> {
+        if self.max_batch() != backed.max_batch() {
+            return Err(ModelError::BatchSize(self.max_batch(), backed.max_batch()).into());
+        }
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
         let host = self.context.tensor_from_data(shape, &backed.data)?;
-        self.0.load_batch(&host, batch)
+        self.0.load_batch(&host, batch).map_err(|err| err.into())
     }
 
-    /// Back the entire device state to host.
-    pub fn back(&self) -> BackedState {
+    fn back(&self) -> Self::BackedState {
         let shape = self.shape();
         let map = self.context.tensor_init(shape);
 
@@ -367,8 +382,15 @@ impl ModelState {
         }
     }
 
-    /// Back one batch of the device state to host.
-    pub fn back_batch(&self, batch: usize) -> Result<BackedState, TensorError> {
+    fn back_batch(&self, batch: usize) -> Result<Self::BackedState> {
+        if batch >= self.max_batch() {
+            return Err(ModelError::BatchOutOfRange {
+                batch,
+                max: self.max_batch(),
+            }
+            .into());
+        }
+
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
         let map = self.context.tensor_init(shape);
@@ -387,8 +409,7 @@ impl ModelState {
         })
     }
 
-    /// Copy one device state to another. Their shapes must match.
-    pub fn blit(&self, other: &ModelState) -> Result<(), TensorError> {
+    fn blit(&self, other: &Self) -> Result<(), TensorError> {
         let mut encoder = self
             .context
             .device
@@ -398,10 +419,9 @@ impl ModelState {
         Ok(())
     }
 
-    /// Copy one batch from the source state to another.
-    pub fn blit_batch(
+    fn blit_batch(
         &self,
-        other: &ModelState,
+        other: &Self,
         from_batch: usize,
         to_batch: usize,
     ) -> Result<(), TensorError> {
@@ -420,22 +440,6 @@ impl ModelState {
 
         self.context.queue.submit(Some(encoder.finish()));
         Ok(())
-    }
-
-    #[inline]
-    pub fn max_batch(&self) -> usize {
-        self.0.shape()[2]
-    }
-
-    fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
-        let start = 5 * layer;
-        let end = start + 4;
-        self.view(.., start..end, .., ..)
-    }
-
-    fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
-        let start = 5 * layer + 4;
-        self.view(.., start..=start, .., ..)
     }
 }
 
@@ -467,6 +471,13 @@ impl BackedState {
             .collect_vec()
             .concat();
         Self { shape, data }
+    }
+}
+
+impl BackedStateExt for BackedState {
+    #[inline]
+    fn max_batch(&self) -> usize {
+        self.shape[2]
     }
 }
 
@@ -582,11 +593,19 @@ impl<'a> ModelBuilder<'a> {
             r + 1
         };
 
-        let info = ModelInfo {
-            num_layers,
-            num_emb: embed.shape()[1],
-            num_hidden: ffn.shape()[0],
-            num_vocab: embed.shape()[0],
+        let info = {
+            let num_emb = embed.shape()[1];
+            let num_hidden = ffn.shape()[0];
+            let num_vocab = embed.shape()[0];
+            let head_size = 1;
+
+            ModelInfo {
+                num_layers,
+                num_emb,
+                num_hidden,
+                num_vocab,
+                head_size,
+            }
         };
 
         let lora_vectors = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
@@ -937,23 +956,6 @@ impl<'a> ModelBuilder<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ModelError {
-    BatchSize(usize, usize),
-}
-
-impl std::fmt::Display for ModelError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ModelError::BatchSize(batch, max) => {
-                write!(f, "input batch size {batch} not match {max}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ModelError {}
-
 impl<'a> Model<'a> {
     #[inline]
     fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
@@ -981,125 +983,6 @@ impl<'a> Model<'a> {
         self.stack_cache.request(num_batch, || {
             self.context.zeros(Shape::new(num_batch, 1, 1, 1))
         })
-    }
-
-    #[inline]
-    pub fn head_shape(&self, num_batch: usize) -> Shape {
-        Shape::new(self.info.num_vocab, 1, num_batch, 1)
-    }
-
-    /// Softmax of the input tensors.
-    pub fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
-        let max_batch = input.len();
-
-        let mut redirect = vec![None; max_batch];
-        let input: Vec<_> = input
-            .into_iter()
-            .enumerate()
-            .filter_map(|(batch, data)| data.map(|data| (batch, data)))
-            .map(|(batch, data)| {
-                TensorCpu::from_data(&self.context, self.head_shape(1), data)
-                    .map(|tensor| (batch, tensor))
-            })
-            .try_collect()?;
-        let input = TensorCpu::stack(
-            input
-                .into_iter()
-                .enumerate()
-                .map(|(index, (batch, tensor))| {
-                    redirect[batch] = Some(index);
-                    tensor
-                })
-                .collect_vec(),
-        )?;
-
-        let num_batch = input.shape()[2];
-        let softmax = self.request_softmax(num_batch);
-        softmax.buffer.load(&input)?;
-
-        let op = TensorOp::softmax(&softmax.buffer)?;
-
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&op);
-        drop(pass);
-
-        encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
-        self.context.queue.submit(Some(encoder.finish()));
-
-        let mut output = TensorCpu::from(softmax.map.clone())
-            .split(2)
-            .expect("split buffer map")
-            .into_iter()
-            .map(|tensor| Some(tensor.to_vec()))
-            .collect_vec();
-
-        let mut probs = vec![None; max_batch];
-        for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
-            if let Some(redirect) = redirect {
-                std::mem::swap(probs, &mut output[redirect]);
-            }
-        }
-
-        Ok(probs)
-    }
-
-    /// Run the model for a batch of tokens as input.
-    /// The length of `tokens` must match the number of batches in `state`.
-    /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
-    pub fn run(
-        &self,
-        tokens: &mut Vec<Vec<u16>>,
-        state: &ModelState,
-    ) -> Result<Vec<Option<Vec<f32>>>> {
-        let num_token: usize = tokens.iter().map(Vec::len).sum();
-        let max_batch = state.shape()[2];
-
-        if tokens.len() != max_batch {
-            return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
-        }
-        if num_token == 0 {
-            return Ok(vec![None; max_batch]);
-        }
-
-        // we only infer at most `token_chunk_size` tokens at a time
-        let mut num_token = num_token.min(self.token_chunk_size);
-        let mut inputs = vec![vec![]; max_batch];
-        let mut last = None;
-
-        // take `num_token` tokens out of all the inputs and put into `input`
-        for (index, (batch, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
-            let mid = batch.len().min(num_token);
-            num_token -= mid;
-
-            let (head, tail) = batch.split_at(mid);
-            last = (!tail.is_empty()).then_some(index);
-            *input = head.to_vec();
-            *batch = tail.to_vec();
-
-            if num_token == 0 {
-                break;
-            }
-        }
-
-        let (output, redirect) = self.run_internal(inputs, state, last)?;
-        let output = TensorCpu::from(output.map.clone());
-
-        Ok(redirect
-            .into_iter()
-            .map(|index| {
-                index.map(|index| {
-                    output
-                        .slice(.., index, .., ..)
-                        .expect("this never happens")
-                        .to_vec()
-                })
-            })
-            .collect())
     }
 
     fn run_internal(
@@ -1359,5 +1242,124 @@ impl<'a> Model<'a> {
 
         context.queue.submit(Some(encoder.finish()));
         Ok((output, redirect))
+    }
+}
+
+impl ModelExt for Model<'_> {
+    type ModelState = ModelState;
+
+    #[inline]
+    fn head_shape(&self, num_batch: usize) -> Shape {
+        Shape::new(self.info.num_vocab, 1, num_batch, 1)
+    }
+
+    fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
+        let max_batch = input.len();
+
+        let mut redirect = vec![None; max_batch];
+        let input: Vec<_> = input
+            .into_iter()
+            .enumerate()
+            .filter_map(|(batch, data)| data.map(|data| (batch, data)))
+            .map(|(batch, data)| {
+                TensorCpu::from_data(&self.context, self.head_shape(1), data)
+                    .map(|tensor| (batch, tensor))
+            })
+            .try_collect()?;
+        let input = TensorCpu::stack(
+            input
+                .into_iter()
+                .enumerate()
+                .map(|(index, (batch, tensor))| {
+                    redirect[batch] = Some(index);
+                    tensor
+                })
+                .collect_vec(),
+        )?;
+
+        let num_batch = input.shape()[2];
+        let softmax = self.request_softmax(num_batch);
+        softmax.buffer.load(&input)?;
+
+        let op = TensorOp::softmax(&softmax.buffer)?;
+
+        let mut encoder = self
+            .context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
+        encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
+        self.context.queue.submit(Some(encoder.finish()));
+
+        let mut output = TensorCpu::from(softmax.map.clone())
+            .split(2)
+            .expect("split buffer map")
+            .into_iter()
+            .map(|tensor| Some(tensor.to_vec()))
+            .collect_vec();
+
+        let mut probs = vec![None; max_batch];
+        for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
+            if let Some(redirect) = redirect {
+                std::mem::swap(probs, &mut output[redirect]);
+            }
+        }
+
+        Ok(probs)
+    }
+
+    fn run(
+        &self,
+        tokens: &mut Vec<Vec<u16>>,
+        state: &Self::ModelState,
+    ) -> Result<Vec<Option<Vec<f32>>>> {
+        let num_token: usize = tokens.iter().map(Vec::len).sum();
+        let max_batch = state.max_batch();
+
+        if tokens.len() != max_batch {
+            return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
+        }
+        if num_token == 0 {
+            return Ok(vec![None; max_batch]);
+        }
+
+        // we only infer at most `token_chunk_size` tokens at a time
+        let mut num_token = num_token.min(self.token_chunk_size);
+        let mut inputs = vec![vec![]; max_batch];
+        let mut last = None;
+
+        // take `num_token` tokens out of all the inputs and put into `input`
+        for (index, (batch, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
+            let mid = batch.len().min(num_token);
+            num_token -= mid;
+
+            let (head, tail) = batch.split_at(mid);
+            last = (!tail.is_empty()).then_some(index);
+            *input = head.to_vec();
+            *batch = tail.to_vec();
+
+            if num_token == 0 {
+                break;
+            }
+        }
+
+        let (output, redirect) = self.run_internal(inputs, state, last)?;
+        let output = TensorCpu::from(output.map.clone());
+
+        Ok(redirect
+            .into_iter()
+            .map(|index| {
+                index.map(|index| {
+                    output
+                        .slice(.., index, .., ..)
+                        .expect("this never happens")
+                        .to_vec()
+                })
+            })
+            .collect())
     }
 }

@@ -24,7 +24,10 @@ use std::{
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
-    model::{LayerFlags, Lora, Model, ModelBuilder, ModelState, Quantization},
+    model::{
+        v5::{LayerFlags, Lora, Model, ModelBuilder, ModelState, Quantization},
+        ModelExt,
+    },
     tokenizer::Tokenizer,
 };
 
@@ -139,9 +142,15 @@ async fn run(cli: Cli) -> Result<()> {
     let mut terminal = setup_terminal()?;
 
     let tokenizer = load_tokenizer()?;
-    let model = cli
-        .model
-        .unwrap_or("assets/models/RWKV-4-World-0.4B-v1-20230529-ctx4096.st".into());
+    let model = cli.model.unwrap_or(
+        std::fs::read_dir("assets/models")
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .filter(|x| x.path().extension().is_some_and(|x| x == "st"))
+            .next()
+            .unwrap()
+            .path(),
+    );
     let model = load_model(&context, model, cli.lora, cli.quant)?;
 
     let prompts = [
@@ -164,7 +173,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     // The model state should keep the same batch as input.
     // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
-    let state = ModelState::new(&context, model.info(), tokens.len());
+    let state = ModelState::new(&context, model.info(), tokens.len(), 4);
 
     let mut num_tokens = [100usize, 400, 200, 300]
         .to_vec()
