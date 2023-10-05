@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use bitflags::bitflags;
-use derive_getters::Getters;
 use half::f16;
 use itertools::Itertools;
 use regex::Regex;
@@ -10,39 +9,32 @@ use safetensors::SafeTensors;
 use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
-use super::{BackedStateExt, ModelError, ModelExt, ModelInfo, ModelStateExt};
+use super::{BackedStateExt, ModelError, ModelExt, ModelInfo, ModelStateExt, ModelVersion};
 use crate::{
     context::Context,
     tensor::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
-        IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorExt, TensorGpu,
-        TensorInit, TensorReshape, TensorStack, TensorView,
+        IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu, TensorInit,
+        TensorReshape, TensorShape, TensorStack, TensorView,
     },
 };
 
-#[derive(Debug, Getters)]
+#[derive(Debug)]
 pub struct Model<'a> {
     context: Context,
-
     info: ModelInfo,
-    quant: Quantization,
 
     /// The head matrix is too big for a storage buffer so it's divided into chunks.
     head_chunk_size: usize,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     token_chunk_size: usize,
 
-    #[getter(skip)]
     tensor: ModelTensor<'a>,
-    #[getter(skip)]
     runtime_cache: ResourceCache<usize, Runtime>,
-    #[getter(skip)]
     output_cache: ResourceCache<usize, Output>,
-    #[getter(skip)]
     softmax_cache: ResourceCache<usize, Softmax>,
-    #[getter(skip)]
     stack_cache: ResourceCache<usize, TensorGpu<u32, ReadWrite>>,
 }
 
@@ -600,6 +592,7 @@ impl<'a> ModelBuilder<'a> {
             let head_size = 1;
 
             ModelInfo {
+                version: ModelVersion::V4,
                 num_layers,
                 num_emb,
                 num_hidden,
@@ -944,7 +937,6 @@ impl<'a> ModelBuilder<'a> {
         Ok(Model {
             context,
             info,
-            quant,
             head_chunk_size,
             token_chunk_size,
             tensor,
@@ -983,6 +975,11 @@ impl<'a> Model<'a> {
         self.stack_cache.request(num_batch, || {
             self.context.zeros(Shape::new(num_batch, 1, 1, 1))
         })
+    }
+
+    #[inline]
+    fn head_shape(&self, num_batch: usize) -> Shape {
+        Shape::new(self.info.num_vocab, 1, num_batch, 1)
     }
 
     fn run_internal(
@@ -1249,8 +1246,8 @@ impl ModelExt for Model<'_> {
     type ModelState = ModelState;
 
     #[inline]
-    fn head_shape(&self, num_batch: usize) -> Shape {
-        Shape::new(self.info.num_vocab, 1, num_batch, 1)
+    fn info(&self) -> &ModelInfo {
+        &self.info
     }
 
     fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {

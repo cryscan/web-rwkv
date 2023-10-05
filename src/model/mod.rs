@@ -1,9 +1,15 @@
 use anyhow::Result;
 
-use crate::tensor::{shape::Shape, TensorError};
+use crate::tensor::TensorError;
 
 pub mod v4;
 pub mod v5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModelVersion {
+    V4,
+    V5,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelError {
@@ -28,6 +34,7 @@ impl std::error::Error for ModelError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelInfo {
+    pub version: ModelVersion,
     pub num_layers: usize,
     pub num_emb: usize,
     pub num_hidden: usize,
@@ -66,7 +73,7 @@ pub trait ModelStateExt {
 pub trait ModelExt {
     type ModelState: ModelStateExt;
 
-    fn head_shape(&self, num_batch: usize) -> Shape;
+    fn info(&self) -> &ModelInfo;
 
     /// Softmax of the input tensors.
     fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>>;

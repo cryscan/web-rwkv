@@ -3,7 +3,7 @@ use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, CommandEncoder, ComputePass, ComputePipeline,
 };
 
-use super::{Kind, ReadWrite, Shape, TensorError, TensorExt, TensorGpu, TensorView, Uniform};
+use super::{Kind, ReadWrite, Shape, TensorError, TensorGpu, TensorShape, TensorView, Uniform};
 use crate::num::Scalar;
 
 pub trait TensorCommand<T: Scalar, K: Kind> {
@@ -988,7 +988,7 @@ mod tests {
     use super::{TensorOp, TensorPass};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{ops::TensorCommand, Shape, TensorCpu, TensorExt, TensorGpu, TensorInit},
+        tensor::{ops::TensorCommand, Shape, TensorCpu, TensorGpu, TensorInit, TensorShape},
     };
 
     fn is_approx(a: f32, b: f32) -> bool {

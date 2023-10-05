@@ -212,7 +212,7 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
     }
 }
 
-pub trait TensorExt: Sized {
+pub trait TensorShape: Sized {
     fn shape(&self) -> Shape;
 
     fn check_shape(&self, shape: Shape) -> Result<(), TensorError> {
@@ -316,7 +316,7 @@ impl<'a, T: Scalar> TensorInit<'a, T> for TensorCpu<'a, T> {
     }
 }
 
-impl<T: Scalar> TensorExt for TensorCpu<'_, T> {
+impl<T: Scalar> TensorShape for TensorCpu<'_, T> {
     #[inline]
     fn shape(&self) -> Shape {
         self.shape
@@ -375,7 +375,7 @@ impl<'a, T: Scalar, K: Kind> TensorInit<'a, T> for TensorGpu<T, K> {
     }
 }
 
-impl<T: Scalar, K: Kind> TensorExt for TensorGpu<T, K> {
+impl<T: Scalar, K: Kind> TensorShape for TensorGpu<T, K> {
     #[inline]
     fn shape(&self) -> Shape {
         self.shape
@@ -653,7 +653,7 @@ pub struct TensorView<'a, T: Scalar> {
     view: View,
 }
 
-impl<T: Scalar> TensorExt for TensorView<'_, T> {
+impl<T: Scalar> TensorShape for TensorView<'_, T> {
     #[inline]
     fn shape(&self) -> Shape {
         self.view.shape
@@ -892,7 +892,7 @@ mod tests {
     use super::Shape;
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{TensorCpu, TensorExt, TensorInit},
+        tensor::{TensorCpu, TensorInit, TensorShape},
     };
 
     fn create_context() -> Result<Context, anyhow::Error> {
