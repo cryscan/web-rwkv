@@ -18,15 +18,11 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 
 ## Compile and Run
 1. [Install Rust](https://rustup.rs/).
-2. Run `cargo run --release --example gen` to generate 100 tokens and measure the time cost.
-3. Run `cargo run --release --example chat` to chat with the model.
-4. Run `cargo run --release --example batch` to generate 4 batches of text with various lengths simultaneously.
-5. To specify the location of your safetensors model, use `cargo run --release --example chat -- --model /path/to/model`.
-
-Or you can download the pre-compiled binaries from the release page and run
-```bash
-$ chat --model /path/to/model
-```
+2. Download the model from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert it using [`convert_safetensors.py`](./convert_safetensors.py). Put the `.st` model under `assets/models`.
+3. Run `cargo run --release --example gen` to generate 100 tokens and measure the time cost.
+4. Run `cargo run --release --example chat` to chat with the model.
+5. Run `cargo run --release --example batch` to generate 4 batches of text with various lengths simultaneously.
+6. To specify the location of your safetensors model, use `cargo run --release --example chat -- --model /path/to/model`.
 
 ## Use in Your Project
 To use in your own rust project, simply add `web-rwkv = "0.2"` as a dependency in your `Cargo.toml`.
@@ -51,7 +47,7 @@ Since there are only `token_chunk_size` tokens are processed during each `run()`
 *You must download the model and put in `assets/models` before running if you are building from source.*
 You can now download the coverted models [here](https://huggingface.co/cgisky/RWKV-safetensors-fp16).
 
-You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-4-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
+You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
 
 ## Troubleshoot
 - "thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: HeaderTooLarge'"
