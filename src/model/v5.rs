@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use bitflags::bitflags;
 use half::f16;
 use itertools::Itertools;
-use regex::Regex;
 use safetensors::SafeTensors;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
-use super::{BackedStateExt, ModelError, ModelExt, ModelInfo, ModelStateExt, ModelVersion};
+use super::{
+    matrix::Matrix, BackedStateExt, Lora, ModelError, ModelExt, ModelInfo, ModelStateExt,
+    ModelVersion, Quantization,
+};
 use crate::{
     context::Context,
     tensor::{
@@ -35,111 +36,6 @@ pub struct Model<'a> {
     output_cache: ResourceCache<usize, Output>,
     softmax_cache: ResourceCache<usize, Softmax>,
     stack_cache: ResourceCache<usize, TensorGpu<u32, ReadWrite>>,
-}
-
-bitflags! {
-    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct LayerFlags: u64 {}
-}
-
-impl LayerFlags {
-    pub fn from_layer(layer: u64) -> LayerFlags {
-        LayerFlags::from_bits_retain(1 << layer)
-    }
-
-    pub fn contains_layer(&self, layer: u64) -> bool {
-        self.contains(LayerFlags::from_layer(layer))
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub enum Quantization {
-    /// No quantization.
-    #[default]
-    None,
-    /// Use int8 quantization, given layers to be quantized.
-    Int8(LayerFlags),
-}
-
-pub struct Lora<'a> {
-    pub data: &'a [u8],
-    pub blend: LoraBlend,
-}
-
-#[derive(Debug, Clone)]
-pub enum LoraBlend {
-    Full(f32),
-    Patterns(Vec<LoraBlendPattern>),
-}
-
-impl LoraBlend {
-    fn into_patterns(self) -> Vec<LoraBlendPattern> {
-        match self {
-            LoraBlend::Full(alpha) => {
-                vec![
-                    LoraBlendPattern::new(r"blocks\.[0-9]+\.([0-9a-zA-Z\.\_]+)", alpha)
-                        .expect("default blend pattern"),
-                ]
-            }
-            LoraBlend::Patterns(patterns) => patterns,
-        }
-    }
-}
-
-impl Default for LoraBlend {
-    fn default() -> Self {
-        Self::Full(1.0)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LoraBlendPattern {
-    /// A regex pattern that matches tensors in the model.
-    pattern: Regex,
-    /// The blend factor.
-    alpha: f32,
-}
-
-impl LoraBlendPattern {
-    #[inline]
-    pub fn new(pattern: &str, alpha: f32) -> Result<Self> {
-        Ok(Self {
-            pattern: Regex::new(pattern)?,
-            alpha,
-        })
-    }
-
-    #[inline]
-    pub fn alpha(&self) -> f32 {
-        self.alpha
-    }
-}
-
-#[derive(Debug)]
-enum Matrix {
-    Fp16(TensorGpu<f16, ReadWrite>),
-    Int8 {
-        w: Box<TensorGpu<u8, ReadWrite>>,
-        mx: Box<TensorGpu<f32, ReadWrite>>,
-        rx: Box<TensorGpu<f32, ReadWrite>>,
-        my: Box<TensorGpu<f32, ReadWrite>>,
-        ry: Box<TensorGpu<f32, ReadWrite>>,
-    },
-}
-
-impl<'a> Matrix {
-    pub fn matmul_op(
-        &'a self,
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
-    ) -> Result<TensorOp<'a>, TensorError> {
-        match self {
-            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output),
-            Matrix::Int8 { w, mx, rx, my, ry } => {
-                TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -564,43 +460,6 @@ impl<'a> ModelBuilder<'a> {
         }
     }
 
-    fn quant_matrix_u8(matrix: TensorGpu<f16, ReadWrite>) -> Result<Matrix, TensorError> {
-        let context = &matrix.context;
-        let shape = matrix.shape();
-
-        // let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1, 1));
-        // let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1, 1));
-        // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
-        // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
-
-        let w = Box::new(context.tensor_init(matrix.shape()));
-
-        let mx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1, 1)));
-        let rx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1, 1)));
-        let my = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
-        let ry = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
-
-        let ops = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
-
-        // ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
-        // ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
-        // ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
-        // ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
-
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        ops.iter().for_each(|op| pass.execute_tensor_op(op));
-        drop(pass);
-
-        context.queue.submit(Some(encoder.finish()));
-        matrix.destroy();
-
-        Ok(Matrix::Int8 { w, mx, rx, my, ry })
-    }
-
     pub fn build<'b>(self) -> Result<Model<'b>> {
         let Self {
             context,
@@ -932,11 +791,11 @@ impl<'a> ModelBuilder<'a> {
                         time_mix_v,
                         time_mix_r,
                         time_mix_g,
-                        w_k: Self::quant_matrix_u8(w_k)?,
-                        w_v: Self::quant_matrix_u8(w_v)?,
-                        w_r: Self::quant_matrix_u8(w_r)?,
-                        w_g: Self::quant_matrix_u8(w_g)?,
-                        w_o: Self::quant_matrix_u8(w_o)?,
+                        w_k: Matrix::quant_u8(w_k)?,
+                        w_v: Matrix::quant_u8(w_v)?,
+                        w_r: Matrix::quant_u8(w_r)?,
+                        w_g: Matrix::quant_u8(w_g)?,
+                        w_o: Matrix::quant_u8(w_o)?,
                         group_norm,
                     },
                     _ => Att {
@@ -972,9 +831,9 @@ impl<'a> ModelBuilder<'a> {
                     Quantization::Int8(x) if x.contains_layer(layer as u64) => Ffn {
                         time_mix_k,
                         time_mix_r,
-                        w_k: Self::quant_matrix_u8(w_k)?,
-                        w_v: Self::quant_matrix_u8(w_v)?,
-                        w_r: Self::quant_matrix_u8(w_r)?,
+                        w_k: Matrix::quant_u8(w_k)?,
+                        w_v: Matrix::quant_u8(w_v)?,
+                        w_r: Matrix::quant_u8(w_r)?,
                     },
                     _ => Ffn {
                         time_mix_k,

@@ -13,8 +13,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        v5::{LayerFlags, Lora, Model, ModelBuilder, ModelState, Quantization},
-        ModelExt, ModelStateExt,
+        v5::{Model, ModelBuilder, ModelState},
+        LayerFlags, Lora, ModelExt, ModelStateExt, Quantization,
     },
     tokenizer::Tokenizer,
 };
