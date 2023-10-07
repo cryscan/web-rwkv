@@ -39,7 +39,8 @@ def convert_file(pt_filename: str, sf_filename: str, transpose_names=[], rename=
         for transpose_name in transpose_names:
             if transpose_name in k:
                 loaded[k] = v.transpose(0, 1)
-    loaded = {rename_key(rename, k).lower(): v.contiguous() for k, v in loaded.items()}
+    loaded = {rename_key(rename, k).lower(): v.contiguous()
+              for k, v in loaded.items()}
 
     for k, v in loaded.items():
         print(f"{k}\t{v.shape}\t{v.dtype}")
@@ -56,5 +57,6 @@ def convert_file(pt_filename: str, sf_filename: str, transpose_names=[], rename=
 
 
 if __name__ == "__main__":
-    convert_file(args.input, args.output, ["lora_A"], {"time_faaaa" : "time_first"})
+    convert_file(args.input, args.output, ["lora_A"], {
+                 "time_faaaa": "time_first", "lora_A": "lora.0", "lora_B": "lora.1"})
     print(f"Saved to {args.output}")

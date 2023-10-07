@@ -1,9 +1,11 @@
 use anyhow::Result;
 use bitflags::bitflags;
 use regex::Regex;
+use web_rwkv_derive::{Deref, DerefMut};
 
 use crate::{context::Context, tensor::TensorError};
 
+mod loader;
 pub mod matrix;
 pub mod v4;
 pub mod v5;
@@ -120,34 +122,26 @@ pub enum Quantization {
     Int8(LayerFlags),
 }
 
+#[derive(Debug, Clone)]
 pub struct Lora<'a> {
     pub data: &'a [u8],
     pub blend: LoraBlend,
 }
 
-#[derive(Debug, Clone)]
-pub enum LoraBlend {
-    Full(f32),
-    Patterns(Vec<LoraBlendPattern>),
-}
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct LoraBlend(pub Vec<LoraBlendPattern>);
 
 impl LoraBlend {
-    fn into_patterns(self) -> Vec<LoraBlendPattern> {
-        match self {
-            LoraBlend::Full(alpha) => {
-                vec![
-                    LoraBlendPattern::new(r"blocks\.[0-9]+\.([0-9a-zA-Z\.\_]+)", alpha)
-                        .expect("default blend pattern"),
-                ]
-            }
-            LoraBlend::Patterns(patterns) => patterns,
-        }
+    pub fn full(alpha: f32) -> Self {
+        let pattern = LoraBlendPattern::new(r"blocks\.[0-9]+\.([0-9a-zA-Z\.\_]+)", alpha)
+            .expect("default blend pattern");
+        Self(vec![pattern])
     }
 }
 
 impl Default for LoraBlend {
     fn default() -> Self {
-        Self::Full(1.0)
+        Self::full(1.0)
     }
 }
 

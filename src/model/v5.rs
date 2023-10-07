@@ -3,12 +3,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use half::f16;
 use itertools::Itertools;
-use safetensors::SafeTensors;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
-    matrix::Matrix, BackedStateTrait, ModelBuilder, ModelError, ModelInfo, ModelStateTrait,
-    ModelTrait, ModelVersion, Quantization, StateBuilder,
+    loader::Loader, matrix::Matrix, BackedStateTrait, ModelBuilder, ModelError, ModelInfo,
+    ModelStateTrait, ModelTrait, Quantization, StateBuilder,
 };
 use crate::{
     context::Context,
@@ -781,317 +780,66 @@ impl ModelTrait for Model<'_> {
             token_chunk_size,
         } = builder;
 
-        let model = SafeTensors::deserialize(data)?;
-        let embed = model.tensor("emb.weight")?;
-        let ffn = model.tensor("blocks.0.ffn.key.weight")?;
-
-        let lora_tensors: Vec<_> = lora
-            .iter()
-            .map(|lora| SafeTensors::deserialize(lora.data))
-            .try_collect()?;
-
-        let num_layers = {
-            let mut r: usize = 0;
-            for i in model.names() {
-                const PREFIX: &str = "blocks.";
-                if let Some(i) = i.strip_prefix(PREFIX) {
-                    let i = &i[..i.find('.').unwrap_or(0)];
-                    r = r.max(i.parse::<usize>()?)
-                }
-            }
-            r + 1
-        };
-
-        let info = {
-            let num_emb = embed.shape()[1];
-            let num_hidden = ffn.shape()[0];
-            let num_vocab = embed.shape()[0];
-            let head_size = if num_emb <= 2048 { 64 } else { 128 };
-
-            ModelInfo {
-                version: ModelVersion::V5,
-                num_layers,
-                num_emb,
-                num_hidden,
-                num_vocab,
-                head_size,
-            }
-        };
-
-        let lora_vectors = |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32)> {
-            lora.iter()
-                .zip_eq(lora_tensors.iter())
-                .filter_map(|(lora, data)| {
-                    // find the last blend that matches the name while the tensor exists in the data
-                    lora.blend
-                        .clone()
-                        .into_patterns()
-                        .into_iter()
-                        .filter(|blend| blend.pattern.is_match(name))
-                        .last()
-                        .and_then(|blend| {
-                            data.tensor(name).ok().and_then(|tensor| {
-                                let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)
-                                    .ok()?
-                                    .map(|x| x.to_f32());
-                                log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
-                                Some((tensor.into(), blend.alpha))
-                            })
-                        })
-                })
-                .collect()
-        };
-        let lora_matrices =
-            |name: &str| -> Vec<(TensorGpu<f32, ReadWrite>, f32, usize)> {
-                lora.iter()
-                    .zip_eq(lora_tensors.iter())
-                    .filter_map(|(lora, data)| {
-                        // find the last blend that matches the name while the tensor exists in the data
-                        lora.blend
-                            .clone()
-                            .into_patterns()
-                            .into_iter()
-                            .filter(|blend| blend.pattern.is_match(name))
-                            .last()
-                            .and_then(|blend| {
-                                let a = data.tensor(&format!("{name}.lora_a")).ok().and_then(
-                                    |tensor| TensorGpu::from_safetensors(&context, tensor).ok(),
-                                )?;
-                                let b = data.tensor(&format!("{name}.lora_b")).ok().and_then(
-                                    |tensor| TensorGpu::from_safetensors(&context, tensor).ok(),
-                                )?;
-                                let output = TensorGpu::init(
-                                    &context,
-                                    Shape::new(a.shape()[1], b.shape()[1], 1, 1),
-                                );
-
-                                let mut encoder = context
-                                    .device
-                                    .create_command_encoder(&CommandEncoderDescriptor::default());
-
-                                let op = TensorOp::matmul_mat_fp16(
-                                    b.view(.., .., .., ..).ok()?,
-                                    a.view(.., .., .., ..).ok()?,
-                                    output.view(.., .., .., ..).ok()?,
-                                )
-                                .ok()?;
-                                let mut pass =
-                                    encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                                pass.execute_tensor_op(&op);
-                                drop(pass);
-
-                                context.queue.submit(Some(encoder.finish()));
-
-                                log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
-                                Some((output, blend.alpha, a.shape()[0]))
-                            })
-                    })
-                    .collect()
-            };
-
-        let load_vector_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
-            use TensorDimension::{Auto, Dimension};
-            let tensor = model.tensor(&name)?;
-            let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
-                .map(|x| x.to_f32())
-                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-                .into();
-
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-
-            for (lora, alpha) in lora_vectors(&name) {
-                let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
-                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend(&factor, &lora, &tensor)?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                pass.execute_tensor_op(&op);
-            }
-
-            context.queue.submit(Some(encoder.finish()));
-            Ok(tensor)
-        };
-        let load_vector_exp_exp_f32 = |name: String| -> Result<TensorGpu<f32, ReadWrite>> {
-            use TensorDimension::{Auto, Dimension};
-            let tensor = model.tensor(&name)?;
-            let tensor = TensorCpu::<f16>::from_safetensors(&context, tensor)?
-                .map(|x| -x.to_f32().exp())
-                .map(|x| x.exp())
-                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-                .into();
-
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
-
-            for (lora, alpha) in lora_vectors(&name) {
-                let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
-                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend(&factor, &lora, &tensor)?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                pass.execute_tensor_op(&op);
-            }
-
-            context.queue.submit(Some(encoder.finish()));
-            Ok(tensor)
-        };
-        let load_vector_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
-            use TensorDimension::{Auto, Dimension};
-            let lora = lora_vectors(&name);
-            let tensor = model.tensor(&name)?;
-            let tensor = if lora.is_empty() {
-                TensorGpu::from_safetensors(&context, tensor)?.reshape(
-                    Auto,
-                    Dimension(1),
-                    Dimension(1),
-                    Dimension(1),
-                )?
-            } else {
-                let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
-                    .map(|x| x.to_f32())
-                    .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?;
-                let tensor_f32 = TensorGpu::from(tensor_f32);
-                let tensor_f16 = context.tensor_init(tensor_f32.shape());
-
-                let mut encoder = context
-                    .device
-                    .create_command_encoder(&CommandEncoderDescriptor::default());
-
-                for (lora, alpha) in lora {
-                    let factor = vec![alpha, 1.0 - alpha, 0.0, 0.0];
-                    let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
-                    let op = TensorOp::blend(&factor, &lora, &tensor_f32)?;
-                    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                    pass.execute_tensor_op(&op);
-                }
-
-                let op = TensorOp::quantize_fp16(&tensor_f32, &tensor_f16)?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                pass.execute_tensor_op(&op);
-                drop(pass);
-
-                context.queue.submit(Some(encoder.finish()));
-                tensor_f16
-            };
-            Ok(tensor)
-        };
-        let load_matrix_f16 = |name: String| -> Result<TensorGpu<f16, ReadWrite>> {
-            use TensorDimension::{Dimension, Full};
-            let lora = lora_matrices(&name);
-            let tensor = model.tensor(&name)?;
-            let tensor = if lora.is_empty() {
-                TensorGpu::from_safetensors(&context, tensor)?.reshape(
-                    Full,
-                    Full,
-                    Dimension(1),
-                    Dimension(1),
-                )?
-            } else {
-                let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
-                    .map(|x| x.to_f32())
-                    .reshape(Full, Full, Dimension(1), Dimension(1))?;
-                let tensor_f32 = TensorGpu::from(tensor_f32);
-                let tensor_f16 = context.tensor_init(tensor_f32.shape());
-
-                let mut encoder = context
-                    .device
-                    .create_command_encoder(&CommandEncoderDescriptor::default());
-
-                for (lora, alpha, dim) in lora {
-                    let factor = vec![alpha / dim as f32, 1.0, 0.0, 0.0];
-                    let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
-                    let op = TensorOp::blend(&factor, &lora, &tensor_f32)?;
-                    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                    pass.execute_tensor_op(&op);
-                }
-
-                let op = TensorOp::quantize_fp16(&tensor_f32, &tensor_f16)?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                pass.execute_tensor_op(&op);
-                drop(pass);
-
-                context.queue.submit(Some(encoder.finish()));
-                tensor_f16
-            };
-            Ok(tensor)
-        };
+        let loader = Loader::new(&context, data, lora)?;
+        let info = Loader::info(data)?;
 
         let embed = Embed {
             layer_norm: LayerNorm {
-                w: load_vector_f16("blocks.0.ln0.weight".into())?,
-                b: load_vector_f16("blocks.0.ln0.bias".into())?,
+                w: loader.load_vector_f16("blocks.0.ln0.weight")?,
+                b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
-            w: context.tensor_from_data(
-                Shape::new(info.num_emb, info.num_vocab, 1, 1),
-                bytemuck::pod_collect_to_vec(embed.data()),
-            )?,
+            w: loader.load_embed()?,
         };
 
-        let head = {
-            let tensor = model.tensor("head.weight")?;
-            let shape = tensor.shape();
-            let shape = Shape::new(shape[1], shape[0], 1, 1);
-            let chunks = shape[1] / head_chunk_size;
-            let data = bytemuck::cast_slice(tensor.data());
-
-            let w = (0..chunks)
-                .map(|chunk| {
-                    let start = (chunk * head_chunk_size) * shape[0];
-                    let end = start + head_chunk_size * shape[0];
-                    context.tensor_from_data(
-                        Shape::new(shape[0], head_chunk_size, 1, 1),
-                        &data[start..end],
-                    )
-                })
-                .try_collect()?;
-
-            Head {
-                layer_norm: LayerNorm {
-                    w: load_vector_f16("ln_out.weight".into())?,
-                    b: load_vector_f16("ln_out.bias".into())?,
-                },
-                w,
-            }
+        let head = Head {
+            layer_norm: LayerNorm {
+                w: loader.load_vector_f16("ln_out.weight")?,
+                b: loader.load_vector_f16("ln_out.bias")?,
+            },
+            w: loader.load_head(head_chunk_size)?,
         };
 
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
 
-        let layers = (0..num_layers)
+        let layers = (0..info.num_layers)
             .map(|layer| {
                 let att_layer_norm = LayerNorm {
-                    w: load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
-                    b: load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
+                    w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
+                    b: loader.load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
                 };
 
                 let att = format!("blocks.{layer}.att");
-                let time_decay = load_vector_exp_exp_f32(format!("{att}.time_decay"))?;
-                let time_first = load_vector_f32(format!("{att}.time_first"))?;
-                let time_mix_k = load_vector_f16(format!("{att}.time_mix_k"))?;
-                let time_mix_v = load_vector_f16(format!("{att}.time_mix_v"))?;
-                let time_mix_r = load_vector_f16(format!("{att}.time_mix_r"))?;
-                let time_mix_g = load_vector_f16(format!("{att}.time_mix_g"))?;
+                let time_decay = loader.load_vector_exp_exp_f32(format!("{att}.time_decay"))?;
+                let time_first = loader.load_vector_f32(format!("{att}.time_first"))?;
+                let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k"))?;
+                let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v"))?;
+                let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r"))?;
+                let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g"))?;
 
-                let w_k = load_matrix_f16(format!("{att}.key.weight"))?;
-                let w_v = load_matrix_f16(format!("{att}.value.weight"))?;
-                let w_r = load_matrix_f16(format!("{att}.receptance.weight"))?;
-                let w_g = load_matrix_f16(format!("{att}.gate.weight"))?;
-                let w_o = load_matrix_f16(format!("{att}.output.weight"))?;
+                let w_k = loader.load_matrix_f16(format!("{att}.key.weight"))?;
+                let w_v = loader.load_matrix_f16(format!("{att}.value.weight"))?;
+                let w_r = loader.load_matrix_f16(format!("{att}.receptance.weight"))?;
+                let w_g = loader.load_matrix_f16(format!("{att}.gate.weight"))?;
+                let w_o = loader.load_matrix_f16(format!("{att}.output.weight"))?;
 
                 let group_norm = LayerNorm {
-                    w: load_vector_f16(format!("{att}.ln_x.weight"))?.reshape(
-                        TensorDimension::Dimension(info.head_size),
-                        TensorDimension::Auto,
-                        TensorDimension::Dimension(1),
-                        TensorDimension::Dimension(1),
-                    )?,
-                    b: load_vector_f16(format!("{att}.ln_x.bias"))?.reshape(
-                        TensorDimension::Dimension(info.head_size),
-                        TensorDimension::Auto,
-                        TensorDimension::Dimension(1),
-                        TensorDimension::Dimension(1),
-                    )?,
+                    w: loader
+                        .load_vector_f16(format!("{att}.ln_x.weight"))?
+                        .reshape(
+                            TensorDimension::Dimension(info.head_size),
+                            TensorDimension::Auto,
+                            TensorDimension::Dimension(1),
+                            TensorDimension::Dimension(1),
+                        )?,
+                    b: loader
+                        .load_vector_f16(format!("{att}.ln_x.bias"))?
+                        .reshape(
+                            TensorDimension::Dimension(info.head_size),
+                            TensorDimension::Auto,
+                            TensorDimension::Dimension(1),
+                            TensorDimension::Dimension(1),
+                        )?,
                 };
 
                 let att = match quant {
@@ -1126,17 +874,17 @@ impl ModelTrait for Model<'_> {
                 };
 
                 let ffn_layer_norm = LayerNorm {
-                    w: load_vector_f16(format!("blocks.{layer}.ln2.weight"))?,
-                    b: load_vector_f16(format!("blocks.{layer}.ln2.bias"))?,
+                    w: loader.load_vector_f16(format!("blocks.{layer}.ln2.weight"))?,
+                    b: loader.load_vector_f16(format!("blocks.{layer}.ln2.bias"))?,
                 };
 
                 let ffn = format!("blocks.{layer}.ffn");
-                let time_mix_k = load_vector_f16(format!("{ffn}.time_mix_k"))?;
-                let time_mix_r = load_vector_f16(format!("{ffn}.time_mix_k"))?;
+                let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
+                let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
 
-                let w_k = load_matrix_f16(format!("{ffn}.key.weight"))?;
-                let w_v = load_matrix_f16(format!("{ffn}.value.weight"))?;
-                let w_r = load_matrix_f16(format!("{ffn}.receptance.weight"))?;
+                let w_k = loader.load_matrix_f16(format!("{ffn}.key.weight"))?;
+                let w_v = loader.load_matrix_f16(format!("{ffn}.value.weight"))?;
+                let w_r = loader.load_matrix_f16(format!("{ffn}.receptance.weight"))?;
 
                 let ffn = match quant {
                     Quantization::Int8(x) if x.contains_layer(layer as u64) => Ffn {
