@@ -13,8 +13,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, LayerFlags, Lora, ModelBuilder, ModelStateTrait, ModelTrait,
-        ModelVersion, Quantization, StateBuilder,
+        loader::Loader, v4, v5, LayerFlags, Lora, Model, ModelBuilder, ModelState, ModelVersion,
+        Quantization, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -102,7 +102,7 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model<M: ModelTrait>(
+fn load_model<M: Model>(
     context: &Context,
     data: &[u8],
     lora: Option<PathBuf>,
@@ -164,8 +164,8 @@ async fn run(cli: Cli) -> Result<()> {
 
 fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer, sampler: Sampler) -> Result<()>
 where
-    S: ModelStateTrait,
-    M: ModelTrait<ModelState = S>,
+    S: ModelState,
+    M: Model<ModelState = S>,
 {
     let user = "User";
     let bot = "Assistant";

@@ -47,15 +47,20 @@ pub struct ModelInfo {
     pub head_size: usize,
 }
 
-pub trait BackedStateTrait: Sized {
-    fn from_builder(builder: StateBuilder) -> Self;
+pub trait BackedState {
+    fn from_builder(builder: StateBuilder) -> Self
+    where
+        Self: Sized;
+
     fn max_batch(&self) -> usize;
 }
 
-pub trait ModelStateTrait: Sized {
-    type BackedState: BackedStateTrait;
+pub trait ModelState {
+    type BackedState: BackedState;
 
-    fn from_builder(builder: StateBuilder) -> Self;
+    fn from_builder(builder: StateBuilder) -> Self
+    where
+        Self: Sized;
 
     fn max_batch(&self) -> usize;
 
@@ -78,10 +83,12 @@ pub trait ModelStateTrait: Sized {
     ) -> Result<(), TensorError>;
 }
 
-pub trait ModelTrait: Sized {
-    type ModelState: ModelStateTrait;
+pub trait Model {
+    type ModelState: ModelState;
 
-    fn from_builder(builder: ModelBuilder<'_>) -> Result<Self>;
+    fn from_builder(builder: ModelBuilder<'_>) -> Result<Self>
+    where
+        Self: Sized;
 
     fn info(&self) -> &ModelInfo;
 
@@ -214,8 +221,8 @@ impl<'a> ModelBuilder<'a> {
 
     pub fn build<M, S>(self) -> Result<M>
     where
-        S: ModelStateTrait,
-        M: ModelTrait<ModelState = S>,
+        S: ModelState,
+        M: Model<ModelState = S>,
     {
         M::from_builder(self)
     }
@@ -256,11 +263,11 @@ impl StateBuilder {
         }
     }
 
-    pub fn build<S: ModelStateTrait>(self) -> S {
+    pub fn build<S: ModelState>(self) -> S {
         S::from_builder(self)
     }
 
-    pub fn build_backed<B: BackedStateTrait>(self) -> B {
+    pub fn build_backed<B: BackedState>(self) -> B {
         B::from_builder(self)
     }
 }

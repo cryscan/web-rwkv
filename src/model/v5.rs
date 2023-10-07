@@ -6,8 +6,7 @@ use itertools::Itertools;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
-    loader::Loader, matrix::Matrix, BackedStateTrait, ModelBuilder, ModelError, ModelInfo,
-    ModelStateTrait, ModelTrait, Quantization, StateBuilder,
+    loader::Loader, matrix::Matrix, ModelBuilder, ModelError, ModelInfo, Quantization, StateBuilder,
 };
 use crate::{
     context::Context,
@@ -216,7 +215,7 @@ impl ModelState {
     }
 }
 
-impl ModelStateTrait for ModelState {
+impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
     fn from_builder(builder: StateBuilder) -> Self {
@@ -260,6 +259,7 @@ impl ModelStateTrait for ModelState {
     }
 
     fn load(&self, backed: &BackedState) -> Result<()> {
+        use super::BackedState;
         if self.max_batch() != backed.max_batch() {
             return Err(ModelError::BatchSize(self.max_batch(), backed.max_batch()).into());
         }
@@ -271,6 +271,7 @@ impl ModelStateTrait for ModelState {
     }
 
     fn load_batch(&self, backed: &BackedState, batch: usize) -> Result<()> {
+        use super::BackedState;
         if self.max_batch() != backed.max_batch() {
             return Err(ModelError::BatchSize(self.max_batch(), backed.max_batch()).into());
         }
@@ -389,7 +390,7 @@ pub struct BackedState {
     pub data: Vec<(Shape, Vec<f32>)>,
 }
 
-impl BackedStateTrait for BackedState {
+impl super::BackedState for BackedState {
     fn from_builder(builder: StateBuilder) -> Self {
         let StateBuilder {
             info,
@@ -767,7 +768,7 @@ impl<'a> Model<'a> {
     }
 }
 
-impl ModelTrait for Model<'_> {
+impl super::Model for Model<'_> {
     type ModelState = ModelState;
 
     fn from_builder(builder: ModelBuilder<'_>) -> Result<Self> {

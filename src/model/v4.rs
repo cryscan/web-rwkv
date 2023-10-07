@@ -7,8 +7,7 @@ use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
-    loader::Loader, matrix::Matrix, BackedStateTrait, ModelBuilder, ModelError, ModelInfo,
-    ModelStateTrait, ModelTrait, Quantization, StateBuilder,
+    loader::Loader, matrix::Matrix, ModelBuilder, ModelError, ModelInfo, Quantization, StateBuilder,
 };
 use crate::{
     context::Context,
@@ -198,7 +197,7 @@ impl ModelState {
     }
 }
 
-impl ModelStateTrait for ModelState {
+impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
     fn from_builder(builder: StateBuilder) -> Self {
@@ -240,6 +239,7 @@ impl ModelStateTrait for ModelState {
     }
 
     fn load(&self, backed: &Self::BackedState) -> Result<()> {
+        use super::BackedState;
         if self.max_batch() != backed.max_batch() {
             return Err(ModelError::BatchSize(self.max_batch(), backed.max_batch()).into());
         }
@@ -248,6 +248,7 @@ impl ModelStateTrait for ModelState {
     }
 
     fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<()> {
+        use super::BackedState;
         if self.max_batch() != backed.max_batch() {
             return Err(ModelError::BatchSize(self.max_batch(), backed.max_batch()).into());
         }
@@ -342,7 +343,7 @@ pub struct BackedState {
     pub data: Vec<f32>,
 }
 
-impl BackedStateTrait for BackedState {
+impl super::BackedState for BackedState {
     fn from_builder(builder: StateBuilder) -> Self {
         let StateBuilder {
             info, max_batch, ..
@@ -669,7 +670,7 @@ impl<'a> Model<'a> {
     }
 }
 
-impl ModelTrait for Model<'_> {
+impl super::Model for Model<'_> {
     type ModelState = ModelState;
 
     fn from_builder(builder: ModelBuilder<'_>) -> Result<Self> {
@@ -880,6 +881,8 @@ impl ModelTrait for Model<'_> {
         tokens: &mut Vec<Vec<u16>>,
         state: &Self::ModelState,
     ) -> Result<Vec<Option<Vec<f32>>>> {
+        use super::ModelState;
+
         let num_token: usize = tokens.iter().map(Vec::len).sum();
         let max_batch = state.max_batch();
 
