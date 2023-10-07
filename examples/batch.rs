@@ -24,10 +24,7 @@ use std::{
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
-    model::{
-        v5::{Model, ModelBuilder, ModelState},
-        LayerFlags, Lora, ModelExt, Quantization,
-    },
+    model::{v5::Model, LayerFlags, Lora, ModelBuilder, ModelTrait, Quantization, StateBuilder},
     tokenizer::Tokenizer,
 };
 
@@ -103,7 +100,7 @@ fn load_model(
         .unwrap_or_default();
     let model = ModelBuilder::new(&context, &map).with_quant(quant);
 
-    let model = match lora {
+    let model: Model = match lora {
         Some(lora) => {
             let file = File::open(lora)?;
             let map = unsafe { Mmap::map(&file)? };
@@ -173,7 +170,10 @@ async fn run(cli: Cli) -> Result<()> {
 
     // The model state should keep the same batch as input.
     // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
-    let state = ModelState::new(&context, model.info(), tokens.len(), 4);
+    let state = StateBuilder::new(&context, model.info())
+        .with_max_batch(tokens.len())
+        .with_chunk_size(4)
+        .build();
 
     let mut num_tokens = [100usize, 400, 200, 300]
         .to_vec()

@@ -12,10 +12,7 @@ use std::{
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
-    model::{
-        v5::{Model, ModelBuilder, ModelState},
-        LayerFlags, Lora, ModelExt, Quantization,
-    },
+    model::{v5::Model, LayerFlags, Lora, ModelBuilder, ModelTrait, Quantization, StateBuilder},
     tokenizer::Tokenizer,
 };
 
@@ -92,7 +89,7 @@ fn load_model(
         .unwrap_or_default();
     let model = ModelBuilder::new(&context, &map).with_quant(quant);
 
-    let model = match lora {
+    let model: Model = match lora {
         Some(lora) => {
             let file = File::open(lora)?;
             let map = unsafe { Mmap::map(&file)? };
@@ -129,7 +126,8 @@ async fn run(cli: Cli) -> Result<()> {
     let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
     print!("{}", prompt);
 
-    let state = ModelState::new(&context, model.info(), 1, model.info().num_layers);
+    // let state = ModelState::new(&context, model.info(), 1, model.info().num_layers);
+    let state = StateBuilder::new(&context, model.info()).build();
 
     let mut instant;
     let mut duration = Duration::default();

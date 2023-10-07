@@ -2,7 +2,7 @@ use anyhow::Result;
 use bitflags::bitflags;
 use regex::Regex;
 
-use crate::tensor::TensorError;
+use crate::{context::Context, tensor::TensorError};
 
 pub mod matrix;
 pub mod v4;
@@ -45,12 +45,15 @@ pub struct ModelInfo {
     pub head_size: usize,
 }
 
-pub trait BackedStateExt: Sized {
+pub trait BackedStateTrait: Sized {
+    fn from_builder(builder: StateBuilder) -> Self;
     fn max_batch(&self) -> usize;
 }
 
-pub trait ModelStateExt {
-    type BackedState: BackedStateExt;
+pub trait ModelStateTrait: Sized {
+    type BackedState: BackedStateTrait;
+
+    fn from_builder(builder: StateBuilder) -> Self;
 
     fn max_batch(&self) -> usize;
 
@@ -73,8 +76,10 @@ pub trait ModelStateExt {
     ) -> Result<(), TensorError>;
 }
 
-pub trait ModelExt {
-    type ModelState: ModelStateExt;
+pub trait ModelTrait: Sized {
+    type ModelState: ModelStateTrait;
+
+    fn from_builder(builder: ModelBuilder<'_>) -> Result<Self>;
 
     fn info(&self) -> &ModelInfo;
 
@@ -166,5 +171,102 @@ impl LoraBlendPattern {
     #[inline]
     pub fn alpha(&self) -> f32 {
         self.alpha
+    }
+}
+
+pub struct ModelBuilder<'a> {
+    context: Context,
+    data: &'a [u8],
+    lora: Vec<Lora<'a>>,
+    quant: Quantization,
+    head_chunk_size: usize,
+    token_chunk_size: usize,
+}
+
+impl<'a> ModelBuilder<'a> {
+    pub fn new(context: &Context, data: &'a [u8]) -> Self {
+        Self {
+            context: context.clone(),
+            data,
+            lora: vec![],
+            quant: Quantization::None,
+            head_chunk_size: 4096,
+            token_chunk_size: 32,
+        }
+    }
+
+    pub fn with_quant(self, quant: Quantization) -> Self {
+        Self { quant, ..self }
+    }
+
+    pub fn add_lora(mut self, lora: Lora<'a>) -> Self {
+        self.lora.push(lora);
+        self
+    }
+
+    pub fn with_head_chunk_size(self, value: usize) -> Self {
+        Self {
+            head_chunk_size: value,
+            ..self
+        }
+    }
+
+    pub fn with_token_chunk_size(self, value: usize) -> Self {
+        Self {
+            token_chunk_size: value,
+            ..self
+        }
+    }
+
+    pub fn build<M, S>(self) -> Result<M>
+    where
+        S: ModelStateTrait,
+        M: ModelTrait<ModelState = S>,
+    {
+        M::from_builder(self)
+    }
+}
+
+/// Create a model state.
+/// - `max_batch`: The maximum number of runtime slots.
+/// - `chunk_size`: Internally, the state is split into chunks of layers, since there is a size limit on one GPU buffer (128 MB).
+/// If there is only one batch, it is recommended to set `chunk_size` to `info.num_layers()`.
+pub struct StateBuilder {
+    context: Context,
+    info: ModelInfo,
+    max_batch: usize,
+    chunk_size: usize,
+}
+
+impl StateBuilder {
+    pub fn new(context: &Context, info: &ModelInfo) -> Self {
+        Self {
+            context: context.clone(),
+            info: info.clone(),
+            max_batch: 1,
+            chunk_size: info.num_layers,
+        }
+    }
+
+    pub fn with_max_batch(self, value: usize) -> Self {
+        Self {
+            max_batch: value,
+            ..self
+        }
+    }
+
+    pub fn with_chunk_size(self, value: usize) -> Self {
+        Self {
+            chunk_size: value,
+            ..self
+        }
+    }
+
+    pub fn build<S: ModelStateTrait>(self) -> S {
+        S::from_builder(self)
+    }
+
+    pub fn build_backed<B: BackedStateTrait>(self) -> B {
+        B::from_builder(self)
     }
 }

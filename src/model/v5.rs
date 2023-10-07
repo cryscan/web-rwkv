@@ -7,8 +7,8 @@ use safetensors::SafeTensors;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
-    matrix::Matrix, BackedStateExt, Lora, ModelError, ModelExt, ModelInfo, ModelStateExt,
-    ModelVersion, Quantization,
+    matrix::Matrix, BackedStateTrait, ModelBuilder, ModelError, ModelInfo, ModelStateTrait,
+    ModelTrait, ModelVersion, Quantization, StateBuilder,
 };
 use crate::{
     context::Context,
@@ -199,11 +199,34 @@ pub struct ModelState {
 }
 
 impl ModelState {
-    /// Create a model state.
-    /// - `max_batch`: The maximum number of runtime slots.
-    /// - `chunk_size`: Internally, the state is split into chunks of layers, since there is a size limit on one GPU buffer (128 MB).
-    /// If there is only one batch, it is recommended to set `chunk_size` to `info.num_layers()`.
-    pub fn new(context: &Context, info: &ModelInfo, max_batch: usize, chunk_size: usize) -> Self {
+    fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+        let chunk = layer / self.chunk_size;
+        let offset = layer % self.chunk_size;
+
+        let start = offset * (self.info.head_size + 2);
+        let end = start + self.info.head_size + 1;
+        self.state[chunk].view(.., start..end, .., ..)
+    }
+
+    fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+        let chunk = layer / self.chunk_size;
+        let offset = layer % self.chunk_size;
+
+        let start = offset * (self.info.head_size + 2) + self.info.head_size + 1;
+        self.state[chunk].view(.., start..=start, .., ..)
+    }
+}
+
+impl ModelStateTrait for ModelState {
+    type BackedState = BackedState;
+
+    fn from_builder(builder: StateBuilder) -> Self {
+        let StateBuilder {
+            context,
+            info,
+            max_batch,
+            chunk_size,
+        } = builder;
         let num_chunk = (info.num_layers + chunk_size - 1) / chunk_size;
         let state = (0..num_chunk)
             .map(|_| {
@@ -231,27 +254,6 @@ impl ModelState {
             state,
         }
     }
-
-    fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
-        let chunk = layer / self.chunk_size;
-        let offset = layer % self.chunk_size;
-
-        let start = offset * (self.info.head_size + 2);
-        let end = start + self.info.head_size + 1;
-        self.state[chunk].view(.., start..end, .., ..)
-    }
-
-    fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
-        let chunk = layer / self.chunk_size;
-        let offset = layer % self.chunk_size;
-
-        let start = offset * (self.info.head_size + 2) + self.info.head_size + 1;
-        self.state[chunk].view(.., start..=start, .., ..)
-    }
-}
-
-impl ModelStateExt for ModelState {
-    type BackedState = BackedState;
 
     #[inline]
     fn max_batch(&self) -> usize {
@@ -388,8 +390,14 @@ pub struct BackedState {
     pub data: Vec<(Shape, Vec<f32>)>,
 }
 
-impl BackedState {
-    pub fn new(info: &ModelInfo, max_batch: usize, chunk_size: usize) -> Self {
+impl BackedStateTrait for BackedState {
+    fn from_builder(builder: StateBuilder) -> Self {
+        let StateBuilder {
+            info,
+            max_batch,
+            chunk_size,
+            ..
+        } = builder;
         let shape = Shape::new(
             info.num_emb,
             chunk_size * (info.head_size + 2),
@@ -407,68 +415,371 @@ impl BackedState {
             .collect();
         Self { max_batch, data }
     }
-}
 
-impl BackedStateExt for BackedState {
     #[inline]
     fn max_batch(&self) -> usize {
         self.max_batch
     }
 }
 
-pub struct ModelBuilder<'a> {
-    context: Context,
-    data: &'a [u8],
-    lora: Vec<Lora<'a>>,
-    quant: Quantization,
-    head_chunk_size: usize,
-    token_chunk_size: usize,
+impl<'a> Model<'a> {
+    #[inline]
+    fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
+        self.runtime_cache.request(num_token, || {
+            Runtime::new(&self.context, &self.info, num_token)
+        })
+    }
+
+    #[inline]
+    fn request_output(&self, num_batch: usize) -> Arc<Output> {
+        self.output_cache.request(num_batch, || {
+            Output::new(&self.context, &self.info, num_batch)
+        })
+    }
+
+    #[inline]
+    fn request_softmax(&self, num_batch: usize) -> Arc<Softmax> {
+        self.softmax_cache.request(num_batch, || {
+            Softmax::new(&self.context, &self.info, num_batch)
+        })
+    }
+
+    #[inline]
+    fn request_stack(&self, num_batch: usize) -> Arc<TensorGpu<u32, ReadWrite>> {
+        self.stack_cache.request(num_batch, || {
+            self.context.zeros(Shape::new(num_batch, 1, 1, 1))
+        })
+    }
+
+    #[inline]
+    fn head_shape(&self, num_batch: usize) -> Shape {
+        Shape::new(self.info.num_vocab, 1, num_batch, 1)
+    }
+
+    fn run_internal(
+        &self,
+        tokens: Vec<Vec<u16>>,
+        state: &ModelState,
+        last: Option<usize>,
+    ) -> Result<(Arc<Output>, Vec<Option<usize>>), TensorError> {
+        let context = &self.context;
+        let tensor = &self.tensor;
+
+        let input: Vec<_> = tokens
+            .into_iter()
+            .map(|tokens| -> Result<_, TensorError> {
+                let stack = TensorCpu::stack(
+                    tokens
+                        .into_iter()
+                        .map(|token| tensor.embed.w.slice(.., token as usize, .., ..))
+                        .try_collect()?,
+                )
+                .unwrap_or_else(|_| context.zeros(Shape::new(self.info.num_emb, 1, 0, 1)));
+                stack.map(|x| x.to_f32()).reshape(
+                    TensorDimension::Full,
+                    TensorDimension::Auto,
+                    TensorDimension::Dimension(1),
+                    TensorDimension::Full,
+                )
+            })
+            .try_collect()?;
+
+        let input = TensorStack::try_from(input)?;
+        let max_batch = input.max_batch();
+        let num_batch = input.num_batch();
+        let num_token = input.num_token();
+        let head_size = state.info.head_size;
+        assert_ne!(num_token, 0);
+        assert_ne!(num_batch, 0);
+
+        // collect batch output copy commands for later
+        let mut redirect = vec![None; max_batch];
+        let headers = input
+            .cursors
+            .iter()
+            .filter(|cursor| cursor.len > 0)
+            .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
+            .enumerate()
+            .map(|(index, cursor)| {
+                redirect[cursor.batch] = Some(index);
+                cursor.token + cursor.len - 1
+            })
+            .collect_vec();
+        let num_header = headers.len();
+
+        let buffer = self.request_runtime(num_token);
+        let output = self.request_output(num_header.max(1));
+        let stack = self.request_stack(num_batch);
+
+        // gather and group copy operations
+        let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
+            (vec![], &buffer.ffn_x)
+        } else {
+            let mut start = 0;
+            let mut end = 1;
+            let mut ops = vec![];
+            while end <= headers.len() {
+                if end == headers.len() || headers[end - 1] + 1 != headers[end] {
+                    let first = headers[start];
+                    let last = headers[end - 1];
+                    assert_eq!(last - first + 1, end - start);
+
+                    let input = buffer.ffn_x.view(.., first..=last, .., ..)?;
+                    let output = output.head_x.view(.., start..end, .., ..)?;
+                    ops.push(TensorOp::blit(input, output)?);
+
+                    start = end;
+                }
+                end += 1;
+            }
+            (ops, &output.head_x)
+        };
+
+        // let head_ops: Vec<_> = input
+        //     .cursors
+        //     .iter()
+        //     .filter(|cursor| cursor.len > 0)
+        //     .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
+        //     .enumerate()
+        //     .map(|(index, cursor)| -> Result<TensorOp<'_>, TensorError> {
+        //         redirect[cursor.batch] = Some(index);
+        //         let token = cursor.token + cursor.len - 1;
+        //         let input = buffer.ffn_x.as_view((.., token, ..))?;
+        //         let output = buffer.head_x.as_view((.., .., index))?;
+        //         TensorOp::blit(input, output)
+        //     })
+        //     .try_collect()?;
+
+        let stack_host =
+            context.tensor_from_data(stack.shape(), input.cursors.clone().into_stack())?;
+        let cursors =
+            context.tensor_from_data(buffer.cursors.shape(), input.cursors.into_cursors())?;
+
+        stack.load(&stack_host)?;
+        buffer.input.load(&input.tensor)?;
+        buffer.cursors.load(&cursors)?;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let op = TensorOp::layer_norm(
+            &tensor.embed.layer_norm.w,
+            &tensor.embed.layer_norm.b,
+            &buffer.input,
+        )?;
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
+        for (index, layer) in tensor.layers.iter().enumerate() {
+            use TensorDimension::{Auto, Dimension};
+            let time_first = layer.att.time_first.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(1),
+                Dimension(1),
+            )?;
+            let time_decay = layer.att.time_decay.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(1),
+                Dimension(1),
+            )?;
+            let att_x = buffer.att_x.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(num_token),
+                Dimension(1),
+            )?;
+            let att_k = buffer.att_k.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(num_token),
+                Dimension(1),
+            )?;
+            let att_v = buffer.att_v.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(num_token),
+                Dimension(1),
+            )?;
+            let att_r = buffer.att_r.reshape(
+                Dimension(head_size),
+                Auto,
+                Dimension(num_token),
+                Dimension(1),
+            )?;
+
+            encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
+
+            let ops = vec![
+                TensorOp::layer_norm(
+                    &layer.att_layer_norm.w,
+                    &layer.att_layer_norm.b,
+                    &buffer.att_x,
+                )?,
+                TensorOp::token_shift(
+                    &buffer.cursors,
+                    &layer.att.time_mix_k,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_kx,
+                )?,
+                TensorOp::token_shift(
+                    &buffer.cursors,
+                    &layer.att.time_mix_v,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_vx,
+                )?,
+                TensorOp::token_shift(
+                    &buffer.cursors,
+                    &layer.att.time_mix_r,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_rx,
+                )?,
+                TensorOp::token_shift(
+                    &buffer.cursors,
+                    &layer.att.time_mix_g,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_gx,
+                )?,
+                layer.att.w_k.matmul_op(
+                    buffer.att_kx.view(.., .., .., ..)?,
+                    buffer.att_k.view(.., .., .., ..)?,
+                )?,
+                layer.att.w_v.matmul_op(
+                    buffer.att_vx.view(.., .., .., ..)?,
+                    buffer.att_v.view(.., .., .., ..)?,
+                )?,
+                layer.att.w_r.matmul_op(
+                    buffer.att_rx.view(.., .., .., ..)?,
+                    buffer.att_r.view(.., .., .., ..)?,
+                )?,
+                layer.att.w_g.matmul_op(
+                    buffer.att_gx.view(.., .., .., ..)?,
+                    buffer.att_g.view(.., .., .., ..)?,
+                )?,
+                TensorOp::time_mix_v5(
+                    &stack,
+                    &time_decay,
+                    &time_first,
+                    &att_k,
+                    &att_v,
+                    &att_r,
+                    &att_x,
+                    state.att(index)?,
+                )?,
+                TensorOp::group_norm(&layer.att.group_norm.w, &layer.att.group_norm.b, &att_x)?,
+                TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
+                layer.att.w_o.matmul_op(
+                    buffer.att_x.view(.., .., .., ..)?,
+                    buffer.att_o.view(.., .., .., ..)?,
+                )?,
+                TensorOp::add(&buffer.input, &buffer.att_o)?,
+            ];
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            drop(pass);
+
+            encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
+
+            let ops = vec![
+                TensorOp::layer_norm(
+                    &layer.ffn_layer_norm.w,
+                    &layer.ffn_layer_norm.b,
+                    &buffer.ffn_x,
+                )?,
+                TensorOp::token_shift(
+                    &buffer.cursors,
+                    &layer.ffn.time_mix_k,
+                    &buffer.ffn_x,
+                    state.ffn(index)?,
+                    &buffer.ffn_kx,
+                )?,
+                TensorOp::token_shift(
+                    &buffer.cursors,
+                    &layer.ffn.time_mix_r,
+                    &buffer.ffn_x,
+                    state.ffn(index)?,
+                    &buffer.ffn_rx,
+                )?,
+                layer.ffn.w_k.matmul_op(
+                    buffer.ffn_kx.view(.., .., .., ..)?,
+                    buffer.ffn_k.view(.., .., .., ..)?,
+                )?,
+                TensorOp::squared_relu(&buffer.ffn_k)?,
+                layer.ffn.w_v.matmul_op(
+                    buffer.ffn_k.view(.., .., .., ..)?,
+                    buffer.ffn_v.view(.., .., .., ..)?,
+                )?,
+                layer.ffn.w_r.matmul_op(
+                    buffer.ffn_rx.view(.., .., .., ..)?,
+                    buffer.ffn_r.view(.., .., .., ..)?,
+                )?,
+                TensorOp::channel_mix(
+                    &buffer.cursors,
+                    &buffer.ffn_r,
+                    &buffer.ffn_v,
+                    &buffer.ffn_x,
+                    state.ffn(index)?,
+                )?,
+                TensorOp::add(&buffer.att_o, &buffer.ffn_x)?,
+            ];
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            drop(pass);
+
+            if index != self.info.num_layers - 1 {
+                encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
+            }
+        }
+
+        if num_header > 0 {
+            let mut ops = vec![TensorOp::layer_norm(
+                &tensor.head.layer_norm.w,
+                &tensor.head.layer_norm.b,
+                head_x,
+            )?];
+
+            for (chunk, matrix) in tensor.head.w.iter().enumerate() {
+                let start = chunk * self.head_chunk_size;
+                let end = start + self.head_chunk_size;
+                let input = head_x.view(.., .., .., ..)?;
+                let output = output.head_o.view(start..end, .., .., ..)?;
+                ops.push(TensorOp::matmul_vec_fp16(matrix, input, output)?);
+            }
+
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            head_ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            drop(pass);
+
+            encoder.copy_tensor(&output.head_o, &output.map)?;
+        }
+
+        context.queue.submit(Some(encoder.finish()));
+        Ok((output, redirect))
+    }
 }
 
-impl<'a> ModelBuilder<'a> {
-    pub fn new(context: &Context, data: &'a [u8]) -> Self {
-        Self {
-            context: context.clone(),
-            data,
-            lora: vec![],
-            quant: Quantization::None,
-            head_chunk_size: 4096,
-            token_chunk_size: 32,
-        }
-    }
+impl ModelTrait for Model<'_> {
+    type ModelState = ModelState;
 
-    pub fn with_quant(self, quant: Quantization) -> Self {
-        Self { quant, ..self }
-    }
-
-    pub fn add_lora(mut self, lora: Lora<'a>) -> Self {
-        self.lora.push(lora);
-        self
-    }
-
-    pub fn with_head_chunk_size(self, size: usize) -> Self {
-        Self {
-            head_chunk_size: size,
-            ..self
-        }
-    }
-
-    pub fn with_token_chunk_size(self, size: usize) -> Self {
-        Self {
-            token_chunk_size: size,
-            ..self
-        }
-    }
-
-    pub fn build<'b>(self) -> Result<Model<'b>> {
-        let Self {
+    fn from_builder(builder: ModelBuilder<'_>) -> Result<Self> {
+        let ModelBuilder {
             context,
             data,
             lora,
             quant,
             head_chunk_size,
             token_chunk_size,
-        } = self;
+        } = builder;
 
         let model = SafeTensors::deserialize(data)?;
         let embed = model.tensor("emb.weight")?;
@@ -864,7 +1175,7 @@ impl<'a> ModelBuilder<'a> {
             head,
             layers,
         };
-        Ok(Model {
+        Ok(Self {
             context,
             info,
             head_chunk_size,
@@ -876,356 +1187,6 @@ impl<'a> ModelBuilder<'a> {
             stack_cache: Default::default(),
         })
     }
-}
-
-impl<'a> Model<'a> {
-    #[inline]
-    fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
-        self.runtime_cache.request(num_token, || {
-            Runtime::new(&self.context, &self.info, num_token)
-        })
-    }
-
-    #[inline]
-    fn request_output(&self, num_batch: usize) -> Arc<Output> {
-        self.output_cache.request(num_batch, || {
-            Output::new(&self.context, &self.info, num_batch)
-        })
-    }
-
-    #[inline]
-    fn request_softmax(&self, num_batch: usize) -> Arc<Softmax> {
-        self.softmax_cache.request(num_batch, || {
-            Softmax::new(&self.context, &self.info, num_batch)
-        })
-    }
-
-    #[inline]
-    fn request_stack(&self, num_batch: usize) -> Arc<TensorGpu<u32, ReadWrite>> {
-        self.stack_cache.request(num_batch, || {
-            self.context.zeros(Shape::new(num_batch, 1, 1, 1))
-        })
-    }
-
-    #[inline]
-    fn head_shape(&self, num_batch: usize) -> Shape {
-        Shape::new(self.info.num_vocab, 1, num_batch, 1)
-    }
-
-    fn run_internal(
-        &self,
-        tokens: Vec<Vec<u16>>,
-        state: &ModelState,
-        last: Option<usize>,
-    ) -> Result<(Arc<Output>, Vec<Option<usize>>), TensorError> {
-        let context = &self.context;
-        let tensor = &self.tensor;
-
-        let input: Vec<_> = tokens
-            .into_iter()
-            .map(|tokens| -> Result<_, TensorError> {
-                let stack = TensorCpu::stack(
-                    tokens
-                        .into_iter()
-                        .map(|token| tensor.embed.w.slice(.., token as usize, .., ..))
-                        .try_collect()?,
-                )
-                .unwrap_or_else(|_| context.zeros(Shape::new(self.info.num_emb, 1, 0, 1)));
-                stack.map(|x| x.to_f32()).reshape(
-                    TensorDimension::Full,
-                    TensorDimension::Auto,
-                    TensorDimension::Dimension(1),
-                    TensorDimension::Full,
-                )
-            })
-            .try_collect()?;
-
-        let input = TensorStack::try_from(input)?;
-        let max_batch = input.max_batch();
-        let num_batch = input.num_batch();
-        let num_token = input.num_token();
-        let head_size = state.info.head_size;
-        assert_ne!(num_token, 0);
-        assert_ne!(num_batch, 0);
-
-        // collect batch output copy commands for later
-        let mut redirect = vec![None; max_batch];
-        let headers = input
-            .cursors
-            .iter()
-            .filter(|cursor| cursor.len > 0)
-            .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
-            .enumerate()
-            .map(|(index, cursor)| {
-                redirect[cursor.batch] = Some(index);
-                cursor.token + cursor.len - 1
-            })
-            .collect_vec();
-        let num_header = headers.len();
-
-        let buffer = self.request_runtime(num_token);
-        let output = self.request_output(num_header.max(1));
-        let stack = self.request_stack(num_batch);
-
-        // gather and group copy operations
-        let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
-            (vec![], &buffer.ffn_x)
-        } else {
-            let mut start = 0;
-            let mut end = 1;
-            let mut ops = vec![];
-            while end <= headers.len() {
-                if end == headers.len() || headers[end - 1] + 1 != headers[end] {
-                    let first = headers[start];
-                    let last = headers[end - 1];
-                    assert_eq!(last - first + 1, end - start);
-
-                    let input = buffer.ffn_x.view(.., first..=last, .., ..)?;
-                    let output = output.head_x.view(.., start..end, .., ..)?;
-                    ops.push(TensorOp::blit(input, output)?);
-
-                    start = end;
-                }
-                end += 1;
-            }
-            (ops, &output.head_x)
-        };
-
-        // let head_ops: Vec<_> = input
-        //     .cursors
-        //     .iter()
-        //     .filter(|cursor| cursor.len > 0)
-        //     .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
-        //     .enumerate()
-        //     .map(|(index, cursor)| -> Result<TensorOp<'_>, TensorError> {
-        //         redirect[cursor.batch] = Some(index);
-        //         let token = cursor.token + cursor.len - 1;
-        //         let input = buffer.ffn_x.as_view((.., token, ..))?;
-        //         let output = buffer.head_x.as_view((.., .., index))?;
-        //         TensorOp::blit(input, output)
-        //     })
-        //     .try_collect()?;
-
-        let stack_host =
-            context.tensor_from_data(stack.shape(), input.cursors.clone().into_stack())?;
-        let cursors =
-            context.tensor_from_data(buffer.cursors.shape(), input.cursors.into_cursors())?;
-
-        stack.load(&stack_host)?;
-        buffer.input.load(&input.tensor)?;
-        buffer.cursors.load(&cursors)?;
-
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        let op = TensorOp::layer_norm(
-            &tensor.embed.layer_norm.w,
-            &tensor.embed.layer_norm.b,
-            &buffer.input,
-        )?;
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&op);
-        drop(pass);
-
-        for (index, layer) in tensor.layers.iter().enumerate() {
-            use TensorDimension::{Auto, Dimension};
-            let time_first = layer.att.time_first.reshape(
-                Dimension(head_size),
-                Auto,
-                Dimension(1),
-                Dimension(1),
-            )?;
-            let time_decay = layer.att.time_decay.reshape(
-                Dimension(head_size),
-                Auto,
-                Dimension(1),
-                Dimension(1),
-            )?;
-            let att_x = buffer.att_x.reshape(
-                Dimension(head_size),
-                Auto,
-                Dimension(num_token),
-                Dimension(1),
-            )?;
-            let att_k = buffer.att_k.reshape(
-                Dimension(head_size),
-                Auto,
-                Dimension(num_token),
-                Dimension(1),
-            )?;
-            let att_v = buffer.att_v.reshape(
-                Dimension(head_size),
-                Auto,
-                Dimension(num_token),
-                Dimension(1),
-            )?;
-            let att_r = buffer.att_r.reshape(
-                Dimension(head_size),
-                Auto,
-                Dimension(num_token),
-                Dimension(1),
-            )?;
-
-            encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
-
-            let ops = vec![
-                TensorOp::layer_norm(
-                    &layer.att_layer_norm.w,
-                    &layer.att_layer_norm.b,
-                    &buffer.att_x,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    &layer.att.time_mix_k,
-                    &buffer.att_x,
-                    state.att(index)?,
-                    &buffer.att_kx,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    &layer.att.time_mix_v,
-                    &buffer.att_x,
-                    state.att(index)?,
-                    &buffer.att_vx,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    &layer.att.time_mix_r,
-                    &buffer.att_x,
-                    state.att(index)?,
-                    &buffer.att_rx,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    &layer.att.time_mix_g,
-                    &buffer.att_x,
-                    state.att(index)?,
-                    &buffer.att_gx,
-                )?,
-                layer.att.w_k.matmul_op(
-                    buffer.att_kx.view(.., .., .., ..)?,
-                    buffer.att_k.view(.., .., .., ..)?,
-                )?,
-                layer.att.w_v.matmul_op(
-                    buffer.att_vx.view(.., .., .., ..)?,
-                    buffer.att_v.view(.., .., .., ..)?,
-                )?,
-                layer.att.w_r.matmul_op(
-                    buffer.att_rx.view(.., .., .., ..)?,
-                    buffer.att_r.view(.., .., .., ..)?,
-                )?,
-                layer.att.w_g.matmul_op(
-                    buffer.att_gx.view(.., .., .., ..)?,
-                    buffer.att_g.view(.., .., .., ..)?,
-                )?,
-                TensorOp::time_mix_v5(
-                    &stack,
-                    &time_decay,
-                    &time_first,
-                    &att_k,
-                    &att_v,
-                    &att_r,
-                    &att_x,
-                    state.att(index)?,
-                )?,
-                TensorOp::group_norm(&layer.att.group_norm.w, &layer.att.group_norm.b, &att_x)?,
-                TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
-                layer.att.w_o.matmul_op(
-                    buffer.att_x.view(.., .., .., ..)?,
-                    buffer.att_o.view(.., .., .., ..)?,
-                )?,
-                TensorOp::add(&buffer.input, &buffer.att_o)?,
-            ];
-
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            ops.iter().for_each(|op| pass.execute_tensor_op(op));
-            drop(pass);
-
-            encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
-
-            let ops = vec![
-                TensorOp::layer_norm(
-                    &layer.ffn_layer_norm.w,
-                    &layer.ffn_layer_norm.b,
-                    &buffer.ffn_x,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    &layer.ffn.time_mix_k,
-                    &buffer.ffn_x,
-                    state.ffn(index)?,
-                    &buffer.ffn_kx,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    &layer.ffn.time_mix_r,
-                    &buffer.ffn_x,
-                    state.ffn(index)?,
-                    &buffer.ffn_rx,
-                )?,
-                layer.ffn.w_k.matmul_op(
-                    buffer.ffn_kx.view(.., .., .., ..)?,
-                    buffer.ffn_k.view(.., .., .., ..)?,
-                )?,
-                TensorOp::squared_relu(&buffer.ffn_k)?,
-                layer.ffn.w_v.matmul_op(
-                    buffer.ffn_k.view(.., .., .., ..)?,
-                    buffer.ffn_v.view(.., .., .., ..)?,
-                )?,
-                layer.ffn.w_r.matmul_op(
-                    buffer.ffn_rx.view(.., .., .., ..)?,
-                    buffer.ffn_r.view(.., .., .., ..)?,
-                )?,
-                TensorOp::channel_mix(
-                    &buffer.cursors,
-                    &buffer.ffn_r,
-                    &buffer.ffn_v,
-                    &buffer.ffn_x,
-                    state.ffn(index)?,
-                )?,
-                TensorOp::add(&buffer.att_o, &buffer.ffn_x)?,
-            ];
-
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            ops.iter().for_each(|op| pass.execute_tensor_op(op));
-            drop(pass);
-
-            if index != self.info.num_layers - 1 {
-                encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
-            }
-        }
-
-        if num_header > 0 {
-            let mut ops = vec![TensorOp::layer_norm(
-                &tensor.head.layer_norm.w,
-                &tensor.head.layer_norm.b,
-                head_x,
-            )?];
-
-            for (chunk, matrix) in tensor.head.w.iter().enumerate() {
-                let start = chunk * self.head_chunk_size;
-                let end = start + self.head_chunk_size;
-                let input = head_x.view(.., .., .., ..)?;
-                let output = output.head_o.view(start..end, .., .., ..)?;
-                ops.push(TensorOp::matmul_vec_fp16(matrix, input, output)?);
-            }
-
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            head_ops.iter().for_each(|op| pass.execute_tensor_op(op));
-            ops.iter().for_each(|op| pass.execute_tensor_op(op));
-            drop(pass);
-
-            encoder.copy_tensor(&output.head_o, &output.map)?;
-        }
-
-        context.queue.submit(Some(encoder.finish()));
-        Ok((output, redirect))
-    }
-}
-
-impl ModelExt for Model<'_> {
-    type ModelState = ModelState;
 
     #[inline]
     fn info(&self) -> &ModelInfo {
