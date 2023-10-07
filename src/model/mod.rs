@@ -5,7 +5,7 @@ use web_rwkv_derive::{Deref, DerefMut};
 
 use crate::{context::Context, tensor::TensorError};
 
-mod loader;
+pub mod loader;
 pub mod matrix;
 pub mod v4;
 pub mod v5;

@@ -24,7 +24,10 @@ use std::{
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
-    model::{v5::Model, LayerFlags, Lora, ModelBuilder, ModelTrait, Quantization, StateBuilder},
+    model::{
+        loader::Loader, v4, v5, LayerFlags, Lora, ModelBuilder, ModelStateTrait, ModelTrait,
+        ModelVersion, Quantization, StateBuilder,
+    },
     tokenizer::Tokenizer,
 };
 
@@ -87,20 +90,17 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(
+fn load_model<M: ModelTrait>(
     context: &Context,
-    model: PathBuf,
+    data: &[u8],
     lora: Option<PathBuf>,
     quant: Option<u64>,
-) -> Result<Model<'_>> {
-    let file = File::open(model)?;
-    let map = unsafe { Mmap::map(&file)? };
+) -> Result<M> {
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(&context, &map).with_quant(quant);
-
-    let model: Model = match lora {
+    let model = ModelBuilder::new(&context, data).with_quant(quant);
+    match lora {
         Some(lora) => {
             let file = File::open(lora)?;
             let map = unsafe { Mmap::map(&file)? };
@@ -109,13 +109,10 @@ fn load_model(
                     data: &map,
                     blend: Default::default(),
                 })
-                .build()?
+                .build()
         }
-        None => model.build()?,
-    };
-
-    println!("{:#?}", model.info());
-    Ok(model)
+        None => model.build(),
+    }
 }
 
 #[cfg(not(debug_assertions))]
@@ -135,8 +132,6 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) 
 
 async fn run(cli: Cli) -> Result<()> {
     let context = create_context().await?;
-    #[cfg(not(debug_assertions))]
-    let mut terminal = setup_terminal()?;
 
     let tokenizer = load_tokenizer()?;
     let model = cli.model.unwrap_or(
@@ -148,7 +143,44 @@ async fn run(cli: Cli) -> Result<()> {
             .unwrap()
             .path(),
     );
-    let model = load_model(&context, model, cli.lora, cli.quant)?;
+
+    let file = File::open(model)?;
+    let map = unsafe { Mmap::map(&file)? };
+
+    let info = Loader::info(&map)?;
+    println!("{:#?}", info);
+
+    match info.version {
+        ModelVersion::V4 => {
+            let model: v4::Model = load_model(&context, &map, cli.lora, cli.quant)?;
+            // The model state should keep the same batch as input.
+            // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
+            let state = StateBuilder::new(&context, model.info())
+                .with_max_batch(cli.batch)
+                .with_chunk_size(4)
+                .build();
+            run_internal(model, state, tokenizer, cli.batch)
+        }
+        ModelVersion::V5 => {
+            let model: v5::Model = load_model(&context, &map, cli.lora, cli.quant)?;
+            // The model state should keep the same batch as input.
+            // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
+            let state = StateBuilder::new(&context, model.info())
+                .with_max_batch(cli.batch)
+                .with_chunk_size(4)
+                .build();
+            run_internal(model, state, tokenizer, cli.batch)
+        }
+    }
+}
+
+fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer, batch: usize) -> Result<()>
+where
+    S: ModelStateTrait,
+    M: ModelTrait<ModelState = S>,
+{
+    #[cfg(not(debug_assertions))]
+    let mut terminal = setup_terminal()?;
 
     let prompts = [
         "The Eiffel Tower is located in the city of",
@@ -158,7 +190,7 @@ async fn run(cli: Cli) -> Result<()> {
     ];
     let mut prompts = prompts
         .to_vec()
-        .repeat((cli.batch + prompts.len() - 1) / prompts.len())[..cli.batch]
+        .repeat((batch + prompts.len() - 1) / prompts.len())[..batch]
         .into_iter()
         .map(|str| String::from_str(str).unwrap())
         .collect_vec();
@@ -168,17 +200,8 @@ async fn run(cli: Cli) -> Result<()> {
         .map(|prompt| tokenizer.encode(prompt.as_bytes()).unwrap())
         .collect_vec();
 
-    // The model state should keep the same batch as input.
-    // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
-    let state = StateBuilder::new(&context, model.info())
-        .with_max_batch(tokens.len())
-        .with_chunk_size(4)
-        .build();
-
-    let mut num_tokens = [100usize, 400, 200, 300]
-        .to_vec()
-        .repeat((cli.batch + 3) / 4)[..cli.batch]
-        .to_vec();
+    let mut num_tokens =
+        [100usize, 400, 200, 300].to_vec().repeat((batch + 3) / 4)[..batch].to_vec();
     loop {
         #[cfg(not(debug_assertions))]
         terminal.draw(|frame| {
@@ -258,6 +281,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     #[cfg(not(debug_assertions))]
     restore_terminal(&mut terminal)?;
+
     Ok(())
 }
 

@@ -133,17 +133,13 @@ impl<'a> Loader<'a> {
                         let a = data
                             .tensor(&format!("{name}.lora.0"))
                             .ok()
-                            .and_then(|tensor| {
-                                TensorGpu::from_safetensors(&context, tensor).ok()
-                            })?;
+                            .and_then(|tensor| TensorGpu::from_safetensors(context, tensor).ok())?;
                         let b = data
                             .tensor(&format!("{name}.lora.1"))
                             .ok()
-                            .and_then(|tensor| {
-                                TensorGpu::from_safetensors(&context, tensor).ok()
-                            })?;
+                            .and_then(|tensor| TensorGpu::from_safetensors(context, tensor).ok())?;
                         let tensor =
-                            TensorGpu::init(&context, Shape::new(a.shape()[1], b.shape()[1], 1, 1));
+                            TensorGpu::init(context, Shape::new(a.shape()[1], b.shape()[1], 1, 1));
 
                         let mut encoder = context
                             .device
@@ -261,14 +257,14 @@ impl<'a> Loader<'a> {
         let lora = self.lora_vectors(name.as_ref());
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = if lora.is_empty() {
-            TensorGpu::from_safetensors(&context, tensor)?.reshape(
+            TensorGpu::from_safetensors(context, tensor)?.reshape(
                 Auto,
                 Dimension(1),
                 Dimension(1),
                 Dimension(1),
             )?
         } else {
-            let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
+            let tensor_f32 = TensorCpu::<f16>::from_safetensors(context, tensor)?
                 .map(|x| x.to_f32())
                 .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?;
             let tensor_f32 = TensorGpu::from(tensor_f32);
@@ -280,7 +276,7 @@ impl<'a> Loader<'a> {
 
             for lora in lora {
                 let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
-                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
+                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
                 let op = TensorOp::blend(&factor, &lora.tensor, &tensor_f32)?;
                 let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
                 pass.execute_tensor_op(&op);
@@ -303,14 +299,14 @@ impl<'a> Loader<'a> {
         let lora = self.lora_matrices(name.as_ref());
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = if lora.is_empty() {
-            TensorGpu::from_safetensors(&context, tensor)?.reshape(
+            TensorGpu::from_safetensors(context, tensor)?.reshape(
                 Full,
                 Full,
                 Dimension(1),
                 Dimension(1),
             )?
         } else {
-            let tensor_f32 = TensorCpu::<f16>::from_safetensors(&context, tensor)?
+            let tensor_f32 = TensorCpu::<f16>::from_safetensors(context, tensor)?
                 .map(|x| x.to_f32())
                 .reshape(Full, Full, Dimension(1), Dimension(1))?;
             let tensor_f32 = TensorGpu::from(tensor_f32);
@@ -322,7 +318,7 @@ impl<'a> Loader<'a> {
 
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-                let factor = TensorGpu::from_data(&context, Shape::new(4, 1, 1, 1), &factor)?;
+                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
                 let op = TensorOp::blend(&factor, &lora.tensor, &tensor_f32)?;
                 let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
                 pass.execute_tensor_op(&op);

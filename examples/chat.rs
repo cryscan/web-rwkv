@@ -13,8 +13,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        v5::Model, LayerFlags, Lora, ModelBuilder, ModelStateTrait, ModelTrait, Quantization,
-        StateBuilder,
+        loader::Loader, v4, v5, LayerFlags, Lora, ModelBuilder, ModelStateTrait, ModelTrait,
+        ModelVersion, Quantization, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -102,20 +102,17 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(
+fn load_model<M: ModelTrait>(
     context: &Context,
-    model: PathBuf,
+    data: &[u8],
     lora: Option<PathBuf>,
     quant: Option<u64>,
-) -> Result<Model<'_>> {
-    let file = File::open(model)?;
-    let map = unsafe { Mmap::map(&file)? };
+) -> Result<M> {
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(&context, &map).with_quant(quant);
-
-    let model: Model = match lora {
+    let model = ModelBuilder::new(&context, data).with_quant(quant);
+    match lora {
         Some(lora) => {
             let file = File::open(lora)?;
             let map = unsafe { Mmap::map(&file)? };
@@ -124,13 +121,10 @@ fn load_model(
                     data: &map,
                     blend: Default::default(),
                 })
-                .build()?
+                .build()
         }
-        None => model.build()?,
-    };
-
-    println!("{:#?}", model.info());
-    Ok(model)
+        None => model.build(),
+    }
 }
 
 async fn run(cli: Cli) -> Result<()> {
@@ -146,9 +140,33 @@ async fn run(cli: Cli) -> Result<()> {
             .unwrap()
             .path(),
     );
-    let model = load_model(&context, model, cli.lora, cli.quant)?;
     let sampler = cli.sampler;
 
+    let file = File::open(model)?;
+    let map = unsafe { Mmap::map(&file)? };
+
+    let info = Loader::info(&map)?;
+    println!("{:#?}", info);
+
+    match info.version {
+        ModelVersion::V4 => {
+            let model: v4::Model = load_model(&context, &map, cli.lora, cli.quant)?;
+            let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
+            run_internal(model, state, tokenizer, sampler)
+        }
+        ModelVersion::V5 => {
+            let model: v5::Model = load_model(&context, &map, cli.lora, cli.quant)?;
+            let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
+            run_internal(model, state, tokenizer, sampler)
+        }
+    }
+}
+
+fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer, sampler: Sampler) -> Result<()>
+where
+    S: ModelStateTrait,
+    M: ModelTrait<ModelState = S>,
+{
     let user = "User";
     let bot = "Assistant";
     let prompt = format!("\n\n{user}: Hi!\n\n{bot}: Hello! I'm an AI assistant trained by Peng Bo! I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\n");
@@ -157,8 +175,6 @@ async fn run(cli: Cli) -> Result<()> {
     print!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting");
     print!("{}", prompt);
     std::io::stdout().flush()?;
-
-    let state = StateBuilder::new(&context, model.info()).build();
 
     // run initial prompt
     loop {

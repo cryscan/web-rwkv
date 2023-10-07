@@ -12,7 +12,10 @@ use std::{
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
-    model::{v5::Model, LayerFlags, Lora, ModelBuilder, ModelTrait, Quantization, StateBuilder},
+    model::{
+        loader::Loader, v4, v5, LayerFlags, Lora, ModelBuilder, ModelStateTrait, ModelTrait,
+        ModelVersion, Quantization, StateBuilder,
+    },
     tokenizer::Tokenizer,
 };
 
@@ -76,20 +79,17 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model(
+fn load_model<M: ModelTrait>(
     context: &Context,
-    model: PathBuf,
+    data: &[u8],
     lora: Option<PathBuf>,
     quant: Option<u64>,
-) -> Result<Model<'_>> {
-    let file = File::open(model)?;
-    let map = unsafe { Mmap::map(&file)? };
+) -> Result<M> {
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(&context, &map).with_quant(quant);
-
-    let model: Model = match lora {
+    let model = ModelBuilder::new(&context, data).with_quant(quant);
+    match lora {
         Some(lora) => {
             let file = File::open(lora)?;
             let map = unsafe { Mmap::map(&file)? };
@@ -98,13 +98,10 @@ fn load_model(
                     data: &map,
                     blend: Default::default(),
                 })
-                .build()?
+                .build()
         }
-        None => model.build()?,
-    };
-
-    println!("{:#?}", model.info());
-    Ok(model)
+        None => model.build(),
+    }
 }
 
 async fn run(cli: Cli) -> Result<()> {
@@ -120,15 +117,35 @@ async fn run(cli: Cli) -> Result<()> {
             .unwrap()
             .path(),
     );
-    let model = load_model(&context, model, cli.lora, cli.quant)?;
 
+    let file = File::open(model)?;
+    let map = unsafe { Mmap::map(&file)? };
+
+    let info = Loader::info(&map)?;
+    println!("{:#?}", info);
+
+    match info.version {
+        ModelVersion::V4 => {
+            let model: v4::Model = load_model(&context, &map, cli.lora, cli.quant)?;
+            let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
+            run_internal(model, state, tokenizer)
+        }
+        ModelVersion::V5 => {
+            let model: v5::Model = load_model(&context, &map, cli.lora, cli.quant)?;
+            let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
+            run_internal(model, state, tokenizer)
+        }
+    }
+}
+
+fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer) -> Result<()>
+where
+    S: ModelStateTrait,
+    M: ModelTrait<ModelState = S>,
+{
     let prompt = "The Eiffel Tower is located in the city of";
     let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
     print!("{}", prompt);
-
-    // let state = ModelState::new(&context, model.info(), 1, model.info().num_layers);
-    let state = StateBuilder::new(&context, model.info()).build();
-
     let mut instant;
     let mut duration = Duration::default();
 
