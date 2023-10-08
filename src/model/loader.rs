@@ -22,15 +22,15 @@ pub struct Loader<'a> {
     lora: Vec<(Lora<'a>, SafeTensors<'a>)>,
 }
 
-pub struct LoraVector {
-    pub tensor: TensorGpu<f32, ReadWrite>,
-    pub alpha: f32,
+struct LoraVector {
+    tensor: TensorGpu<f32, ReadWrite>,
+    alpha: f32,
 }
 
-pub struct LoraMatrix {
-    pub tensor: TensorGpu<f32, ReadWrite>,
-    pub rank: usize,
-    pub alpha: f32,
+struct LoraMatrix {
+    tensor: TensorGpu<f32, ReadWrite>,
+    rank: usize,
+    alpha: f32,
 }
 
 impl<'a> Loader<'a> {

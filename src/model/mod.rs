@@ -48,7 +48,7 @@ pub struct ModelInfo {
 }
 
 pub trait BackedState {
-    fn from_builder(builder: StateBuilder) -> Self
+    fn build(builder: StateBuilder) -> Self
     where
         Self: Sized;
 
@@ -58,7 +58,7 @@ pub trait BackedState {
 pub trait ModelState {
     type BackedState: BackedState;
 
-    fn from_builder(builder: StateBuilder) -> Self
+    fn build(builder: StateBuilder) -> Self
     where
         Self: Sized;
 
@@ -86,7 +86,7 @@ pub trait ModelState {
 pub trait Model {
     type ModelState: ModelState;
 
-    fn from_builder(builder: ModelBuilder<'_>) -> Result<Self>
+    fn build(builder: ModelBuilder<'_>) -> Result<Self>
     where
         Self: Sized;
 
@@ -219,12 +219,8 @@ impl<'a> ModelBuilder<'a> {
         }
     }
 
-    pub fn build<M, S>(self) -> Result<M>
-    where
-        S: ModelState,
-        M: Model<ModelState = S>,
-    {
-        M::from_builder(self)
+    pub fn build<M: Model>(self) -> Result<M> {
+        M::build(self)
     }
 }
 
@@ -264,10 +260,10 @@ impl StateBuilder {
     }
 
     pub fn build<S: ModelState>(self) -> S {
-        S::from_builder(self)
+        S::build(self)
     }
 
     pub fn build_backed<B: BackedState>(self) -> B {
-        B::from_builder(self)
+        B::build(self)
     }
 }

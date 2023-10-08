@@ -220,7 +220,7 @@ impl ModelState {
 impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
-    fn from_builder(builder: StateBuilder) -> Self {
+    fn build(builder: StateBuilder) -> Self {
         let StateBuilder {
             context,
             info,
@@ -389,7 +389,7 @@ pub struct BackedState {
 }
 
 impl super::BackedState for BackedState {
-    fn from_builder(builder: StateBuilder) -> Self {
+    fn build(builder: StateBuilder) -> Self {
         let StateBuilder {
             info,
             max_batch,
@@ -765,7 +765,7 @@ impl<'a> Model<'a> {
 impl super::Model for Model<'_> {
     type ModelState = ModelState;
 
-    fn from_builder(builder: ModelBuilder<'_>) -> Result<Self> {
+    fn build(builder: ModelBuilder<'_>) -> Result<Self> {
         let ModelBuilder {
             context,
             data,
