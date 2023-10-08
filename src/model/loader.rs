@@ -65,6 +65,7 @@ impl<'a> Loader<'a> {
         };
 
         let embed = model.tensor("emb.weight")?;
+        let time_decay = model.tensor("blocks.0.att.time_decay")?;
         let ffn = model.tensor("blocks.0.ffn.key.weight")?;
         let version = match model.tensor("blocks.0.att.gate.weight") {
             Ok(_) => ModelVersion::V5,
@@ -74,11 +75,7 @@ impl<'a> Loader<'a> {
         let num_emb = embed.shape()[1];
         let num_hidden = ffn.shape()[0];
         let num_vocab = embed.shape()[0];
-        let head_size = match (version, num_emb) {
-            (ModelVersion::V4, _) => 1,
-            (ModelVersion::V5, x) if x <= 2048 => 64,
-            (ModelVersion::V5, _) => 128,
-        };
+        let head_size = time_decay.shape()[1];
 
         Ok(ModelInfo {
             version,
