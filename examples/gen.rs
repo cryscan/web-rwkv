@@ -24,7 +24,7 @@ fn sample(probs: &[f32], top_p: f32) -> u16 {
         .iter()
         .copied()
         .enumerate()
-        .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
+        .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(y).reverse())
         .scan((0, 0.0), |(_, cum), (id, x)| {
             if *cum > top_p {
                 None
@@ -88,7 +88,7 @@ fn load_model<M: Model>(
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(&context, data).with_quant(quant);
+    let model = ModelBuilder::new(context, data).with_quant(quant);
     match lora {
         Some(lora) => {
             let file = File::open(lora)?;
@@ -112,8 +112,7 @@ async fn run(cli: Cli) -> Result<()> {
         std::fs::read_dir("assets/models")
             .unwrap()
             .filter_map(|x| x.ok())
-            .filter(|x| x.path().extension().is_some_and(|x| x == "st"))
-            .next()
+            .find(|x| x.path().extension().is_some_and(|x| x == "st"))
             .unwrap()
             .path(),
     );
@@ -160,7 +159,7 @@ where
         };
 
         if let Some(probs) = &probs[0] {
-            let token = sample(&probs, 0.5);
+            let token = sample(probs, 0.5);
             let word = String::from_utf8(tokenizer.decode(&[token])?)?;
             print!("{}", word);
             tokens[0] = vec![token];

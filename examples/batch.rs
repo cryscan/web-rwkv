@@ -35,7 +35,7 @@ fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
     let sorted = probs
         .into_iter()
         .enumerate()
-        .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
+        .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(y).reverse())
         .scan((0, 0.0), |(_, cum), (id, x)| {
             if *cum > top_p {
                 None
@@ -99,7 +99,7 @@ fn load_model<M: Model>(
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(&context, data).with_quant(quant);
+    let model = ModelBuilder::new(context, data).with_quant(quant);
     match lora {
         Some(lora) => {
             let file = File::open(lora)?;
@@ -138,8 +138,7 @@ async fn run(cli: Cli) -> Result<()> {
         std::fs::read_dir("assets/models")
             .unwrap()
             .filter_map(|x| x.ok())
-            .filter(|x| x.path().extension().is_some_and(|x| x == "st"))
-            .next()
+            .find(|x| x.path().extension().is_some_and(|x| x == "st"))
             .unwrap()
             .path(),
     );
@@ -191,7 +190,7 @@ where
     let mut prompts = prompts
         .to_vec()
         .repeat((batch + prompts.len() - 1) / prompts.len())[..batch]
-        .into_iter()
+        .iter()
         .map(|str| String::from_str(str).unwrap())
         .collect_vec();
     let mut tokens = prompts

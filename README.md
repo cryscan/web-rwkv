@@ -23,6 +23,8 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 4. Run `cargo run --release --example chat` to chat with the model.
 5. Run `cargo run --release --example batch` to generate 4 batches of text with various lengths simultaneously.
 6. To specify the location of your safetensors model, use `cargo run --release --example chat -- --model /path/to/model`.
+7. To load custom prompts for chat, use `cargo run --release --example chat -- --prompt /path/to/prompt`. See [`assets/prompt.json`](./assets/prompt.json) for details.
+8. To specify layer quantization, you need to compute a 64-bit bitset indicating which layers are quantized. For example, use `cargo run --release --example chat -- --quant 2147483647` to quantize all 32 layers.
 
 ## Use in Your Project
 To use in your own rust project, simply add `web-rwkv = "0.2"` as a dependency in your `Cargo.toml`.

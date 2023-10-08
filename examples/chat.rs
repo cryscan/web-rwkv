@@ -5,6 +5,7 @@ use clap::{Args, Parser};
 use dialoguer::{theme::ColorfulTheme, Select};
 use itertools::Itertools;
 use memmap2::Mmap;
+use serde::Deserialize;
 use std::{
     fs::File,
     io::{BufReader, Read, Write},
@@ -37,7 +38,7 @@ impl Sampler {
             .iter()
             .copied()
             .enumerate()
-            .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(&y).reverse())
+            .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(y).reverse())
             .scan((0, 0.0, 0.0), |(_, cum, _), (id, x)| {
                 if *cum > self.top_p {
                     None
@@ -111,7 +112,7 @@ fn load_model<M: Model>(
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
-    let model = ModelBuilder::new(&context, data).with_quant(quant);
+    let model = ModelBuilder::new(context, data).with_quant(quant);
     match lora {
         Some(lora) => {
             let file = File::open(lora)?;
@@ -127,6 +128,29 @@ fn load_model<M: Model>(
     }
 }
 
+fn load_prompt(path: Option<PathBuf>) -> Result<Prompt> {
+    match path {
+        Some(path) => {
+            let file = File::open(path)?;
+            let mut reader = BufReader::new(file);
+            let mut contents = String::new();
+            reader.read_to_string(&mut contents)?;
+            Ok(serde_json::from_str(&contents)?)
+        }
+        None => Ok(Prompt {
+            user: String::from("User"),
+            bot: String::from("Assistant"),
+            intro: String::new(),
+            text: vec![
+                [
+                    String::from("Hi!"),
+                    String::from("Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.")
+                ]
+            ],
+        }),
+    }
+}
+
 async fn run(cli: Cli) -> Result<()> {
     let context = create_context().await?;
     let tokenizer = load_tokenizer()?;
@@ -135,11 +159,11 @@ async fn run(cli: Cli) -> Result<()> {
         std::fs::read_dir("assets/models")
             .unwrap()
             .filter_map(|x| x.ok())
-            .filter(|x| x.path().extension().is_some_and(|x| x == "st"))
-            .next()
+            .find(|x| x.path().extension().is_some_and(|x| x == "st"))
             .unwrap()
             .path(),
     );
+    let prompt = load_prompt(cli.prompt)?;
     let sampler = cli.sampler;
 
     let file = File::open(model)?;
@@ -152,27 +176,34 @@ async fn run(cli: Cli) -> Result<()> {
         ModelVersion::V4 => {
             let model: v4::Model = load_model(&context, &map, cli.lora, cli.quant)?;
             let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
-            run_internal(model, state, tokenizer, sampler)
+            run_internal(model, state, tokenizer, prompt, sampler)
         }
         ModelVersion::V5 => {
             let model: v5::Model = load_model(&context, &map, cli.lora, cli.quant)?;
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
-            run_internal(model, state, tokenizer, sampler)
+            run_internal(model, state, tokenizer, prompt, sampler)
         }
     }
 }
 
-fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer, sampler: Sampler) -> Result<()>
+fn run_internal<M, S>(
+    model: M,
+    state: S,
+    tokenizer: Tokenizer,
+    prompt: Prompt,
+    sampler: Sampler,
+) -> Result<()>
 where
     S: ModelState,
     M: Model<ModelState = S>,
 {
-    let user = "User";
-    let bot = "Assistant";
-    let prompt = format!("\n\n{user}: Hi!\n\n{bot}: Hello! I'm an AI assistant trained by Peng Bo! I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\n");
+    let user = &prompt.user;
+    let bot = &prompt.bot;
+    let prompt = prompt.build();
+
     let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
 
-    print!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting");
+    println!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting\n\n------------");
     print!("{}", prompt);
     std::io::stdout().flush()?;
 
@@ -268,10 +299,40 @@ struct Cli {
     model: Option<PathBuf>,
     #[arg(short, long, value_name = "FILE")]
     lora: Option<PathBuf>,
+    #[arg(short, long, value_name = "FILE")]
+    prompt: Option<PathBuf>,
     #[arg(short, long, value_name = "LAYERS")]
     quant: Option<u64>,
     #[command(flatten)]
     sampler: Sampler,
+}
+
+#[derive(Debug, Deserialize)]
+struct Prompt {
+    user: String,
+    bot: String,
+    intro: String,
+    text: Vec<[String; 2]>,
+}
+
+impl Prompt {
+    fn build(&self) -> String {
+        let user = self.user.trim();
+        let bot = self.bot.trim();
+        let intro = self.intro.trim();
+        let text = self
+            .text
+            .iter()
+            .map(|turn| {
+                let user_text = turn[0].trim();
+                let bot_text = turn[1].trim();
+                format!("{user}: {user_text}\n\n{bot}: {bot_text}\n\n")
+            })
+            .join("");
+        format!("{intro}\n\n{text}")
+            .replace("{user}", user)
+            .replace("{bot}", bot)
+    }
 }
 
 fn main() {
