@@ -200,17 +200,19 @@ impl ModelState {
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let chunk = layer / self.chunk_size;
         let offset = layer % self.chunk_size;
+        let head_size = self.info.num_emb / self.info.num_head;
 
-        let start = offset * (self.info.head_size + 2);
-        let end = start + self.info.head_size + 1;
+        let start = offset * (head_size + 2);
+        let end = start + head_size + 1;
         self.state[chunk].view(.., start..end, .., ..)
     }
 
     fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let chunk = layer / self.chunk_size;
         let offset = layer % self.chunk_size;
+        let head_size = self.info.num_emb / self.info.num_head;
 
-        let start = offset * (self.info.head_size + 2) + self.info.head_size + 1;
+        let start = offset * (head_size + 2) + head_size + 1;
         self.state[chunk].view(.., start..=start, .., ..)
     }
 }
@@ -225,21 +227,17 @@ impl super::ModelState for ModelState {
             max_batch,
             chunk_size,
         } = builder;
-        let num_chunk = (info.num_layers + chunk_size - 1) / chunk_size;
+        let num_chunk = (info.num_layer + chunk_size - 1) / chunk_size;
+        let head_size = info.num_emb / info.num_head;
         let state = (0..num_chunk)
             .map(|_| {
                 let data = (0..max_batch)
-                    .map(|_| vec![0.0; chunk_size * info.num_emb * (info.head_size + 2)])
+                    .map(|_| vec![0.0; chunk_size * info.num_emb * (head_size + 2)])
                     .collect_vec()
                     .concat();
                 context
                     .tensor_from_data(
-                        Shape::new(
-                            info.num_emb,
-                            chunk_size * (info.head_size + 2),
-                            max_batch,
-                            1,
-                        ),
+                        Shape::new(info.num_emb, chunk_size * (head_size + 2), max_batch, 1),
                         data,
                     )
                     .expect("state creation")
@@ -398,16 +396,12 @@ impl super::BackedState for BackedState {
             chunk_size,
             ..
         } = builder;
-        let shape = Shape::new(
-            info.num_emb,
-            chunk_size * (info.head_size + 2),
-            max_batch,
-            1,
-        );
-        let data = (0..info.num_layers)
+        let head_size = info.num_emb / info.num_head;
+        let shape = Shape::new(info.num_emb, chunk_size * (head_size + 2), max_batch, 1);
+        let data = (0..info.num_layer)
             .map(|_| {
                 (0..max_batch)
-                    .map(|_| vec![0.0; chunk_size * info.num_emb * (info.head_size + 2)])
+                    .map(|_| vec![0.0; chunk_size * info.num_emb * (head_size + 2)])
                     .collect_vec()
                     .concat()
             })
@@ -488,7 +482,7 @@ impl<'a> Model<'a> {
         let max_batch = input.max_batch();
         let num_batch = input.num_batch();
         let num_token = input.num_token();
-        let head_size = state.info.head_size;
+        let head_size = self.info.num_emb / self.info.num_head;
         assert_ne!(num_token, 0);
         assert_ne!(num_batch, 0);
 
@@ -735,7 +729,7 @@ impl<'a> Model<'a> {
             ops.iter().for_each(|op| pass.execute_tensor_op(op));
             drop(pass);
 
-            if index != self.info.num_layers - 1 {
+            if index != self.info.num_layer - 1 {
                 encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
             }
         }
@@ -803,7 +797,7 @@ impl super::Model for Model<'_> {
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
 
-        let layers = (0..info.num_layers)
+        let layers = (0..info.num_layer)
             .map(|layer| {
                 let att_layer_norm = LayerNorm {
                     w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
@@ -828,16 +822,16 @@ impl super::Model for Model<'_> {
                     w: loader
                         .load_vector_f16(format!("{att}.ln_x.weight"))?
                         .reshape(
-                            TensorDimension::Dimension(info.head_size),
                             TensorDimension::Auto,
+                            TensorDimension::Dimension(info.num_head),
                             TensorDimension::Dimension(1),
                             TensorDimension::Dimension(1),
                         )?,
                     b: loader
                         .load_vector_f16(format!("{att}.ln_x.bias"))?
                         .reshape(
-                            TensorDimension::Dimension(info.head_size),
                             TensorDimension::Auto,
+                            TensorDimension::Dimension(info.num_head),
                             TensorDimension::Dimension(1),
                             TensorDimension::Dimension(1),
                         )?,

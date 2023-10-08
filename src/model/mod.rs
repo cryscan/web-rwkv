@@ -40,11 +40,11 @@ impl std::error::Error for ModelError {}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelInfo {
     pub version: ModelVersion,
-    pub num_layers: usize,
+    pub num_layer: usize,
     pub num_emb: usize,
     pub num_hidden: usize,
     pub num_vocab: usize,
-    pub head_size: usize,
+    pub num_head: usize,
 }
 
 pub trait BackedState {
@@ -245,7 +245,7 @@ impl StateBuilder {
             context: context.clone(),
             info: info.clone(),
             max_batch: 1,
-            chunk_size: info.num_layers,
+            chunk_size: info.num_layer,
         }
     }
 

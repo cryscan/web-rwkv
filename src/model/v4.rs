@@ -209,7 +209,7 @@ impl super::ModelState for ModelState {
         } = builder;
         let data = (0..max_batch)
             .map(|_| {
-                (0..info.num_layers)
+                (0..info.num_layer)
                     .map(|_| {
                         [
                             vec![0.0; info.num_emb],
@@ -227,7 +227,7 @@ impl super::ModelState for ModelState {
             .concat();
         let state = context
             .tensor_from_data(
-                Shape::new(info.num_emb, 5 * info.num_layers, max_batch, 1),
+                Shape::new(info.num_emb, 5 * info.num_layer, max_batch, 1),
                 data,
             )
             .unwrap();
@@ -348,10 +348,10 @@ impl super::BackedState for BackedState {
         let StateBuilder {
             info, max_batch, ..
         } = builder;
-        let shape = Shape::new(info.num_emb, 5 * info.num_layers, max_batch, 1);
+        let shape = Shape::new(info.num_emb, 5 * info.num_layer, max_batch, 1);
         let data = (0..max_batch)
             .map(|_| {
-                (0..info.num_layers)
+                (0..info.num_layer)
                     .map(|_| {
                         [
                             vec![0.0; info.num_emb],
@@ -637,7 +637,7 @@ impl<'a> Model<'a> {
             ops.iter().for_each(|op| pass.execute_tensor_op(op));
             drop(pass);
 
-            if index != self.info.num_layers - 1 {
+            if index != self.info.num_layer - 1 {
                 encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
             }
         }
@@ -705,7 +705,7 @@ impl super::Model for Model<'_> {
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
 
-        let layers = (0..info.num_layers)
+        let layers = (0..info.num_layer)
             .map(|layer| {
                 let att_layer_norm = LayerNorm {
                     w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
