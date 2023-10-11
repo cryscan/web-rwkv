@@ -385,6 +385,21 @@ impl super::BackedState for BackedState {
     fn max_batch(&self) -> usize {
         self.shape[2]
     }
+
+    #[inline]
+    fn num_layer(&self) -> usize {
+        self.shape[1]
+    }
+
+    fn embed(&self, batch: usize, layer: usize) -> Vec<f32> {
+        let num_emb = self.shape[0];
+        let num_layer = self.shape[1];
+
+        let start = ((batch * num_layer + layer) * 5 + 4) * num_emb;
+        let end = start + num_emb;
+
+        self.data[start..end].to_vec()
+    }
 }
 
 impl<'a> Model<'a> {

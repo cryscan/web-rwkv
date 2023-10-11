@@ -58,6 +58,10 @@ pub trait FromBuilder: Sized {
 
 pub trait BackedState {
     fn max_batch(&self) -> usize;
+    fn num_layer(&self) -> usize;
+
+    /// Extract the embedding from a given layer of the state.
+    fn embed(&self, batch: usize, layer: usize) -> Vec<f32>;
 }
 
 pub trait ModelState {

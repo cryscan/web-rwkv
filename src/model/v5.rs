@@ -194,6 +194,7 @@ pub struct ModelState {
     info: ModelInfo,
     max_batch: usize,
     chunk_size: usize,
+    head_size: usize,
     state: Vec<TensorGpu<f32, ReadWrite>>,
 }
 
@@ -249,6 +250,7 @@ impl FromBuilder for ModelState {
             info: info.clone(),
             max_batch,
             chunk_size,
+            head_size,
             state,
         })
     }
@@ -290,6 +292,10 @@ impl super::ModelState for ModelState {
     }
 
     fn back(&self) -> BackedState {
+        let max_batch = self.max_batch;
+        let chunk_size = self.chunk_size;
+        let head_size = self.head_size;
+
         let data = self
             .state
             .iter()
@@ -309,16 +315,22 @@ impl super::ModelState for ModelState {
             })
             .collect();
         BackedState {
-            max_batch: self.max_batch,
+            max_batch,
+            chunk_size,
+            head_size,
             data,
         }
     }
 
     fn back_batch(&self, batch: usize) -> Result<BackedState> {
-        if batch >= self.max_batch() {
+        let max_batch = self.max_batch;
+        let chunk_size = self.chunk_size;
+        let head_size = self.head_size;
+
+        if batch >= max_batch {
             return Err(ModelError::BatchOutOfRange {
                 batch,
-                max: self.max_batch(),
+                max: max_batch,
             }
             .into());
         }
@@ -342,9 +354,13 @@ impl super::ModelState for ModelState {
                 Ok((shape, host.to_vec()))
             })
             .collect();
+        let data = data?;
+
         Ok(BackedState {
-            max_batch: self.max_batch,
-            data: data?,
+            max_batch,
+            chunk_size,
+            head_size,
+            data,
         })
     }
 
@@ -391,6 +407,8 @@ impl super::ModelState for ModelState {
 #[derive(Debug, Clone)]
 pub struct BackedState {
     pub max_batch: usize,
+    pub chunk_size: usize,
+    pub head_size: usize,
     pub data: Vec<(Shape, Vec<f32>)>,
 }
 
@@ -416,7 +434,12 @@ impl FromBuilder for BackedState {
             })
             .map(|x| (shape, x))
             .collect();
-        Ok(Self { max_batch, data })
+        Ok(Self {
+            max_batch,
+            chunk_size,
+            head_size,
+            data,
+        })
     }
 }
 
@@ -424,6 +447,24 @@ impl super::BackedState for BackedState {
     #[inline]
     fn max_batch(&self) -> usize {
         self.max_batch
+    }
+
+    #[inline]
+    fn num_layer(&self) -> usize {
+        self.chunk_size * self.data.len()
+    }
+
+    fn embed(&self, batch: usize, layer: usize) -> Vec<f32> {
+        let index = layer / self.chunk_size;
+        let offset = layer % self.chunk_size;
+
+        let chunk = &self.data[index];
+        let num_emb = chunk.0[0];
+
+        let start = ((batch * self.chunk_size + offset) * (self.head_size + 2) + 1) * num_emb;
+        let end = start + num_emb;
+
+        chunk.1[start..end].to_vec()
     }
 }
 
