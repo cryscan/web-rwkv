@@ -19,7 +19,7 @@ use crate::{
 pub struct Loader<'a> {
     context: Context,
     model: SafeTensors<'a>,
-    lora: Vec<(Lora<'a>, SafeTensors<'a>)>,
+    lora: Vec<Lora>,
 }
 
 struct LoraVector {
@@ -34,13 +34,13 @@ struct LoraMatrix {
 }
 
 impl<'a> Loader<'a> {
-    pub fn new(context: &Context, data: &'a [u8], lora: Vec<Lora<'a>>) -> Result<Loader<'a>> {
+    pub fn new(context: &Context, data: &'a [u8], lora: Vec<Lora>) -> Result<Loader<'a>> {
         let model = SafeTensors::deserialize(data)?;
         let lora = lora
             .into_iter()
             .map(|lora| -> Result<_> {
-                let tensor = SafeTensors::deserialize(lora.data)?;
-                Ok((lora, tensor))
+                let _ = SafeTensors::deserialize(&lora.data)?;
+                Ok(lora)
             })
             .try_collect()?;
         Ok(Self {
@@ -93,7 +93,8 @@ impl<'a> Loader<'a> {
         let name = name.as_ref();
         self.lora
             .iter()
-            .filter_map(|(lora, data)| {
+            .filter_map(|lora| {
+                let data = SafeTensors::deserialize(&lora.data).ok()?;
                 lora.blend
                     .iter()
                     .filter(|blend| blend.pattern.is_match(name))
@@ -119,7 +120,8 @@ impl<'a> Loader<'a> {
         let name = name.as_ref();
         self.lora
             .iter()
-            .filter_map(|(lora, data)| {
+            .filter_map(|lora| {
+                let data = SafeTensors::deserialize(&lora.data).ok()?;
                 lora.blend
                     .iter()
                     .filter(|blend| blend.pattern.is_match(name))

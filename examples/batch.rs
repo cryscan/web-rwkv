@@ -25,8 +25,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, LayerFlags, Lora, Model, ModelBuilder, ModelState, ModelVersion,
-        Quantization, StateBuilder,
+        loader::Loader, v4, v5, FromBuilder, LayerFlags, Lora, Model, ModelBuilder, ModelState,
+        ModelVersion, Quantization, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -90,12 +90,15 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model<M: Model>(
+fn load_model<'a, M>(
     context: &Context,
-    data: &[u8],
+    data: &'a [u8],
     lora: Option<PathBuf>,
     quant: Option<u64>,
-) -> Result<M> {
+) -> Result<M>
+where
+    M: Model + FromBuilder<Builder = ModelBuilder<'a>, Error = anyhow::Error>,
+{
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
         .unwrap_or_default();
@@ -106,7 +109,7 @@ fn load_model<M: Model>(
             let map = unsafe { Mmap::map(&file)? };
             model
                 .add_lora(Lora {
-                    data: &map,
+                    data: map.to_vec(),
                     blend: Default::default(),
                 })
                 .build()

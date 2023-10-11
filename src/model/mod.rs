@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use anyhow::Result;
 use bitflags::bitflags;
 use regex::Regex;
@@ -47,20 +49,19 @@ pub struct ModelInfo {
     pub num_head: usize,
 }
 
-pub trait BackedState {
-    fn build(builder: StateBuilder) -> Self
-    where
-        Self: Sized;
+pub trait FromBuilder: Sized {
+    type Builder;
+    type Error;
 
+    fn from_builder(builder: Self::Builder) -> Result<Self, Self::Error>;
+}
+
+pub trait BackedState {
     fn max_batch(&self) -> usize;
 }
 
 pub trait ModelState {
     type BackedState: BackedState;
-
-    fn build(builder: StateBuilder) -> Self
-    where
-        Self: Sized;
 
     fn max_batch(&self) -> usize;
 
@@ -85,10 +86,6 @@ pub trait ModelState {
 
 pub trait Model {
     type ModelState: ModelState;
-
-    fn build(builder: ModelBuilder<'_>) -> Result<Self>
-    where
-        Self: Sized;
 
     fn info(&self) -> &ModelInfo;
 
@@ -130,8 +127,8 @@ pub enum Quantization {
 }
 
 #[derive(Debug, Clone)]
-pub struct Lora<'a> {
-    pub data: &'a [u8],
+pub struct Lora {
+    pub data: Vec<u8>,
     pub blend: LoraBlend,
 }
 
@@ -178,7 +175,7 @@ impl LoraBlendPattern {
 pub struct ModelBuilder<'a> {
     context: Context,
     data: &'a [u8],
-    lora: Vec<Lora<'a>>,
+    lora: Vec<Lora>,
     quant: Quantization,
     head_chunk_size: usize,
     token_chunk_size: usize,
@@ -200,7 +197,7 @@ impl<'a> ModelBuilder<'a> {
         Self { quant, ..self }
     }
 
-    pub fn add_lora(mut self, lora: Lora<'a>) -> Self {
+    pub fn add_lora(mut self, lora: Lora) -> Self {
         self.lora.push(lora);
         self
     }
@@ -219,8 +216,11 @@ impl<'a> ModelBuilder<'a> {
         }
     }
 
-    pub fn build<M: Model>(self) -> Result<M> {
-        M::build(self)
+    pub fn build<M>(self) -> Result<M>
+    where
+        M: Model + FromBuilder<Builder = Self, Error = anyhow::Error>,
+    {
+        M::from_builder(self)
     }
 }
 
@@ -259,11 +259,16 @@ impl StateBuilder {
         }
     }
 
-    pub fn build<S: ModelState>(self) -> S {
-        S::build(self)
+    pub fn build<S>(self) -> S
+    where
+        S: ModelState + FromBuilder<Builder = Self, Error = Infallible>,
+    {
+        S::from_builder(self).expect("build model state")
     }
 
-    pub fn build_backed<B: BackedState>(self) -> B {
-        B::build(self)
+    pub fn build_backed<B: BackedState + FromBuilder<Builder = Self, Error = Infallible>>(
+        self,
+    ) -> B {
+        B::from_builder(self).expect("build backed state")
     }
 }

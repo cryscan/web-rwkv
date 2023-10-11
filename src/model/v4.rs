@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc};
 
 use anyhow::Result;
 use half::f16;
@@ -7,7 +7,8 @@ use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
-    loader::Loader, matrix::Matrix, ModelBuilder, ModelError, ModelInfo, Quantization, StateBuilder,
+    loader::Loader, matrix::Matrix, FromBuilder, ModelBuilder, ModelError, ModelInfo, Quantization,
+    StateBuilder,
 };
 use crate::{
     context::Context,
@@ -197,10 +198,11 @@ impl ModelState {
     }
 }
 
-impl super::ModelState for ModelState {
-    type BackedState = BackedState;
+impl FromBuilder for ModelState {
+    type Builder = StateBuilder;
+    type Error = Infallible;
 
-    fn build(builder: StateBuilder) -> Self {
+    fn from_builder(builder: Self::Builder) -> Result<Self, Self::Error> {
         let StateBuilder {
             context,
             info,
@@ -231,8 +233,12 @@ impl super::ModelState for ModelState {
                 data,
             )
             .unwrap();
-        Self(state)
+        Ok(Self(state))
     }
+}
+
+impl super::ModelState for ModelState {
+    type BackedState = BackedState;
 
     fn max_batch(&self) -> usize {
         self.0.shape()[2]
@@ -343,8 +349,11 @@ pub struct BackedState {
     pub data: Vec<f32>,
 }
 
-impl super::BackedState for BackedState {
-    fn build(builder: StateBuilder) -> Self {
+impl FromBuilder for BackedState {
+    type Builder = StateBuilder;
+    type Error = Infallible;
+
+    fn from_builder(builder: Self::Builder) -> Result<Self, Self::Error> {
         let StateBuilder {
             info, max_batch, ..
         } = builder;
@@ -367,9 +376,11 @@ impl super::BackedState for BackedState {
             })
             .collect_vec()
             .concat();
-        Self { shape, data }
+        Ok(Self { shape, data })
     }
+}
 
+impl super::BackedState for BackedState {
     #[inline]
     fn max_batch(&self) -> usize {
         self.shape[2]
@@ -670,10 +681,11 @@ impl<'a> Model<'a> {
     }
 }
 
-impl super::Model for Model<'_> {
-    type ModelState = ModelState;
+impl<'a> FromBuilder for Model<'a> {
+    type Builder = ModelBuilder<'a>;
+    type Error = anyhow::Error;
 
-    fn build(builder: ModelBuilder<'_>) -> Result<Self> {
+    fn from_builder(builder: Self::Builder) -> Result<Self, Self::Error> {
         let ModelBuilder {
             context,
             data,
@@ -811,6 +823,10 @@ impl super::Model for Model<'_> {
             stack_cache: Default::default(),
         })
     }
+}
+
+impl super::Model for Model<'_> {
+    type ModelState = ModelState;
 
     #[inline]
     fn info(&self) -> &ModelInfo {
