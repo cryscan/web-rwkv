@@ -50,10 +50,10 @@ pub struct ModelInfo {
 }
 
 pub trait FromBuilder: Sized {
-    type Builder;
+    type Builder<'a>;
     type Error;
 
-    fn from_builder(builder: Self::Builder) -> Result<Self, Self::Error>;
+    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
 }
 
 pub trait BackedState {
@@ -223,7 +223,7 @@ impl<'a> ModelBuilder<'a> {
 
     pub fn build<M>(self) -> Result<M>
     where
-        M: Model + FromBuilder<Builder = Self, Error = anyhow::Error>,
+        M: Model + FromBuilder<Builder<'a> = Self, Error = anyhow::Error>,
     {
         M::from_builder(self)
     }
@@ -240,7 +240,7 @@ pub struct StateBuilder {
     chunk_size: usize,
 }
 
-impl StateBuilder {
+impl<'a> StateBuilder {
     pub fn new(context: &Context, info: &ModelInfo) -> Self {
         Self {
             context: context.clone(),
@@ -266,12 +266,12 @@ impl StateBuilder {
 
     pub fn build<S>(self) -> S
     where
-        S: ModelState + FromBuilder<Builder = Self, Error = Infallible>,
+        S: ModelState + FromBuilder<Builder<'a> = Self, Error = Infallible>,
     {
         S::from_builder(self).expect("build model state")
     }
 
-    pub fn build_backed<B: BackedState + FromBuilder<Builder = Self, Error = Infallible>>(
+    pub fn build_backed<B: BackedState + FromBuilder<Builder<'a> = Self, Error = Infallible>>(
         self,
     ) -> B {
         B::from_builder(self).expect("build backed state")

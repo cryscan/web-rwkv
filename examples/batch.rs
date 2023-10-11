@@ -97,7 +97,7 @@ fn load_model<'a, M>(
     quant: Option<u64>,
 ) -> Result<M>
 where
-    M: Model + FromBuilder<Builder = ModelBuilder<'a>, Error = anyhow::Error>,
+    M: Model + FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>,
 {
     let quant = quant
         .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))

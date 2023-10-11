@@ -199,10 +199,10 @@ impl ModelState {
 }
 
 impl FromBuilder for ModelState {
-    type Builder = StateBuilder;
+    type Builder<'a> = StateBuilder;
     type Error = Infallible;
 
-    fn from_builder(builder: Self::Builder) -> Result<Self, Self::Error> {
+    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let StateBuilder {
             context,
             info,
@@ -350,10 +350,10 @@ pub struct BackedState {
 }
 
 impl FromBuilder for BackedState {
-    type Builder = StateBuilder;
+    type Builder<'a> = StateBuilder;
     type Error = Infallible;
 
-    fn from_builder(builder: Self::Builder) -> Result<Self, Self::Error> {
+    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let StateBuilder {
             info, max_batch, ..
         } = builder;
@@ -697,10 +697,10 @@ impl<'a> Model<'a> {
 }
 
 impl<'a> FromBuilder for Model<'a> {
-    type Builder = ModelBuilder<'a>;
+    type Builder<'b> = ModelBuilder<'b>;
     type Error = anyhow::Error;
 
-    fn from_builder(builder: Self::Builder) -> Result<Self, Self::Error> {
+    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let ModelBuilder {
             context,
             data,
