@@ -91,6 +91,7 @@ pub trait ModelState {
 pub trait Model {
     type ModelState: ModelState;
 
+    fn context(&self) -> &Context;
     fn info(&self) -> &ModelInfo;
 
     /// Softmax of the input tensors.

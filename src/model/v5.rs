@@ -989,6 +989,11 @@ impl super::Model for Model<'_> {
     type ModelState = ModelState;
 
     #[inline]
+    fn context(&self) -> &Context {
+        &self.context
+    }
+
+    #[inline]
     fn info(&self) -> &ModelInfo {
         &self.info
     }
