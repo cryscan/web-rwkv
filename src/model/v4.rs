@@ -240,6 +240,12 @@ impl FromBuilder for ModelState {
 impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
+    #[inline]
+    fn context(&self) -> &Context {
+        &self.context
+    }
+
+    #[inline]
     fn max_batch(&self) -> usize {
         self.0.shape()[2]
     }

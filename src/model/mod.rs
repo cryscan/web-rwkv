@@ -67,6 +67,7 @@ pub trait BackedState {
 pub trait ModelState {
     type BackedState: BackedState;
 
+    fn context(&self) -> &Context;
     fn max_batch(&self) -> usize;
 
     /// Load the state from host. Their shapes must match.

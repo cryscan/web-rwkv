@@ -191,6 +191,7 @@ impl Softmax {
 
 #[derive(Debug, Clone)]
 pub struct ModelState {
+    context: Context,
     info: ModelInfo,
     max_batch: usize,
     chunk_size: usize,
@@ -247,6 +248,7 @@ impl FromBuilder for ModelState {
             })
             .collect();
         Ok(Self {
+            context: context.clone(),
             info: info.clone(),
             max_batch,
             chunk_size,
@@ -258,6 +260,11 @@ impl FromBuilder for ModelState {
 
 impl super::ModelState for ModelState {
     type BackedState = BackedState;
+
+    #[inline]
+    fn context(&self) -> &Context {
+        &self.context
+    }
 
     #[inline]
     fn max_batch(&self) -> usize {
