@@ -559,7 +559,7 @@ impl<'a> Model<'a> {
 
         // gather and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
-            (vec![], &buffer.ffn_x)
+            (TensorOp::List(vec![]), &buffer.ffn_x)
         } else {
             let mut start = 0;
             let mut end = 1;
@@ -578,7 +578,7 @@ impl<'a> Model<'a> {
                 }
                 end += 1;
             }
-            (ops, &output.head_x)
+            (TensorOp::List(ops), &output.head_x)
         };
 
         // let head_ops: Vec<_> = input
@@ -659,7 +659,7 @@ impl<'a> Model<'a> {
 
             encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
 
-            let ops = vec![
+            let ops = TensorOp::List(vec![
                 TensorOp::layer_norm(
                     &layer.att_layer_norm.w,
                     &layer.att_layer_norm.b,
@@ -726,15 +726,15 @@ impl<'a> Model<'a> {
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
                 TensorOp::add(&buffer.input, &buffer.att_o)?,
-            ];
+            ]);
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            pass.execute_tensor_op(&ops);
             drop(pass);
 
             encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
 
-            let ops = vec![
+            let ops = TensorOp::List(vec![
                 TensorOp::layer_norm(
                     &layer.ffn_layer_norm.w,
                     &layer.ffn_layer_norm.b,
@@ -775,10 +775,10 @@ impl<'a> Model<'a> {
                     state.ffn(index)?,
                 )?,
                 TensorOp::add(&buffer.att_o, &buffer.ffn_x)?,
-            ];
+            ]);
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            pass.execute_tensor_op(&ops);
             drop(pass);
 
             if index != self.info.num_layer - 1 {
@@ -801,9 +801,11 @@ impl<'a> Model<'a> {
                 ops.push(TensorOp::matmul_vec_fp16(matrix, input, output)?);
             }
 
+            let ops = TensorOp::List(ops);
+
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            head_ops.iter().for_each(|op| pass.execute_tensor_op(op));
-            ops.iter().for_each(|op| pass.execute_tensor_op(op));
+            pass.execute_tensor_op(&head_ops);
+            pass.execute_tensor_op(&ops);
             drop(pass);
 
             encoder.copy_tensor(&output.head_o, &output.map)?;

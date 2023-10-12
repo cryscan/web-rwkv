@@ -59,19 +59,32 @@ pub trait TensorPass<'a> {
 
 impl<'b, 'a: 'b> TensorPass<'a> for ComputePass<'b> {
     fn execute_tensor_op(&mut self, op: &'a TensorOp) {
-        self.set_pipeline(op.pipeline);
-        op.bindings
-            .iter()
-            .enumerate()
-            .for_each(|(index, bind_group)| self.set_bind_group(index as u32, bind_group, &[]));
-        self.dispatch_workgroups(op.dispatch[0], op.dispatch[1], op.dispatch[2]);
+        match op {
+            TensorOp::Atom {
+                pipeline,
+                bindings,
+                dispatch,
+            } => {
+                self.set_pipeline(pipeline);
+                bindings.iter().enumerate().for_each(|(index, bind_group)| {
+                    self.set_bind_group(index as u32, bind_group, &[])
+                });
+                self.dispatch_workgroups(dispatch[0], dispatch[1], dispatch[2]);
+            }
+            TensorOp::List(ops) => {
+                ops.iter().for_each(|op| self.execute_tensor_op(op));
+            }
+        }
     }
 }
 
-pub struct TensorOp<'a> {
-    pub pipeline: &'a ComputePipeline,
-    pub bindings: Vec<BindGroup>,
-    pub dispatch: [u32; 3],
+pub enum TensorOp<'a> {
+    Atom {
+        pipeline: &'a ComputePipeline,
+        bindings: Vec<BindGroup>,
+        dispatch: [u32; 3],
+    },
+    List(Vec<TensorOp<'a>>),
 }
 
 impl<'a> TensorOp<'a> {
@@ -107,7 +120,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [1, shape[1] as u32, shape[2] as u32],
@@ -152,7 +165,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [1, shape[1] as u32, shape[2] as u32],
@@ -197,7 +210,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [1, shape[1] as u32, shape[2] as u32],
@@ -250,7 +263,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [matrix.shape[1] as u32 / 4, shape[1] as u32, shape[2] as u32],
@@ -329,7 +342,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [matrix.shape[1] as u32 / 4, shape[1] as u32, shape[2] as u32],
@@ -382,7 +395,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [
@@ -422,7 +435,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [
@@ -484,7 +497,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [Self::block_count(shape[0] as u32 / 4), shape[1] as u32, 1],
@@ -562,7 +575,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [Self::block_count(shape[0] as u32 / 4), num_batch as u32, 1],
@@ -642,7 +655,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [Self::round(dim as u32 / 4, 32), num_batch as u32, 1],
@@ -677,7 +690,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [
@@ -707,7 +720,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [
@@ -769,7 +782,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [Self::block_count(shape[0] as u32 / 4), shape[1] as u32, 1],
@@ -809,7 +822,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [
@@ -854,7 +867,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [
@@ -872,7 +885,7 @@ impl<'a> TensorOp<'a> {
         my: &'a TensorGpu<f32, ReadWrite>,
         ry: &'a TensorGpu<f32, ReadWrite>,
         output: &'a TensorGpu<u8, ReadWrite>,
-    ) -> Result<Vec<Self>, TensorError> {
+    ) -> Result<Self, TensorError> {
         let shape = output.shape;
         input.check_shape(shape)?;
         mx.check_shape(Shape::new(shape[0], 1, 1, 1))?;
@@ -918,7 +931,7 @@ impl<'a> TensorOp<'a> {
                 layout: &pipeline.get_bind_group_layout(0),
                 entries,
             })];
-            Ok(Self {
+            Ok(Self::Atom {
                 pipeline,
                 bindings,
                 dispatch,
@@ -932,9 +945,9 @@ impl<'a> TensorOp<'a> {
         let quantize = create_op("quant_mat_int8", [shape[0] as u32 / 4, shape[1] as u32, 1])?;
 
         if shape[1] > shape[0] {
-            Ok(vec![my, mx, rx, ry, quantize])
+            Ok(Self::List(vec![my, mx, rx, ry, quantize]))
         } else {
-            Ok(vec![mx, my, rx, ry, quantize])
+            Ok(Self::List(vec![mx, my, rx, ry, quantize]))
         }
     }
 
@@ -966,7 +979,7 @@ impl<'a> TensorOp<'a> {
             ],
         })];
 
-        Ok(Self {
+        Ok(Self::Atom {
             pipeline,
             bindings,
             dispatch: [
@@ -1325,12 +1338,14 @@ mod tests {
         let input = input.view(.., .., .., ..)?;
         ops.push(TensorOp::blit(input, output.view(.., 2.., 1..2, ..)?)?);
 
+        let ops = TensorOp::List(ops);
+
         let mut encoder = context
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        ops.iter().for_each(|op| pass.execute_tensor_op(op));
+        pass.execute_tensor_op(&ops);
         drop(pass);
 
         encoder.copy_tensor(&output, &map)?;

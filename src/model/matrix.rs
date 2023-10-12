@@ -49,7 +49,7 @@ impl Matrix {
         let my = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
         let ry = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
 
-        let ops = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
+        let op = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
 
         // ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
         // ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
@@ -61,7 +61,7 @@ impl Matrix {
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        ops.iter().for_each(|op| pass.execute_tensor_op(op));
+        pass.execute_tensor_op(&op);
         drop(pass);
 
         context.queue.submit(Some(encoder.finish()));
