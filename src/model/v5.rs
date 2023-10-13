@@ -273,8 +273,8 @@ impl super::ModelState for ModelState {
 
     fn load(&self, backed: &BackedState) -> Result<()> {
         use super::BackedState;
-        if self.max_batch() != backed.max_batch() {
-            return Err(ModelError::BatchSize(self.max_batch(), backed.max_batch()).into());
+        if backed.max_batch() != self.max_batch() {
+            return Err(ModelError::BatchSize(backed.max_batch(), self.max_batch()).into());
         }
         for (state, (shape, backed)) in self.state.iter().zip(backed.data.iter()) {
             let host = state.context.tensor_from_data(*shape, backed)?;
@@ -285,8 +285,8 @@ impl super::ModelState for ModelState {
 
     fn load_batch(&self, backed: &BackedState, batch: usize) -> Result<()> {
         use super::BackedState;
-        if self.max_batch() != backed.max_batch() {
-            return Err(ModelError::BatchSize(self.max_batch(), backed.max_batch()).into());
+        if backed.max_batch() != 1 {
+            return Err(ModelError::BatchSize(backed.max_batch(), 1).into());
         }
         for (state, (shape, backed)) in self.state.iter().zip(backed.data.iter()) {
             state.check_shape(*shape)?;

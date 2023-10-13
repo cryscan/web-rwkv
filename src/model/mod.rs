@@ -73,7 +73,7 @@ pub trait ModelState {
 
     /// Load the state from host. Their shapes must match.
     fn load(&self, backed: &Self::BackedState) -> Result<()>;
-    /// Load one batch from host. The shape of the backed state should be of one batch.
+    /// Load one batch from host. The batch size the backed state should be 1.
     fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<()>;
     /// Back the entire device state to host.
     fn back(&self) -> Self::BackedState;
