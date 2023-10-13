@@ -16,8 +16,8 @@ use crate::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
-        IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu, TensorInit,
-        TensorReshape, TensorShape, TensorStack, TensorView,
+        DeepClone, IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu,
+        TensorInit, TensorReshape, TensorShape, TensorStack, TensorView,
     },
 };
 
@@ -195,6 +195,12 @@ impl ModelState {
     fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer + 4;
         self.view(.., start..=start, .., ..)
+    }
+}
+
+impl DeepClone for ModelState {
+    fn deep_clone(&self) -> Self {
+        Self(self.0.deep_clone())
     }
 }
 

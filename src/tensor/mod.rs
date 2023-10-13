@@ -186,6 +186,10 @@ impl IntoPackedCursors for Vec<Cursor> {
     }
 }
 
+pub trait DeepClone: Sized {
+    fn deep_clone(&self) -> Self;
+}
+
 pub trait TensorInit<'a, T: Scalar>: Sized {
     fn from_data(
         context: &Context,
@@ -211,10 +215,6 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
         };
         Self::from_data(context, shape, bytemuck::cast_slice(tensor.data()))
     }
-}
-
-pub trait TensorDeepClone: Sized {
-    fn deep_clone(&self) -> Self;
 }
 
 pub trait TensorShape: Sized {
@@ -321,7 +321,7 @@ impl<'a, T: Scalar> TensorInit<'a, T> for TensorCpu<'a, T> {
     }
 }
 
-impl<'a, T: Scalar> TensorDeepClone for TensorCpu<'a, T> {
+impl<'a, T: Scalar> DeepClone for TensorCpu<'a, T> {
     fn deep_clone(&self) -> Self {
         self.clone()
     }
@@ -716,7 +716,7 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
     }
 }
 
-impl<T: Scalar> TensorDeepClone for TensorGpu<T, ReadWrite> {
+impl<T: Scalar> DeepClone for TensorGpu<T, ReadWrite> {
     fn deep_clone(&self) -> Self {
         let context = &self.context;
         let shape = self.shape;

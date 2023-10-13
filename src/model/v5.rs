@@ -15,8 +15,8 @@ use crate::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
-        IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu, TensorInit,
-        TensorReshape, TensorShape, TensorStack, TensorView,
+        DeepClone, IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu,
+        TensorInit, TensorReshape, TensorShape, TensorStack, TensorView,
     },
 };
 
@@ -217,6 +217,20 @@ impl ModelState {
 
         let start = offset * (head_size + 2) + head_size + 1;
         self.state[chunk].view(.., start..=start, .., ..)
+    }
+}
+
+impl DeepClone for ModelState {
+    fn deep_clone(&self) -> Self {
+        let state = self
+            .state
+            .iter()
+            .map(|tensor| tensor.deep_clone())
+            .collect();
+        Self {
+            state,
+            ..self.clone()
+        }
     }
 }
 
