@@ -1,6 +1,7 @@
 use std::{cmp::Ordering, hash::Hash};
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
 use super::TensorError;
@@ -11,7 +12,9 @@ pub trait IntoBytes {
 
 /// The shape of a [`Tensor`].
 /// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
-#[derive(Debug, Default, Clone, Copy, Deref, DerefMut, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Default, Clone, Copy, Deref, DerefMut, PartialEq, Eq, Hash, Serialize, Deserialize,
+)]
 pub struct Shape([usize; 4]);
 
 impl Shape {
@@ -284,7 +287,7 @@ where
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TensorDimension {
     #[default]
     Full,

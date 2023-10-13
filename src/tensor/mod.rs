@@ -8,13 +8,14 @@ use itertools::Itertools;
 use web_rwkv_derive::Kind;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindingResource, Buffer, BufferBinding, BufferDescriptor, BufferUsages, MapMode,
+    BindingResource, Buffer, BufferBinding, BufferDescriptor, BufferUsages,
+    CommandEncoderDescriptor, MapMode,
 };
 
 use crate::{context::Context, num::Scalar};
 use shape::{IntoBytes, Shape, TensorDimension, TensorSlice};
 
-use self::shape::TensorAxis;
+use self::{ops::TensorCommand, shape::TensorAxis};
 
 pub mod cache;
 pub mod ops;
@@ -212,6 +213,10 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
     }
 }
 
+pub trait TensorDeepClone: Sized {
+    fn deep_clone(&self) -> Self;
+}
+
 pub trait TensorShape: Sized {
     fn shape(&self) -> Shape;
 
@@ -313,6 +318,12 @@ impl<'a, T: Scalar> TensorInit<'a, T> for TensorCpu<'a, T> {
     #[inline]
     fn init(context: &Context, shape: Shape) -> Self {
         context.zeros(shape)
+    }
+}
+
+impl<'a, T: Scalar> TensorDeepClone for TensorCpu<'a, T> {
+    fn deep_clone(&self) -> Self {
+        self.clone()
     }
 }
 
@@ -702,6 +713,24 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
             meta,
             view,
         })
+    }
+}
+
+impl<T: Scalar> TensorDeepClone for TensorGpu<T, ReadWrite> {
+    fn deep_clone(&self) -> Self {
+        let context = &self.context;
+        let shape = self.shape;
+        let cloned = context.tensor_init(shape);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder
+            .copy_tensor(self, &cloned)
+            .expect("tensor deep clone");
+        context.queue.submit(Some(encoder.finish()));
+
+        cloned
     }
 }
 

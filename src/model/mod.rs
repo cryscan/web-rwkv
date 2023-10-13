@@ -3,6 +3,7 @@ use std::convert::Infallible;
 use anyhow::Result;
 use bitflags::bitflags;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
 use crate::{context::Context, tensor::TensorError};
@@ -12,7 +13,7 @@ pub mod matrix;
 pub mod v4;
 pub mod v5;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelVersion {
     V4,
     V5,
@@ -39,7 +40,7 @@ impl std::fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub version: ModelVersion,
     pub num_layer: usize,
