@@ -61,13 +61,17 @@ async fn create_context() -> Result<Context> {
     let instance = Instance::new();
     #[cfg(not(debug_assertions))]
     let adapter = {
-        let adapters = instance.adapters();
+        let adapters = instance
+            .enumerate_adapters(Instance::BACKENDS)
+            .map(|adapter| adapter.get_info())
+            .map(|info| format!("{} ({:?})", info.name, info.backend))
+            .collect_vec();
         let selection = Select::with_theme(&ColorfulTheme::default())
             .with_prompt("Please select an adapter")
             .default(0)
             .items(&adapters)
             .interact()?;
-        instance.select_adapter(selection)?
+        instance.select_adapter(Instance::BACKENDS, selection)?
     };
     #[cfg(debug_assertions)]
     let adapter = instance

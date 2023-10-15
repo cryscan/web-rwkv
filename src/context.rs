@@ -38,17 +38,12 @@ impl Instance {
         Self(instance)
     }
 
-    pub fn adapters(&self) -> Vec<String> {
-        self.enumerate_adapters(Self::BACKENDS)
-            .map(|adapter| {
-                let info = adapter.get_info();
-                format!("{} ({:?})", info.name, info.backend)
-            })
-            .collect()
-    }
-
-    pub fn select_adapter(&self, selection: usize) -> Result<Adapter, CreateEnvironmentError> {
-        self.enumerate_adapters(Self::BACKENDS)
+    pub fn select_adapter(
+        &self,
+        backends: Backends,
+        selection: usize,
+    ) -> Result<Adapter, CreateEnvironmentError> {
+        self.enumerate_adapters(backends)
             .nth(selection)
             .ok_or(CreateEnvironmentError::RequestAdapterFailed)
     }
