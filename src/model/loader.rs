@@ -28,7 +28,8 @@ struct LoraVector {
 }
 
 struct LoraMatrix {
-    tensor: TensorGpu<f32, ReadWrite>,
+    a: TensorGpu<f16, ReadWrite>,
+    b: TensorGpu<f16, ReadWrite>,
     rank: usize,
     alpha: f32,
 }
@@ -137,35 +138,31 @@ impl<'a> Loader<'a> {
                             .tensor(&format!("{name}.lora.1"))
                             .ok()
                             .and_then(|tensor| TensorGpu::from_safetensors(context, tensor).ok())?;
-                        let tensor =
-                            TensorGpu::init(context, Shape::new(a.shape()[1], b.shape()[1], 1, 1));
+                        // let tensor =
+                        //     TensorGpu::init(context, Shape::new(a.shape()[1], b.shape()[1], 1, 1));
 
-                        let mut encoder = context
-                            .device
-                            .create_command_encoder(&CommandEncoderDescriptor::default());
+                        // let mut encoder = context
+                        //     .device
+                        //     .create_command_encoder(&CommandEncoderDescriptor::default());
 
-                        let op = TensorOp::matmul_mat_fp16(
-                            b.view(.., .., .., ..).ok()?,
-                            a.view(.., .., .., ..).ok()?,
-                            tensor.view(.., .., .., ..).ok()?,
-                        )
-                        .ok()?;
-                        let mut pass =
-                            encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                        pass.execute_tensor_op(&op);
-                        drop(pass);
+                        // let op = TensorOp::matmul_mat_fp16(
+                        //     b.view(.., .., .., ..).ok()?,
+                        //     a.view(.., .., .., ..).ok()?,
+                        //     tensor.view(.., .., .., ..).ok()?,
+                        // )
+                        // .ok()?;
+                        // let mut pass =
+                        //     encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                        // pass.execute_tensor_op(&op);
+                        // drop(pass);
 
-                        context.queue.submit(Some(encoder.finish()));
+                        // context.queue.submit(Some(encoder.finish()));
 
                         let rank = a.shape()[0];
                         let alpha = blend.alpha;
 
                         log::info!("loaded lora {}, alpha: {}", name, blend.alpha);
-                        Some(LoraMatrix {
-                            tensor,
-                            rank,
-                            alpha,
-                        })
+                        Some(LoraMatrix { a, b, rank, alpha })
                     })
             })
             .collect()
@@ -310,6 +307,7 @@ impl<'a> Loader<'a> {
                 .reshape(Full, Full, Dimension(1), Dimension(1))?;
             let tensor_f32 = TensorGpu::from(tensor_f32);
             let tensor_f16 = context.tensor_init(tensor_f32.shape());
+            let buffer: TensorGpu<f32, _> = context.tensor_init(tensor_f32.shape());
 
             let mut encoder = context
                 .device
@@ -318,9 +316,16 @@ impl<'a> Loader<'a> {
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend(&factor, &lora.tensor, &tensor_f32)?;
+                let ops = TensorOp::List(vec![
+                    TensorOp::matmul_mat_fp16(
+                        lora.b.view(.., .., .., ..)?,
+                        lora.a.view(.., .., .., ..)?,
+                        buffer.view(.., .., .., ..)?,
+                    )?,
+                    TensorOp::blend(&factor, &buffer, &tensor_f32)?,
+                ]);
                 let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-                pass.execute_tensor_op(&op);
+                pass.execute_tensor_op(&ops);
             }
 
             let op = TensorOp::quantize_fp16(&tensor_f32, &tensor_f16)?;
