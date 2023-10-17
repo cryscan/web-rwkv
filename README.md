@@ -2,6 +2,8 @@
 [![crates.io](https://img.shields.io/crates/v/web-rwkv)](https://crates.io/crates/web-rwkv)
 [![docs.rs](https://docs.rs/web-rwkv/badge.svg)](https://docs.rs/web-rwkv)
 
+![logo](assets/logo-ba.jpg)
+
 This is an inference engine for the [language model of RWKV](https://github.com/BlinkDL/RWKV-LM) implemented in pure WebGPU.
 
 ## Features
@@ -27,7 +29,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 8. To specify layer quantization, you need to compute a 64-bit bitset indicating which layers are quantized. For example, use `cargo run --release --example chat -- --quant 2147483647` to quantize all 32 layers.
 
 ## Use in Your Project
-To use in your own rust project, simply add `web-rwkv = "0.2"` as a dependency in your `Cargo.toml`.
+To use in your own rust project, simply add `web-rwkv = "0.3"` as a dependency in your `Cargo.toml`.
 Check examples on how to create the environment, the tokenizer and how to run the model.
 
 ### Explanation of Batched Inference
