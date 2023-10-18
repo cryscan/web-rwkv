@@ -302,8 +302,7 @@ impl super::ModelState for ModelState {
         if backed.max_batch() != 1 {
             return Err(ModelError::BatchSize(backed.max_batch(), 1).into());
         }
-        for (state, (shape, backed)) in self.state.iter().zip(backed.data.iter()) {
-            state.check_shape(*shape)?;
+        for (state, (_, backed)) in self.state.iter().zip(backed.data.iter()) {
             let shape = state.shape();
             let shape = Shape::new(shape[0], shape[1], 1, 1);
             let host = state.context.tensor_from_data(shape, backed)?;
