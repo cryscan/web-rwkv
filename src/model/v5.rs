@@ -377,7 +377,7 @@ impl super::ModelState for ModelState {
         let data = data?;
 
         Ok(BackedState {
-            max_batch,
+            max_batch: 1,
             chunk_size,
             head_size,
             data,
