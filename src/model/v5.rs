@@ -7,7 +7,7 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
     loader::Loader, matrix::Matrix, FromBuilder, ModelBuilder, ModelError, ModelInfo, Quantization,
-    StateBuilder,
+    StateBuilder, RESOURCE_CACHE_SIZE,
 };
 use crate::{
     context::Context,
@@ -404,7 +404,6 @@ impl super::ModelState for ModelState {
         to_batch: usize,
     ) -> Result<(), TensorError> {
         for (state, other) in self.state.iter().zip(other.state.iter()) {
-            state.check_shape(other.shape())?;
             let op: TensorOp<'_> = TensorOp::blit(
                 state.view(.., .., from_batch, ..)?,
                 other.view(.., .., to_batch, ..)?,
@@ -999,9 +998,9 @@ impl<'a> FromBuilder for Model<'a> {
             head_chunk_size,
             token_chunk_size,
             tensor,
-            runtime_cache: ResourceCache::new(1),
-            output_cache: ResourceCache::new(1),
-            softmax_cache: ResourceCache::new(1),
+            runtime_cache: ResourceCache::new(RESOURCE_CACHE_SIZE),
+            output_cache: ResourceCache::new(RESOURCE_CACHE_SIZE),
+            softmax_cache: ResourceCache::new(RESOURCE_CACHE_SIZE),
             stack_cache: Default::default(),
         })
     }
