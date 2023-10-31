@@ -13,7 +13,7 @@ pub mod matrix;
 pub mod v4;
 pub mod v5;
 
-pub const RESOURCE_CACHE_SIZE: usize = 4;
+pub const RESOURCE_CACHE_SIZE: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelVersion {
