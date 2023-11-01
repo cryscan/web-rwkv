@@ -7,7 +7,7 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
     loader::Loader, matrix::Matrix, FromBuilder, ModelBuilder, ModelError, ModelInfo, Quantization,
-    StateBuilder, RESOURCE_CACHE_SIZE,
+    StateBuilder,
 };
 use crate::{
     context::Context,
@@ -998,9 +998,9 @@ impl<'a> FromBuilder for Model<'a> {
             head_chunk_size,
             token_chunk_size,
             tensor,
-            runtime_cache: ResourceCache::new(RESOURCE_CACHE_SIZE),
-            output_cache: ResourceCache::new(RESOURCE_CACHE_SIZE),
-            softmax_cache: ResourceCache::new(RESOURCE_CACHE_SIZE),
+            runtime_cache: ResourceCache::new(0),
+            output_cache: ResourceCache::new(1),
+            softmax_cache: ResourceCache::new(1),
             stack_cache: Default::default(),
         })
     }
@@ -1093,8 +1093,9 @@ impl super::Model for Model<'_> {
             return Ok(vec![None; max_batch]);
         }
 
-        // we only infer at most `token_chunk_size` tokens at a time
-        let mut num_token = num_token.min(self.token_chunk_size);
+        // we only infer at most `token_chunk_size` tokens at a time, and we keep it power-of-two
+        let num_token = num_token.min(self.token_chunk_size);
+        let mut num_token = 1 << num_token.ilog2() as usize;
         let mut inputs = vec![vec![]; max_batch];
         let mut last = None;
 
