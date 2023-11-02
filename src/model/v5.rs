@@ -6,7 +6,7 @@ use itertools::Itertools;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
-    loader::Loader, matrix::Matrix, FromBuilder, ModelBuilder, ModelError, ModelInfo, Quantization,
+    loader::Loader, matrix::Matrix, FromBuilder, ModelBuilder, ModelError, ModelInfo, Quant,
     StateBuilder,
 };
 use crate::{
@@ -849,6 +849,13 @@ impl<'a> FromBuilder for Model<'a> {
             token_chunk_size,
         } = builder;
 
+        if !head_chunk_size.is_power_of_two() {
+            return Err(ModelError::InvalidChunkSize(head_chunk_size).into());
+        }
+        if !token_chunk_size.is_power_of_two() {
+            return Err(ModelError::InvalidChunkSize(token_chunk_size).into());
+        }
+
         let loader = Loader::new(&context, data, lora)?;
         let info = Loader::info(data)?;
 
@@ -873,6 +880,8 @@ impl<'a> FromBuilder for Model<'a> {
 
         let layers = (0..info.num_layer)
             .map(|layer| {
+                let quant = quant.get(&layer).copied().unwrap_or_default();
+
                 let att_layer_norm = LayerNorm {
                     w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
                     b: loader.load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
@@ -912,21 +921,7 @@ impl<'a> FromBuilder for Model<'a> {
                 };
 
                 let att = match quant {
-                    Quantization::Int8(x) if x.contains_layer(layer as u64) => Att {
-                        time_decay,
-                        time_first,
-                        time_mix_k,
-                        time_mix_v,
-                        time_mix_r,
-                        time_mix_g,
-                        w_k: Matrix::quant_u8(w_k)?,
-                        w_v: Matrix::quant_u8(w_v)?,
-                        w_r: Matrix::quant_u8(w_r)?,
-                        w_g: Matrix::quant_u8(w_g)?,
-                        w_o: Matrix::quant_u8(w_o)?,
-                        group_norm,
-                    },
-                    _ => Att {
+                    Quant::None => Att {
                         time_decay,
                         time_first,
                         time_mix_k,
@@ -940,6 +935,21 @@ impl<'a> FromBuilder for Model<'a> {
                         w_o: Matrix::Fp16(w_o),
                         group_norm,
                     },
+                    Quant::Int8 => Att {
+                        time_decay,
+                        time_first,
+                        time_mix_k,
+                        time_mix_v,
+                        time_mix_r,
+                        time_mix_g,
+                        w_k: Matrix::quant_u8(w_k)?,
+                        w_v: Matrix::quant_u8(w_v)?,
+                        w_r: Matrix::quant_u8(w_r)?,
+                        w_g: Matrix::quant_u8(w_g)?,
+                        w_o: Matrix::quant_u8(w_o)?,
+                        group_norm,
+                    },
+                    _ => todo!(),
                 };
 
                 let ffn_layer_norm = LayerNorm {
@@ -956,20 +966,21 @@ impl<'a> FromBuilder for Model<'a> {
                 let w_r = loader.load_matrix_f16(format!("{ffn}.receptance.weight"))?;
 
                 let ffn = match quant {
-                    Quantization::Int8(x) if x.contains_layer(layer as u64) => Ffn {
-                        time_mix_k,
-                        time_mix_r,
-                        w_k: Matrix::quant_u8(w_k)?,
-                        w_v: Matrix::quant_u8(w_v)?,
-                        w_r: Matrix::quant_u8(w_r)?,
-                    },
-                    _ => Ffn {
+                    Quant::None => Ffn {
                         time_mix_k,
                         time_mix_r,
                         w_k: Matrix::Fp16(w_k),
                         w_v: Matrix::Fp16(w_v),
                         w_r: Matrix::Fp16(w_r),
                     },
+                    Quant::Int8 => Ffn {
+                        time_mix_k,
+                        time_mix_r,
+                        w_k: Matrix::quant_u8(w_k)?,
+                        w_v: Matrix::quant_u8(w_v)?,
+                        w_r: Matrix::quant_u8(w_r)?,
+                    },
+                    _ => todo!(),
                 };
 
                 context.queue.submit(None);

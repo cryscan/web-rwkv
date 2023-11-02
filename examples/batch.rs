@@ -25,8 +25,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, FromBuilder, LayerFlags, Lora, Model, ModelBuilder, ModelState,
-        ModelVersion, Quantization, StateBuilder,
+        loader::Loader, v4, v5, FromBuilder, Lora, Model, ModelBuilder, ModelState, ModelVersion,
+        Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -98,13 +98,13 @@ fn load_model<'a, M>(
     context: &Context,
     data: &'a [u8],
     lora: Option<PathBuf>,
-    quant: Option<u64>,
+    quant: Option<usize>,
 ) -> Result<M>
 where
     M: Model + FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>,
 {
     let quant = quant
-        .map(|bits| Quantization::Int8(LayerFlags::from_bits_retain(bits)))
+        .map(|layer| (0..layer).map(|layer| (layer, Quant::Int8)).collect())
         .unwrap_or_default();
     let model = ModelBuilder::new(context, data).with_quant(quant);
     match lora {
@@ -299,7 +299,7 @@ struct Cli {
     #[arg(short, long, value_name = "FILE")]
     lora: Option<PathBuf>,
     #[arg(short, long, value_name = "LAYERS")]
-    quant: Option<u64>,
+    quant: Option<usize>,
     #[arg(short, long, default_value_t = 4)]
     batch: usize,
 }

@@ -1,7 +1,6 @@
-use std::convert::Infallible;
+use std::{collections::HashMap, convert::Infallible};
 
 use anyhow::Result;
-use bitflags::bitflags;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
@@ -21,6 +20,7 @@ pub enum ModelVersion {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelError {
+    InvalidChunkSize(usize),
     BatchSize(usize, usize),
     BatchOutOfRange { batch: usize, max: usize },
 }
@@ -28,9 +28,8 @@ pub enum ModelError {
 impl std::fmt::Display for ModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ModelError::BatchSize(lhs, rhs) => {
-                write!(f, "input batch size {lhs} not match {rhs}")
-            }
+            ModelError::InvalidChunkSize(size) => write!(f, "chunk size {size} not power of 2"),
+            ModelError::BatchSize(lhs, rhs) => write!(f, "input batch size {lhs} not match {rhs}"),
             ModelError::BatchOutOfRange { batch, max } => {
                 write!(f, "batch {batch} out of range of max {max}")
             }
@@ -109,28 +108,15 @@ pub trait Model {
     ) -> Result<Vec<Option<Vec<f32>>>>;
 }
 
-bitflags! {
-    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct LayerFlags: u64 {}
-}
-
-impl LayerFlags {
-    pub fn from_layer(layer: u64) -> LayerFlags {
-        LayerFlags::from_bits_retain(1 << layer)
-    }
-
-    pub fn contains_layer(&self, layer: u64) -> bool {
-        self.contains(LayerFlags::from_layer(layer))
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub enum Quantization {
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Quant {
     /// No quantization.
     #[default]
     None,
-    /// Use int8 quantization, given layers to be quantized.
-    Int8(LayerFlags),
+    /// Use int8 quantization.
+    Int8,
+    /// Use NF4 quantization.
+    NF4,
 }
 
 #[derive(Debug, Clone)]
@@ -183,7 +169,7 @@ pub struct ModelBuilder<'a> {
     context: Context,
     data: &'a [u8],
     lora: Vec<Lora>,
-    quant: Quantization,
+    quant: HashMap<usize, Quant>,
     head_chunk_size: usize,
     token_chunk_size: usize,
 }
@@ -194,13 +180,13 @@ impl<'a> ModelBuilder<'a> {
             context: context.clone(),
             data,
             lora: vec![],
-            quant: Quantization::None,
+            quant: Default::default(),
             head_chunk_size: 4096,
             token_chunk_size: 32,
         }
     }
 
-    pub fn with_quant(self, quant: Quantization) -> Self {
+    pub fn with_quant(self, quant: HashMap<usize, Quant>) -> Self {
         Self { quant, ..self }
     }
 
