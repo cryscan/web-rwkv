@@ -846,7 +846,7 @@ impl<'a> FromBuilder for Model<'a> {
             head_chunk_size,
             token_chunk_size,
             tensor,
-            runtime_cache: ResourceCache::new(0),
+            runtime_cache: ResourceCache::new(1),
             output_cache: ResourceCache::new(1),
             softmax_cache: ResourceCache::new(1),
             stack_cache: Default::default(),
@@ -943,9 +943,8 @@ impl super::Model for Model<'_> {
             return Ok(vec![None; max_batch]);
         }
 
-        // we only infer at most `token_chunk_size` tokens at a time, and we keep it power-of-two
-        let num_token = num_token.min(self.token_chunk_size);
-        let mut num_token = 1 << num_token.ilog2() as usize;
+        // we only infer at most `token_chunk_size` tokens at a time
+        let mut num_token = num_token.min(self.token_chunk_size);
         let mut inputs = vec![vec![]; max_batch];
         let mut last = None;
 
