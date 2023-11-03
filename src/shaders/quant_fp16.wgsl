@@ -21,3 +21,16 @@ fn quantize(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         output[bti] = pack4x16float(input[bti]);
     }
 }
+
+@compute @workgroup_size(128, 1, 1)
+fn quantize_half(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+    let stride = shape[0] / 4u;
+    let index = invocation_id.x;
+    let token = invocation_id.y;
+    let batch = invocation_id.z;
+
+    if index < stride {
+        let bti = (batch * shape[1] + token) * stride + index;
+        output[bti] = pack4x16float(input[bti] * 0.5);
+    }
+}

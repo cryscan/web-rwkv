@@ -989,6 +989,45 @@ impl<'a> TensorOp<'a> {
             ],
         })
     }
+
+    pub fn quantize_fp16_half(
+        input: &'a TensorGpu<f32, ReadWrite>,
+        output: &'a TensorGpu<f16, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape;
+        input.check_shape(shape)?;
+
+        let context = &output.context;
+        let pipeline = context.pipeline("quant_fp16_half")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
 }
 
 #[cfg(test)]

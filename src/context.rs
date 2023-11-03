@@ -350,6 +350,12 @@ impl<'a> ContextBuilder<'a> {
                 "quantize",
                 None,
             )
+            .with_pipeline(
+                "quant_fp16_half",
+                include_str!("shaders/quant_fp16.wgsl"),
+                "quantize_half",
+                None,
+            )
     }
 }
 

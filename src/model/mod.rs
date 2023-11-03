@@ -113,10 +113,10 @@ pub enum Quant {
     /// No quantization.
     #[default]
     None,
-    /// Use int8 quantization.
+    /// Use `Int8` quantization.
     Int8,
-    /// Use NF4 quantization.
-    NF4,
+    /// Use `NFloat4` quantization.
+    NFloat4,
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +170,7 @@ pub struct ModelBuilder<'a> {
     data: &'a [u8],
     lora: Vec<Lora>,
     quant: HashMap<usize, Quant>,
+    alt_matmul: bool,
     head_chunk_size: usize,
     token_chunk_size: usize,
 }
@@ -181,6 +182,7 @@ impl<'a> ModelBuilder<'a> {
             data,
             lora: vec![],
             quant: Default::default(),
+            alt_matmul: false,
             head_chunk_size: 4096,
             token_chunk_size: 32,
         }
@@ -195,16 +197,20 @@ impl<'a> ModelBuilder<'a> {
         self
     }
 
-    pub fn with_head_chunk_size(self, value: usize) -> Self {
+    pub fn with_alt_matmul(self, alt_matmul: bool) -> Self {
+        Self { alt_matmul, ..self }
+    }
+
+    pub fn with_head_chunk_size(self, head_chunk_size: usize) -> Self {
         Self {
-            head_chunk_size: value,
+            head_chunk_size,
             ..self
         }
     }
 
-    pub fn with_token_chunk_size(self, value: usize) -> Self {
+    pub fn with_token_chunk_size(self, token_chunk_size: usize) -> Self {
         Self {
-            token_chunk_size: value,
+            token_chunk_size,
             ..self
         }
     }

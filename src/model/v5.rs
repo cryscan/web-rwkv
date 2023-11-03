@@ -25,6 +25,8 @@ pub struct Model<'a> {
     context: Context,
     info: ModelInfo,
 
+    /// Whether to use fp16 GEMM for matmul computations.
+    alt_matmul: bool,
     /// The head matrix is too big for a storage buffer so it's divided into chunks.
     head_chunk_size: usize,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
@@ -712,19 +714,19 @@ impl<'a> Model<'a> {
                     state.att(index)?,
                     &buffer.att_gx,
                 )?,
-                layer.att.w_k.matmul_op(
+                layer.att.w_k.matmul_op_f32(
                     buffer.att_kx.view(.., .., .., ..)?,
                     buffer.att_k.view(.., .., .., ..)?,
                 )?,
-                layer.att.w_v.matmul_op(
+                layer.att.w_v.matmul_op_f32(
                     buffer.att_vx.view(.., .., .., ..)?,
                     buffer.att_v.view(.., .., .., ..)?,
                 )?,
-                layer.att.w_r.matmul_op(
+                layer.att.w_r.matmul_op_f32(
                     buffer.att_rx.view(.., .., .., ..)?,
                     buffer.att_r.view(.., .., .., ..)?,
                 )?,
-                layer.att.w_g.matmul_op(
+                layer.att.w_g.matmul_op_f32(
                     buffer.att_gx.view(.., .., .., ..)?,
                     buffer.att_g.view(.., .., .., ..)?,
                 )?,
@@ -740,7 +742,7 @@ impl<'a> Model<'a> {
                 )?,
                 TensorOp::group_norm(&layer.att.group_norm.w, &layer.att.group_norm.b, &att_x)?,
                 TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
-                layer.att.w_o.matmul_op(
+                layer.att.w_o.matmul_op_f32(
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
@@ -773,16 +775,16 @@ impl<'a> Model<'a> {
                     state.ffn(index)?,
                     &buffer.ffn_rx,
                 )?,
-                layer.ffn.w_k.matmul_op(
+                layer.ffn.w_k.matmul_op_f32(
                     buffer.ffn_kx.view(.., .., .., ..)?,
                     buffer.ffn_k.view(.., .., .., ..)?,
                 )?,
                 TensorOp::squared_relu(&buffer.ffn_k)?,
-                layer.ffn.w_v.matmul_op(
+                layer.ffn.w_v.matmul_op_f32(
                     buffer.ffn_k.view(.., .., .., ..)?,
                     buffer.ffn_v.view(.., .., .., ..)?,
                 )?,
-                layer.ffn.w_r.matmul_op(
+                layer.ffn.w_r.matmul_op_f32(
                     buffer.ffn_rx.view(.., .., .., ..)?,
                     buffer.ffn_r.view(.., .., .., ..)?,
                 )?,
@@ -845,6 +847,7 @@ impl<'a> FromBuilder for Model<'a> {
             data,
             lora,
             quant,
+            alt_matmul,
             head_chunk_size,
             token_chunk_size,
         } = builder;
@@ -1006,6 +1009,7 @@ impl<'a> FromBuilder for Model<'a> {
         Ok(Self {
             context,
             info,
+            alt_matmul,
             head_chunk_size,
             token_chunk_size,
             tensor,

@@ -20,7 +20,7 @@ pub enum Matrix {
 }
 
 impl Matrix {
-    pub fn matmul_op<'a>(
+    pub fn matmul_op_f32<'a>(
         &'a self,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
