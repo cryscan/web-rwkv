@@ -11,6 +11,7 @@ use super::{
 };
 use crate::{
     context::Context,
+    model::RESCALE_LAYER,
     tensor::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorPass},
@@ -26,7 +27,7 @@ pub struct Model<'a> {
     info: ModelInfo,
 
     /// Whether to use fp16 GEMM for matmul computations.
-    alt_matmul: bool,
+    turbo: bool,
     /// The head matrix is too big for a storage buffer so it's divided into chunks.
     head_chunk_size: usize,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
@@ -37,6 +38,7 @@ pub struct Model<'a> {
     output_cache: ResourceCache<usize, Output>,
     softmax_cache: ResourceCache<usize, Softmax>,
     stack_cache: ResourceCache<usize, TensorGpu<u32, ReadWrite>>,
+    half_cache: ResourceCache<Shape, TensorGpu<f16, ReadWrite>>,
 }
 
 #[derive(Debug)]
@@ -519,6 +521,11 @@ impl<'a> Model<'a> {
     }
 
     #[inline]
+    fn request_half(&self, shape: Shape) -> Arc<TensorGpu<f16, ReadWrite>> {
+        self.half_cache.request(shape, || self.context.zeros(shape))
+    }
+
+    #[inline]
     fn head_shape(&self, num_batch: usize) -> Shape {
         Shape::new(self.info.num_vocab, 1, num_batch, 1)
     }
@@ -626,6 +633,14 @@ impl<'a> Model<'a> {
         buffer.input.load(&input.tensor)?;
         buffer.cursors.load(&cursors)?;
 
+        let temp_x = self.request_half(Shape::new(self.info.num_emb, self.token_chunk_size, 1, 1));
+        let temp_k = self.request_half(Shape::new(
+            self.info.num_hidden,
+            self.token_chunk_size,
+            1,
+            1,
+        ));
+
         let mut encoder = context
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
@@ -680,6 +695,49 @@ impl<'a> Model<'a> {
 
             encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
 
+            let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
+                TensorOp::List(vec![
+                    TensorOp::quantize_fp16(&buffer.att_kx, &temp_x)?,
+                    layer.att.w_k.matmul_mat_op(
+                        temp_x.view(.., .., .., ..)?,
+                        buffer.att_k.view(.., .., .., ..)?,
+                    )?,
+                    TensorOp::quantize_fp16(&buffer.att_vx, &temp_x)?,
+                    layer.att.w_v.matmul_mat_op(
+                        temp_x.view(.., .., .., ..)?,
+                        buffer.att_v.view(.., .., .., ..)?,
+                    )?,
+                    TensorOp::quantize_fp16(&buffer.att_rx, &temp_x)?,
+                    layer.att.w_r.matmul_mat_op(
+                        temp_x.view(.., .., .., ..)?,
+                        buffer.att_r.view(.., .., .., ..)?,
+                    )?,
+                    TensorOp::quantize_fp16(&buffer.att_gx, &temp_x)?,
+                    layer.att.w_g.matmul_mat_op(
+                        temp_x.view(.., .., .., ..)?,
+                        buffer.att_g.view(.., .., .., ..)?,
+                    )?,
+                ])
+            } else {
+                TensorOp::List(vec![
+                    layer.att.w_k.matmul_vec_op(
+                        buffer.att_kx.view(.., .., .., ..)?,
+                        buffer.att_k.view(.., .., .., ..)?,
+                    )?,
+                    layer.att.w_v.matmul_vec_op(
+                        buffer.att_vx.view(.., .., .., ..)?,
+                        buffer.att_v.view(.., .., .., ..)?,
+                    )?,
+                    layer.att.w_r.matmul_vec_op(
+                        buffer.att_rx.view(.., .., .., ..)?,
+                        buffer.att_r.view(.., .., .., ..)?,
+                    )?,
+                    layer.att.w_g.matmul_vec_op(
+                        buffer.att_gx.view(.., .., .., ..)?,
+                        buffer.att_g.view(.., .., .., ..)?,
+                    )?,
+                ])
+            };
             let ops = TensorOp::List(vec![
                 TensorOp::layer_norm(
                     &layer.att_layer_norm.w,
@@ -714,22 +772,7 @@ impl<'a> Model<'a> {
                     state.att(index)?,
                     &buffer.att_gx,
                 )?,
-                layer.att.w_k.matmul_op_f32(
-                    buffer.att_kx.view(.., .., .., ..)?,
-                    buffer.att_k.view(.., .., .., ..)?,
-                )?,
-                layer.att.w_v.matmul_op_f32(
-                    buffer.att_vx.view(.., .., .., ..)?,
-                    buffer.att_v.view(.., .., .., ..)?,
-                )?,
-                layer.att.w_r.matmul_op_f32(
-                    buffer.att_rx.view(.., .., .., ..)?,
-                    buffer.att_r.view(.., .., .., ..)?,
-                )?,
-                layer.att.w_g.matmul_op_f32(
-                    buffer.att_gx.view(.., .., .., ..)?,
-                    buffer.att_g.view(.., .., .., ..)?,
-                )?,
+                matmul_ops,
                 TensorOp::time_mix_v5(
                     &stack,
                     &time_decay,
@@ -742,7 +785,7 @@ impl<'a> Model<'a> {
                 )?,
                 TensorOp::group_norm(&layer.att.group_norm.w, &layer.att.group_norm.b, &att_x)?,
                 TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
-                layer.att.w_o.matmul_op_f32(
+                layer.att.w_o.matmul_vec_op(
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
@@ -755,6 +798,42 @@ impl<'a> Model<'a> {
 
             encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
 
+            let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
+                TensorOp::List(vec![
+                    TensorOp::quantize_fp16(&buffer.ffn_kx, &temp_x)?,
+                    layer.ffn.w_k.matmul_mat_op(
+                        temp_x.view(.., .., .., ..)?,
+                        buffer.ffn_k.view(.., .., .., ..)?,
+                    )?,
+                    TensorOp::squared_relu(&buffer.ffn_k)?,
+                    TensorOp::quantize_fp16(&buffer.ffn_k, &temp_k)?,
+                    layer.ffn.w_v.matmul_mat_op(
+                        temp_k.view(.., .., .., ..)?,
+                        buffer.ffn_v.view(.., .., .., ..)?,
+                    )?,
+                    TensorOp::quantize_fp16(&buffer.ffn_rx, &temp_x)?,
+                    layer.ffn.w_r.matmul_mat_op(
+                        temp_x.view(.., .., .., ..)?,
+                        buffer.ffn_r.view(.., .., .., ..)?,
+                    )?,
+                ])
+            } else {
+                TensorOp::List(vec![
+                    layer.ffn.w_k.matmul_vec_op(
+                        buffer.ffn_kx.view(.., .., .., ..)?,
+                        buffer.ffn_k.view(.., .., .., ..)?,
+                    )?,
+                    TensorOp::squared_relu(&buffer.ffn_k)?,
+                    layer.ffn.w_v.matmul_vec_op(
+                        buffer.ffn_k.view(.., .., .., ..)?,
+                        buffer.ffn_v.view(.., .., .., ..)?,
+                    )?,
+                    layer.ffn.w_r.matmul_vec_op(
+                        buffer.ffn_rx.view(.., .., .., ..)?,
+                        buffer.ffn_r.view(.., .., .., ..)?,
+                    )?,
+                ])
+            };
             let ops = TensorOp::List(vec![
                 TensorOp::layer_norm(
                     &layer.ffn_layer_norm.w,
@@ -775,19 +854,7 @@ impl<'a> Model<'a> {
                     state.ffn(index)?,
                     &buffer.ffn_rx,
                 )?,
-                layer.ffn.w_k.matmul_op_f32(
-                    buffer.ffn_kx.view(.., .., .., ..)?,
-                    buffer.ffn_k.view(.., .., .., ..)?,
-                )?,
-                TensorOp::squared_relu(&buffer.ffn_k)?,
-                layer.ffn.w_v.matmul_op_f32(
-                    buffer.ffn_k.view(.., .., .., ..)?,
-                    buffer.ffn_v.view(.., .., .., ..)?,
-                )?,
-                layer.ffn.w_r.matmul_op_f32(
-                    buffer.ffn_rx.view(.., .., .., ..)?,
-                    buffer.ffn_r.view(.., .., .., ..)?,
-                )?,
+                matmul_ops,
                 TensorOp::channel_mix(
                     &buffer.cursors,
                     &buffer.ffn_r,
@@ -801,6 +868,13 @@ impl<'a> Model<'a> {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
             pass.execute_tensor_op(&ops);
             drop(pass);
+
+            if self.turbo && (index + 1) % RESCALE_LAYER == 0 {
+                let op = TensorOp::half(&buffer.ffn_x)?;
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                pass.execute_tensor_op(&op);
+                drop(pass);
+            }
 
             if index != self.info.num_layer - 1 {
                 encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
@@ -847,7 +921,7 @@ impl<'a> FromBuilder for Model<'a> {
             data,
             lora,
             quant,
-            alt_matmul,
+            turbo,
             head_chunk_size,
             token_chunk_size,
         } = builder;
@@ -884,6 +958,10 @@ impl<'a> FromBuilder for Model<'a> {
         let layers = (0..info.num_layer)
             .map(|layer| {
                 let quant = quant.get(&layer).copied().unwrap_or_default();
+                let discount = match turbo {
+                    true => 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32)),
+                    false => 1.0,
+                };
 
                 let att_layer_norm = LayerNorm {
                     w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
@@ -902,7 +980,8 @@ impl<'a> FromBuilder for Model<'a> {
                 let w_v = loader.load_matrix_f16(format!("{att}.value.weight"))?;
                 let w_r = loader.load_matrix_f16(format!("{att}.receptance.weight"))?;
                 let w_g = loader.load_matrix_f16(format!("{att}.gate.weight"))?;
-                let w_o = loader.load_matrix_f16(format!("{att}.output.weight"))?;
+                let w_o =
+                    loader.load_matrix_f16_discount(format!("{att}.output.weight"), discount)?;
 
                 let group_norm = LayerNorm {
                     w: loader
@@ -964,9 +1043,10 @@ impl<'a> FromBuilder for Model<'a> {
                 let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
                 let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
 
-                let w_k = loader.load_matrix_f16(format!("{ffn}.key.weight"))?;
-                let w_v = loader.load_matrix_f16(format!("{ffn}.value.weight"))?;
                 let w_r = loader.load_matrix_f16(format!("{ffn}.receptance.weight"))?;
+                let w_k = loader.load_matrix_f16(format!("{ffn}.key.weight"))?;
+                let w_v =
+                    loader.load_matrix_f16_discount(format!("{ffn}.value.weight"), discount)?;
 
                 let ffn = match quant {
                     Quant::None => Ffn {
@@ -1009,7 +1089,7 @@ impl<'a> FromBuilder for Model<'a> {
         Ok(Self {
             context,
             info,
-            alt_matmul,
+            turbo,
             head_chunk_size,
             token_chunk_size,
             tensor,
@@ -1017,6 +1097,7 @@ impl<'a> FromBuilder for Model<'a> {
             output_cache: ResourceCache::new(1),
             softmax_cache: ResourceCache::new(1),
             stack_cache: Default::default(),
+            half_cache: ResourceCache::new(0),
         })
     }
 }

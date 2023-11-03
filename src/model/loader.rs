@@ -339,6 +339,64 @@ impl<'a> Loader<'a> {
         Ok(tensor)
     }
 
+    pub fn load_matrix_f16_discount(
+        &self,
+        name: impl AsRef<str>,
+        discount: f32,
+    ) -> Result<TensorGpu<f16, ReadWrite>> {
+        use TensorDimension::{Dimension, Full};
+        let context = &self.context;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let lora = self.lora_matrices(name.as_ref());
+        let tensor = self.model.tensor(name.as_ref())?;
+        let tensor = if lora.is_empty() {
+            let tensor = TensorCpu::<f16>::from_safetensors(context, tensor)?
+                .map(|x| x.to_f32())
+                .reshape(Full, Full, Dimension(1), Dimension(1))?;
+            TensorGpu::from(tensor)
+        } else {
+            let tensor = TensorCpu::<f16>::from_safetensors(context, tensor)?
+                .map(|x| x.to_f32())
+                .reshape(Full, Full, Dimension(1), Dimension(1))?;
+            let tensor = TensorGpu::from(tensor);
+            let buffer: TensorGpu<f32, _> = context.tensor_init(tensor.shape());
+            for lora in lora {
+                let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
+                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+                let ops = TensorOp::List(vec![
+                    TensorOp::matmul_mat_fp16(
+                        lora.b.view(.., .., .., ..)?,
+                        lora.a.view(.., .., .., ..)?,
+                        buffer.view(.., .., .., ..)?,
+                    )?,
+                    TensorOp::blend(&factor, &buffer, &tensor)?,
+                ]);
+                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                pass.execute_tensor_op(&ops);
+            }
+            tensor
+        };
+
+        let factor = vec![discount, 0.0, 0.0, 0.0];
+        let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), factor)?;
+        let tensor_f16 = context.tensor_init(tensor.shape());
+
+        let ops = TensorOp::List(vec![
+            TensorOp::discount(&factor, &tensor)?,
+            TensorOp::quantize_fp16(&tensor, &tensor_f16)?,
+        ]);
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&ops);
+        drop(pass);
+
+        context.queue.submit(Some(encoder.finish()));
+        Ok(tensor_f16)
+    }
+
     pub fn load_embed<'b>(&self) -> Result<TensorCpu<'b, f16>> {
         let embed = self.model.tensor("emb.weight")?;
         let num_emb = embed.shape()[1];

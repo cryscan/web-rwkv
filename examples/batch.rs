@@ -99,6 +99,7 @@ fn load_model<'a, M>(
     data: &'a [u8],
     lora: Option<PathBuf>,
     quant: Option<usize>,
+    turbo: bool,
 ) -> Result<M>
 where
     M: Model + FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>,
@@ -106,7 +107,9 @@ where
     let quant = quant
         .map(|layer| (0..layer).map(|layer| (layer, Quant::Int8)).collect())
         .unwrap_or_default();
-    let model = ModelBuilder::new(context, data).with_quant(quant);
+    let model = ModelBuilder::new(context, data)
+        .with_quant(quant)
+        .with_turbo(turbo);
     match lora {
         Some(lora) => {
             let file = File::open(lora)?;
@@ -158,7 +161,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     match info.version {
         ModelVersion::V4 => {
-            let model: v4::Model = load_model(&context, &map, cli.lora, cli.quant)?;
+            let model: v4::Model = load_model(&context, &map, cli.lora, cli.quant, cli.turbo)?;
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
@@ -168,7 +171,7 @@ async fn run(cli: Cli) -> Result<()> {
             run_internal(model, state, tokenizer, cli.batch)
         }
         ModelVersion::V5 => {
-            let model: v5::Model = load_model(&context, &map, cli.lora, cli.quant)?;
+            let model: v5::Model = load_model(&context, &map, cli.lora, cli.quant, cli.turbo)?;
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
@@ -300,6 +303,8 @@ struct Cli {
     lora: Option<PathBuf>,
     #[arg(short, long, value_name = "LAYERS")]
     quant: Option<usize>,
+    #[arg(short, long, action)]
+    turbo: bool,
     #[arg(short, long, default_value_t = 4)]
     batch: usize,
 }

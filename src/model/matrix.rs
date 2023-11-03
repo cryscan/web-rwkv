@@ -20,7 +20,7 @@ pub enum Matrix {
 }
 
 impl Matrix {
-    pub fn matmul_op_f32<'a>(
+    pub fn matmul_vec_op<'a>(
         &'a self,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
@@ -29,6 +29,21 @@ impl Matrix {
             Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output),
             Matrix::Int8 { w, mx, rx, my, ry } => {
                 TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
+            }
+        }
+    }
+
+    pub fn matmul_mat_op<'a>(
+        &'a self,
+        input: TensorView<'a, f16>,
+        output: TensorView<'a, f32>,
+    ) -> Result<TensorOp<'a>, TensorError> {
+        match self {
+            Matrix::Fp16(matrix) => {
+                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, input, output)
+            }
+            Matrix::Int8 { w, mx, rx, my, ry } => {
+                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, input, output)
             }
         }
     }

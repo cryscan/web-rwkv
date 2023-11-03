@@ -222,6 +222,12 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
+            "matmul_mat_int8",
+            include_str!("shaders/matmul_mat_int8.wgsl"),
+            "matmul",
+            None,
+        )
+        .with_pipeline(
             "token_shift",
             include_str!("shaders/token_shift.wgsl"),
             "token_shift",
@@ -261,6 +267,13 @@ impl<'a> ContextBuilder<'a> {
         )
         .with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
         .with_pipeline("blend", include_str!("shaders/blend.wgsl"), "blend", None)
+        .with_pipeline("half", include_str!("shaders/discount.wgsl"), "half", None)
+        .with_pipeline(
+            "discount",
+            include_str!("shaders/discount.wgsl"),
+            "discount",
+            None,
+        )
     }
 
     pub fn with_quant_pipelines(self) -> Self {
@@ -348,12 +361,6 @@ impl<'a> ContextBuilder<'a> {
                 "quant_fp16",
                 include_str!("shaders/quant_fp16.wgsl"),
                 "quantize",
-                None,
-            )
-            .with_pipeline(
-                "quant_fp16_half",
-                include_str!("shaders/quant_fp16.wgsl"),
-                "quantize_half",
                 None,
             )
     }

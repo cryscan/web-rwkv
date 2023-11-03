@@ -12,6 +12,8 @@ pub mod matrix;
 pub mod v4;
 pub mod v5;
 
+pub const RESCALE_LAYER: usize = 6;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelVersion {
     V4,
@@ -170,7 +172,7 @@ pub struct ModelBuilder<'a> {
     data: &'a [u8],
     lora: Vec<Lora>,
     quant: HashMap<usize, Quant>,
-    alt_matmul: bool,
+    turbo: bool,
     head_chunk_size: usize,
     token_chunk_size: usize,
 }
@@ -182,7 +184,7 @@ impl<'a> ModelBuilder<'a> {
             data,
             lora: vec![],
             quant: Default::default(),
-            alt_matmul: false,
+            turbo: false,
             head_chunk_size: 4096,
             token_chunk_size: 32,
         }
@@ -197,8 +199,8 @@ impl<'a> ModelBuilder<'a> {
         self
     }
 
-    pub fn with_alt_matmul(self, alt_matmul: bool) -> Self {
-        Self { alt_matmul, ..self }
+    pub fn with_turbo(self, turbo: bool) -> Self {
+        Self { turbo, ..self }
     }
 
     pub fn with_head_chunk_size(self, head_chunk_size: usize) -> Self {
