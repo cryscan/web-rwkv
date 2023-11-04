@@ -29,6 +29,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 6. To specify the location of your safetensors model, use `cargo run --release --example chat -- --model /path/to/model`.
 7. To load custom prompts for chat, use `cargo run --release --example chat -- --prompt /path/to/prompt`. See [`assets/prompt.json`](./assets/prompt.json) for details.
 8. To specify layer quantization, use `--quant <LAYERS>` to quantize the first `<LAYERS>` layers. For example, use `cargo run --release --example chat -- --quant 32` to quantize all 32 layers.
+9. Use `-turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.
 
 ## Use in Your Project
 To use in your own rust project, simply add `web-rwkv = "0.3"` as a dependency in your `Cargo.toml`.
@@ -51,7 +52,7 @@ Since there are only `token_chunk_size` tokens are processed during each `run()`
 
 ## Convert Models
 *You must download the model and put in `assets/models` before running if you are building from source.*
-You can now download the coverted models [here](https://huggingface.co/cgisky/RWKV-safetensors-fp16).
+You can now download the converted models [here](https://huggingface.co/cgisky/RWKV-safetensors-fp16).
 
 You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
 
