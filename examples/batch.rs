@@ -79,7 +79,6 @@ async fn create_context() -> Result<Context> {
         .await?;
     let context = ContextBuilder::new(adapter)
         .with_default_pipelines()
-        .with_quant_pipelines()
         .build()
         .await?;
     println!("{:#?}", context.adapter.get_info());

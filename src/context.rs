@@ -191,6 +191,12 @@ impl<'a> ContextBuilder<'a> {
     }
 
     pub fn with_default_pipelines(self) -> Self {
+        self.with_core_pipelines()
+            .with_util_pipelines()
+            .with_quant_pipelines()
+    }
+
+    fn with_core_pipelines(self) -> Self {
         self.with_pipeline(
             "layer_norm",
             include_str!("shaders/layer_norm.wgsl"),
@@ -265,18 +271,21 @@ impl<'a> ContextBuilder<'a> {
             "softmax",
             None,
         )
-        .with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
-        .with_pipeline("blend", include_str!("shaders/blend.wgsl"), "blend", None)
-        .with_pipeline("half", include_str!("shaders/discount.wgsl"), "half", None)
-        .with_pipeline(
-            "discount",
-            include_str!("shaders/discount.wgsl"),
-            "discount",
-            None,
-        )
     }
 
-    pub fn with_quant_pipelines(self) -> Self {
+    fn with_util_pipelines(self) -> Self {
+        self.with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
+            .with_pipeline("blend", include_str!("shaders/blend.wgsl"), "blend", None)
+            .with_pipeline("half", include_str!("shaders/discount.wgsl"), "half", None)
+            .with_pipeline(
+                "discount",
+                include_str!("shaders/discount.wgsl"),
+                "discount",
+                None,
+            )
+    }
+
+    fn with_quant_pipelines(self) -> Self {
         let shader = include_str!("shaders/quant_mat_int8.wgsl");
         let entries = &[
             BindGroupLayoutEntry {

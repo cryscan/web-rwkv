@@ -1171,7 +1171,6 @@ mod tests {
         let context = pollster::block_on(async {
             ContextBuilder::new(adapter)
                 .with_default_pipelines()
-                .with_quant_pipelines()
                 .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
                 .build()
                 .await
