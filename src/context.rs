@@ -276,6 +276,12 @@ impl<'a> ContextBuilder<'a> {
     fn with_util_pipelines(self) -> Self {
         self.with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
             .with_pipeline("blend", include_str!("shaders/blend.wgsl"), "blend", None)
+            .with_pipeline(
+                "lora_blend",
+                include_str!("shaders/lora_blend.wgsl"),
+                "lora_blend",
+                None,
+            )
             .with_pipeline("half", include_str!("shaders/discount.wgsl"), "half", None)
             .with_pipeline(
                 "discount",

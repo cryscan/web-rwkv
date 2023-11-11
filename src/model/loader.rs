@@ -302,39 +302,30 @@ impl<'a> Loader<'a> {
                 Dimension(1),
             )?
         } else {
-            let tensor_f32 = TensorCpu::<f16>::from_safetensors(context, tensor)?
-                .map(|x| x.to_f32())
-                .reshape(Full, Full, Dimension(1), Dimension(1))?;
-            let tensor_f32 = TensorGpu::from(tensor_f32);
-            let tensor_f16 = context.tensor_init(tensor_f32.shape());
-            let buffer: TensorGpu<f32, _> = context.tensor_init(tensor_f32.shape());
+            let tensor = TensorGpu::from_safetensors(context, tensor)?.reshape(
+                Full,
+                Full,
+                Dimension(1),
+                Dimension(1),
+            )?;
 
             let mut encoder = context
                 .device
                 .create_command_encoder(&CommandEncoderDescriptor::default());
-
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let ops = TensorOp::List(vec![
-                    TensorOp::matmul_mat_fp16(
-                        lora.b.view(.., .., .., ..)?,
-                        lora.a.view(.., .., .., ..)?,
-                        buffer.view(.., .., .., ..)?,
-                    )?,
-                    TensorOp::blend(&factor, &buffer, &tensor_f32)?,
-                ]);
+                let ops = TensorOp::List(vec![TensorOp::lora_blend(
+                    &factor,
+                    lora.b.view(.., .., .., ..)?,
+                    lora.a.view(.., .., .., ..)?,
+                    tensor.view(.., .., .., ..)?,
+                )?]);
                 let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
                 pass.execute_tensor_op(&ops);
             }
-
-            let op = TensorOp::quantize_fp16(&tensor_f32, &tensor_f16)?;
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            pass.execute_tensor_op(&op);
-            drop(pass);
-
             context.queue.submit(Some(encoder.finish()));
-            tensor_f16
+            tensor
         };
         Ok(tensor)
     }
@@ -347,10 +338,6 @@ impl<'a> Loader<'a> {
         use TensorDimension::{Dimension, Full};
         let context = &self.context;
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
         let lora = self.lora_matrices(name.as_ref());
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = if lora.is_empty() {
@@ -360,39 +347,27 @@ impl<'a> Loader<'a> {
             TensorGpu::from(tensor)
         } else {
             let tensor = TensorCpu::<f16>::from_safetensors(context, tensor)?
-                .map(|x| x.to_f32())
+                .map(|x| f16::from_f32(discount * x.to_f32()))
                 .reshape(Full, Full, Dimension(1), Dimension(1))?;
             let tensor = TensorGpu::from(tensor);
-            let buffer: TensorGpu<f32, _> = context.tensor_init(tensor.shape());
+
+            let mut encoder = context
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor::default());
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let ops = TensorOp::List(vec![
-                    TensorOp::matmul_mat_fp16(
-                        lora.b.view(.., .., .., ..)?,
-                        lora.a.view(.., .., .., ..)?,
-                        buffer.view(.., .., .., ..)?,
-                    )?,
-                    TensorOp::blend(&factor, &buffer, &tensor)?,
-                ]);
+                let ops = TensorOp::List(vec![TensorOp::lora_blend(
+                    &factor,
+                    lora.b.view(.., .., .., ..)?,
+                    lora.a.view(.., .., .., ..)?,
+                    tensor.view(.., .., .., ..)?,
+                )?]);
                 let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
                 pass.execute_tensor_op(&ops);
             }
-
-            let factor = vec![discount, 0.0, 0.0, 0.0];
-            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), factor)?;
-            let tensor_f16 = context.tensor_init(tensor.shape());
-
-            let ops = TensorOp::List(vec![
-                TensorOp::discount(&factor, &tensor)?,
-                TensorOp::quantize_fp16(&tensor, &tensor_f16)?,
-            ]);
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-            pass.execute_tensor_op(&ops);
-            drop(pass);
-
             context.queue.submit(Some(encoder.finish()));
-            tensor_f16
+            tensor
         };
         Ok(tensor)
     }

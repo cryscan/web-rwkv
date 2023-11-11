@@ -959,6 +959,135 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    pub fn lora_blend(
+        factor: &'a TensorGpu<f32, Uniform>,
+        xa: TensorView<'a, f16>,
+        xb: TensorView<'a, f16>,
+        output: TensorView<'a, f16>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        factor.check_shape(Shape::new(4, 1, 1, 1))?;
+        xa.check_shape(Shape::new(xa.shape()[0], shape[0], shape[2], 1))?;
+        xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2], 1))?;
+
+        let context = &output.tensor.context;
+        let pipeline = context.pipeline("lora_blend")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: xa.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: xb.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: factor.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: xa.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: xb.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::round(Self::round(shape[0] as u32, 4), 8),
+                Self::round(Self::round(shape[1] as u32, 4), 8),
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    pub fn half(output: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+        let shape = output.shape();
+
+        let context = &output.context;
+        let pipeline = context.pipeline("half")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    pub fn discount(
+        factor: &'a TensorGpu<f32, Uniform>,
+        output: &'a TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        factor.check_shape(Shape::new(4, 1, 1, 1))?;
+
+        let context = &output.context;
+        let pipeline = context.pipeline("discount")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: factor.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
     pub fn quantize_mat_int8(
         input: &'a TensorGpu<f16, ReadWrite>,
         mx: &'a TensorGpu<f32, ReadWrite>,
@@ -1052,76 +1181,6 @@ impl<'a> TensorOp<'a> {
                 BindGroupEntry {
                     binding: 1,
                     resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
-    pub fn half(output: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        let shape = output.shape();
-
-        let context = &output.context;
-        let pipeline = context.pipeline("half")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
-    pub fn discount(
-        factor: &'a TensorGpu<f32, Uniform>,
-        output: &'a TensorGpu<f32, ReadWrite>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape();
-        factor.check_shape(Shape::new(4, 1, 1, 1))?;
-
-        let context = &output.context;
-        let pipeline = context.pipeline("discount")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: factor.binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
