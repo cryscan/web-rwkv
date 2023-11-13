@@ -25,7 +25,7 @@ impl Default for Instance {
 }
 
 impl Instance {
-    pub const BACKENDS: Backends = Backends::PRIMARY;
+    pub const BACKENDS: Backends = Backends::all();
 
     pub fn new() -> Self {
         let instance = wgpu::Instance::new(InstanceDescriptor {

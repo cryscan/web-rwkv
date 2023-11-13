@@ -35,7 +35,7 @@ fn reduce_sum(index: u32, stride: u32) {
 
 @compute @workgroup_size(128, 1, 1)
 fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
-    let stride = shape.xy / 4u;
+    let stride = shape.x / 4u;
     let index = invocation_id.x % BLOCK_SIZE;
     let channel = invocation_id.x / BLOCK_SIZE;   // 1 channel: 4 rows in matrix
     let token = invocation_id.y;
@@ -43,10 +43,10 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     // let bb = (batch * destination.shape[1] + token) * stride.x;
     let bb = compute_index(source, batch, token, 0u);
-    let cb = channel * 4u * stride.x;
+    let cb = channel * 4u * stride;
 
     var local_sum = vec4<f32>(0.0);
-    for (var i = index; i < stride.x; i += BLOCK_SIZE) {
+    for (var i = index; i < stride; i += BLOCK_SIZE) {
         let bti = bb + i;
         var ci = cb + i;
 
@@ -56,9 +56,9 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         // read 4 rows from the matrix, each with 4 unpacked floats, forming a 4x4 sub-block
         var m: mat4x4<f32>;
 
-        m[0] = unpack4x16float(matrix[ci]); ci += stride.x;
-        m[1] = unpack4x16float(matrix[ci]); ci += stride.x;
-        m[2] = unpack4x16float(matrix[ci]); ci += stride.x;
+        m[0] = unpack4x16float(matrix[ci]); ci += stride;
+        m[1] = unpack4x16float(matrix[ci]); ci += stride;
+        m[2] = unpack4x16float(matrix[ci]); ci += stride;
         m[3] = unpack4x16float(matrix[ci]);
         local_sum += transpose(m) * x;
     }

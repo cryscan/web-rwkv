@@ -585,19 +585,19 @@ impl<'a> Model<'a> {
 
             let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
                 TensorOp::List(vec![
-                    TensorOp::quantize_fp16(&buffer.att_kx, &temp_x)?,
                     layer.att.w_k.matmul_mat_op(
                         temp_x.view(.., .., .., ..)?,
+                        buffer.att_kx.view(.., .., .., ..)?,
                         buffer.att_k.view(.., .., .., ..)?,
                     )?,
-                    TensorOp::quantize_fp16(&buffer.att_vx, &temp_x)?,
                     layer.att.w_v.matmul_mat_op(
                         temp_x.view(.., .., .., ..)?,
+                        buffer.att_vx.view(.., .., .., ..)?,
                         buffer.att_v.view(.., .., .., ..)?,
                     )?,
-                    TensorOp::quantize_fp16(&buffer.att_rx, &temp_x)?,
                     layer.att.w_r.matmul_mat_op(
                         temp_x.view(.., .., .., ..)?,
+                        buffer.att_rx.view(.., .., .., ..)?,
                         buffer.att_r.view(.., .., .., ..)?,
                     )?,
                 ])
@@ -669,20 +669,20 @@ impl<'a> Model<'a> {
             encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
             let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
                 TensorOp::List(vec![
-                    TensorOp::quantize_fp16(&buffer.ffn_kx, &temp_x)?,
                     layer.ffn.w_k.matmul_mat_op(
                         temp_x.view(.., .., .., ..)?,
+                        buffer.ffn_kx.view(.., .., .., ..)?,
                         buffer.ffn_k.view(.., .., .., ..)?,
                     )?,
                     TensorOp::squared_relu(&buffer.ffn_k)?,
-                    TensorOp::quantize_fp16(&buffer.ffn_k, &temp_k)?,
                     layer.ffn.w_v.matmul_mat_op(
                         temp_k.view(.., .., .., ..)?,
+                        buffer.ffn_k.view(.., .., .., ..)?,
                         buffer.ffn_v.view(.., .., .., ..)?,
                     )?,
-                    TensorOp::quantize_fp16(&buffer.ffn_rx, &temp_x)?,
                     layer.ffn.w_r.matmul_mat_op(
                         temp_x.view(.., .., .., ..)?,
+                        buffer.ffn_rx.view(.., .., .., ..)?,
                         buffer.ffn_r.view(.., .., .., ..)?,
                     )?,
                 ])
