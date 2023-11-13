@@ -959,7 +959,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    pub fn lora_blend(
+    pub fn blend_lora(
         factor: &'a TensorGpu<f32, Uniform>,
         xa: TensorView<'a, f16>,
         xb: TensorView<'a, f16>,
@@ -971,7 +971,7 @@ impl<'a> TensorOp<'a> {
         xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2], 1))?;
 
         let context = &output.tensor.context;
-        let pipeline = context.pipeline("lora_blend")?;
+        let pipeline = context.pipeline("blend_lora")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1030,45 +1030,6 @@ impl<'a> TensorOp<'a> {
                 BindGroupEntry {
                     binding: 0,
                     resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
-    pub fn discount(
-        factor: &'a TensorGpu<f32, Uniform>,
-        output: &'a TensorGpu<f32, ReadWrite>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape();
-        factor.check_shape(Shape::new(4, 1, 1, 1))?;
-
-        let context = &output.context;
-        let pipeline = context.pipeline("discount")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: factor.binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
@@ -1205,8 +1166,8 @@ impl<'a> TensorOp<'a> {
 mod tests {
     use half::f16;
     use itertools::Itertools;
-    use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, Features, PowerPreference};
-    use wgpu_profiler::GpuProfiler;
+    use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, PowerPreference};
+    // use wgpu_profiler::GpuProfiler;
 
     use super::{TensorOp, TensorPass};
     use crate::{
@@ -1230,7 +1191,7 @@ mod tests {
         let context = pollster::block_on(async {
             ContextBuilder::new(adapter)
                 .with_default_pipelines()
-                .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+                // .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
                 .build()
                 .await
         })?;
@@ -1243,6 +1204,7 @@ mod tests {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
+        fastrand::seed(42);
 
         let x = vec![0.0, 1.5, 2.0, -1.0];
         let shape = Shape::new(x.len(), 1, 1, 1);
@@ -1269,6 +1231,7 @@ mod tests {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
+        fastrand::seed(42);
 
         const C: usize = 1000;
         const T: usize = 3;
@@ -1324,6 +1287,7 @@ mod tests {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
+        fastrand::seed(42);
 
         const C: usize = 1000;
         const T: usize = 3;
@@ -1403,11 +1367,12 @@ mod tests {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
-        let mut profiler = GpuProfiler::new(&context.adapter, &context.device, &context.queue, 1);
+        fastrand::seed(42);
+        // let mut profiler = GpuProfiler::new(&context.adapter, &context.device, &context.queue, 1);
 
-        const C: usize = 1024;
-        const R: usize = 768;
-        const T: usize = 255;
+        const C: usize = 2560;
+        const R: usize = 2048;
+        const T: usize = 31;
 
         let matrix = vec![(); C * R]
             .into_iter()
@@ -1445,35 +1410,35 @@ mod tests {
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
         {
-            let mut pass = wgpu_profiler::scope::Scope::start(
-                "quant_fp16",
-                &mut profiler,
-                &mut pass,
-                &context.device,
-            );
+            // let mut pass = wgpu_profiler::scope::Scope::start(
+            //     "quant_fp16",
+            //     &mut profiler,
+            //     &mut pass,
+            //     &context.device,
+            // );
             pass.execute_tensor_op(&quant_input);
         }
         {
-            let mut pass = wgpu_profiler::scope::Scope::start(
-                "matmul_vec_fp16",
-                &mut profiler,
-                &mut pass,
-                &context.device,
-            );
+            // let mut pass = wgpu_profiler::scope::Scope::start(
+            //     "matmul_vec_fp16",
+            //     &mut profiler,
+            //     &mut pass,
+            //     &context.device,
+            // );
             pass.execute_tensor_op(&matmul_vec_fp16);
         }
         {
-            let mut pass = wgpu_profiler::scope::Scope::start(
-                "matmul_mat_fp16",
-                &mut profiler,
-                &mut pass,
-                &context.device,
-            );
+            // let mut pass = wgpu_profiler::scope::Scope::start(
+            //     "matmul_mat_fp16",
+            //     &mut profiler,
+            //     &mut pass,
+            //     &context.device,
+            // );
             pass.execute_tensor_op(&matmul_mat_fp16);
         }
         drop(pass);
 
-        profiler.resolve_queries(&mut encoder);
+        // profiler.resolve_queries(&mut encoder);
 
         encoder.copy_tensor(&output_dev, &output_map)?;
         context.queue.submit(Some(encoder.finish()));
@@ -1481,16 +1446,16 @@ mod tests {
         let output_host = TensorCpu::from(output_map);
         let output_host = Vec::from(output_host);
 
-        profiler.end_frame().unwrap();
+        // profiler.end_frame().unwrap();
         context.device.poll(wgpu::MaintainBase::Wait);
 
-        if let Some(results) = profiler.process_finished_frame() {
-            wgpu_profiler::chrometrace::write_chrometrace(
-                std::path::Path::new(&format!("./trace/matmul_{T}.json")),
-                &results,
-            )
-            .expect("failed to write trace");
-        }
+        // if let Some(results) = profiler.process_finished_frame() {
+        //     wgpu_profiler::chrometrace::write_chrometrace(
+        //         std::path::Path::new(&format!("./trace/matmul_{T}.json")),
+        //         &results,
+        //     )
+        //     .expect("failed to write trace");
+        // }
 
         let mut ans = vec![0.0; output_host.len()];
         for token in 0..T {
@@ -1501,14 +1466,14 @@ mod tests {
                     .iter()
                     .zip(input.iter())
                     .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
-                ans[(0 * T + token) * R + line] = product;
+                ans[token * R + line] = product;
 
                 let input = &input_f16[token * C..(token + 1) * C];
                 let product = matrix
                     .iter()
                     .zip(input.iter())
                     .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-                ans[(1 * T + token) * R + line] = product;
+                ans[(T + token) * R + line] = product;
             }
         }
 
@@ -1528,6 +1493,7 @@ mod tests {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
+        fastrand::seed(42);
 
         let output = vec![0.0; 24];
         let output = TensorGpu::from_data(&context, Shape::new(4, 3, 2, 1), output)?;

@@ -315,7 +315,7 @@ impl<'a> Loader<'a> {
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let ops = TensorOp::List(vec![TensorOp::lora_blend(
+                let ops = TensorOp::List(vec![TensorOp::blend_lora(
                     &factor,
                     lora.b.view(.., .., .., ..)?,
                     lora.a.view(.., .., .., ..)?,
@@ -357,7 +357,7 @@ impl<'a> Loader<'a> {
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let ops = TensorOp::List(vec![TensorOp::lora_blend(
+                let ops = TensorOp::List(vec![TensorOp::blend_lora(
                     &factor,
                     lora.b.view(.., .., .., ..)?,
                     lora.a.view(.., .., .., ..)?,

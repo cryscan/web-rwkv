@@ -4,9 +4,9 @@ use web_rwkv_derive::{Deref, DerefMut, Id};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferUsages,
-    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Dx12Compiler, Features,
-    InstanceDescriptor, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
-    RequestAdapterOptions, ShaderModuleDescriptor, ShaderStages,
+    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Limits,
+    PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
+    ShaderModuleDescriptor, ShaderStages,
 };
 
 use crate::tensor::{
@@ -25,16 +25,8 @@ impl Default for Instance {
 }
 
 impl Instance {
-    pub const BACKENDS: Backends = Backends::all();
-
     pub fn new() -> Self {
-        let instance = wgpu::Instance::new(InstanceDescriptor {
-            backends: Self::BACKENDS,
-            dx12_shader_compiler: Dx12Compiler::Dxc {
-                dxil_path: None,
-                dxc_path: None,
-            },
-        });
+        let instance = wgpu::Instance::new(Default::default());
         Self(instance)
     }
 
@@ -277,18 +269,12 @@ impl<'a> ContextBuilder<'a> {
         self.with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
             .with_pipeline("blend", include_str!("shaders/blend.wgsl"), "blend", None)
             .with_pipeline(
-                "lora_blend",
-                include_str!("shaders/lora_blend.wgsl"),
-                "lora_blend",
+                "blend_lora",
+                include_str!("shaders/blend_lora.wgsl"),
+                "blend_lora",
                 None,
             )
             .with_pipeline("half", include_str!("shaders/discount.wgsl"), "half", None)
-            .with_pipeline(
-                "discount",
-                include_str!("shaders/discount.wgsl"),
-                "discount",
-                None,
-            )
     }
 
     fn with_quant_pipelines(self) -> Self {

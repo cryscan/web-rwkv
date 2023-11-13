@@ -951,8 +951,8 @@ mod tests {
 
         let y = x.clone().repeat(1, 3);
         let ans = [
-            vec![0.0, 1.0, 2.0, 3.0, 4.0].repeat(3),
-            vec![5.0, 6.0, 7.0, 8.0, 9.0].repeat(3),
+            [0.0, 1.0, 2.0, 3.0, 4.0].repeat(3),
+            [5.0, 6.0, 7.0, 8.0, 9.0].repeat(3),
         ]
         .concat();
         y.check_shape(Shape::new(5, 3, 2, 1))?;
@@ -963,7 +963,7 @@ mod tests {
         assert_eq!(y.to_vec(), ans);
 
         let y = x.repeat(2, 3);
-        let ans = vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].repeat(3);
+        let ans = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].repeat(3);
         y.check_shape(Shape::new(5, 1, 6, 1))?;
         assert_eq!(y.to_vec(), ans);
 

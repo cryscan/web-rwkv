@@ -61,8 +61,9 @@ async fn create_context() -> Result<Context> {
     let instance = Instance::new();
     #[cfg(not(debug_assertions))]
     let adapter = {
+        let backends = wgpu::Backends::all();
         let adapters = instance
-            .enumerate_adapters(Instance::BACKENDS)
+            .enumerate_adapters(backends)
             .map(|adapter| adapter.get_info())
             .map(|info| format!("{} ({:?})", info.name, info.backend))
             .collect_vec();
@@ -71,7 +72,7 @@ async fn create_context() -> Result<Context> {
             .default(0)
             .items(&adapters)
             .interact()?;
-        instance.select_adapter(Instance::BACKENDS, selection)?
+        instance.select_adapter(backends, selection)?
     };
     #[cfg(debug_assertions)]
     let adapter = instance

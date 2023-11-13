@@ -43,7 +43,7 @@ fn blend(v: vec4<f32>, z: u32, y: u32, x: u32) {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn lora_blend(in: Input) {
+fn blend_lora(in: Input) {
     let b = in.bid.xy * 32u;
     let u = in.uid.xy * 4u;
     let t = in.tid.xy * 4u;
