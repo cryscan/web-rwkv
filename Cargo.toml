@@ -53,4 +53,4 @@ itertools = "0.11"
 fastrand = { version = "2.0", features = ['js'] }
 
 [profile.release]
-lto = true
+lto = false

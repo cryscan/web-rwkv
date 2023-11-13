@@ -17,7 +17,7 @@ struct Input {
 
 @group(0) @binding(0) var<uniform> shape: vec4<u32>;                    // [S, H, A]
 @group(0) @binding(1) var<uniform> view: View;                          // [C, S + 1, B]
-@group(0) @binding(2) var<storage, read> stack: array<u32>;             // [B]
+@group(0) @binding(2) var<storage, read> cursors: array<u32>;           // [A]
 
 @group(0) @binding(3) var<storage, read> time_decay: array<vec4<f32>>;  // (H, S)
 @group(0) @binding(4) var<storage, read> time_first: array<vec4<f32>>;  // (H, S)
@@ -57,19 +57,19 @@ fn time_mix(in: Input) {
     let dim = shape[1] * stride;
 
     let index = in.uid.x;
-    let batch = in.uid.y;
-    let cursor = compute_cursor(stack[batch]);
-
     let head = in.tid.x / stride;
     let h = head * stride;
 
     shared_u[in.tid.x] = time_first[index];
     shared_w[in.tid.x] = time_decay[index];
 
-    state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * dim + index];
+    for (var t = 0u; t < shape[2]; t += 1u) {
+        let cursor = compute_cursor(cursors[t]);
+        if cursor.token == 0u {
+            state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * dim + index];
+        }
 
-    for (var t = 0u; t < cursor.len; t += 1u) {
-        let bti = (cursor.token + t) * dim + index;
+        let bti = t * dim + index;
 
         workgroupBarrier();
         shared_k[in.tid.x] = k[bti];

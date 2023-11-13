@@ -743,13 +743,13 @@ pub struct TensorStack<'a, T: Scalar> {
 impl<'a, T: Scalar> TensorStack<'a, T> {
     /// Number of input batches.
     #[inline]
-    pub fn max_batch(&self) -> usize {
+    pub fn num_batch(&self) -> usize {
         self.cursors.len()
     }
 
     /// Number of non-empty input batches.
     #[inline]
-    pub fn num_batch(&self) -> usize {
+    pub fn num_active_batch(&self) -> usize {
         self.cursors.iter().filter(|cursor| cursor.len > 0).count()
     }
 

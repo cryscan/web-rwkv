@@ -535,11 +535,11 @@ impl<'a> TensorOp<'a> {
         output: &'a TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
-        let max_batch = sx.shape()[2];
-        cursors.check_shape(Shape::new(shape[1], 1, 1, 1))?;
+        let num_batch = sx.shape()[2];
+        // cursors.check_shape(Shape::new(shape[1], 1, 1, 1))?;
         time_mix.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         x.check_shape(shape)?;
-        sx.check_shape(Shape::new(shape[0], sx.shape()[1], max_batch, 1))?;
+        sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
         let context = &output.context;
         let pipeline = context.pipeline("token_shift")?;
@@ -587,7 +587,7 @@ impl<'a> TensorOp<'a> {
 
     #[allow(clippy::too_many_arguments)]
     pub fn time_mix(
-        stack: &'a TensorGpu<u32, ReadWrite>,
+        cursors: &'a TensorGpu<u32, ReadWrite>,
         time_decay: &'a TensorGpu<f32, ReadWrite>,
         time_first: &'a TensorGpu<f32, ReadWrite>,
         k: &'a TensorGpu<f32, ReadWrite>,
@@ -597,15 +597,14 @@ impl<'a> TensorOp<'a> {
         state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape;
-        let max_batch = state.shape()[2];
-        let num_batch = stack.shape[0];
-        stack.check_shape(Shape::new(num_batch, 1, 1, 1))?;
+        let num_batch = state.shape()[2];
+
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         time_decay.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         time_first.check_shape(Shape::new(shape[0], 1, 1, 1))?;
-        state.check_shape(Shape::new(shape[0], 4, max_batch, 1))?;
+        state.check_shape(Shape::new(shape[0], 4, num_batch, 1))?;
 
         let context = &x.context;
         let pipeline = context.pipeline("time_mix")?;
@@ -623,7 +622,7 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: stack.binding(),
+                    resource: cursors.binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
@@ -659,13 +658,13 @@ impl<'a> TensorOp<'a> {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::block_count(shape[0] as u32 / 4), num_batch as u32, 1],
+            dispatch: [Self::block_count(shape[0] as u32 / 4), 1, 1],
         })
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn time_mix_v5(
-        stack: &'a TensorGpu<u32, ReadWrite>,
+        cursors: &'a TensorGpu<u32, ReadWrite>,
         time_decay: &'a TensorGpu<f32, ReadWrite>,
         time_first: &'a TensorGpu<f32, ReadWrite>,
         k: &'a TensorGpu<f32, ReadWrite>,
@@ -676,16 +675,14 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Self, TensorError> {
         let shape = x.shape;
         let dim = shape[0] * shape[1];
-        let max_batch = state.shape()[2];
-        let num_batch = stack.shape[0];
+        let num_batch = state.shape()[2];
 
-        stack.check_shape(Shape::new(num_batch, 1, 1, 1))?;
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         time_decay.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
         time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
-        state.check_shape(Shape::new(dim, shape[0] + 1, max_batch, 1))?;
+        state.check_shape(Shape::new(dim, shape[0] + 1, num_batch, 1))?;
 
         let context = &x.context;
         let pipeline = context.pipeline("time_mix_v5")?;
@@ -703,7 +700,7 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: stack.binding(),
+                    resource: cursors.binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
@@ -739,7 +736,7 @@ impl<'a> TensorOp<'a> {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::round(dim as u32 / 4, 32), num_batch as u32, 1],
+            dispatch: [Self::round(dim as u32 / 4, 32), 1, 1],
         })
     }
 
@@ -820,11 +817,11 @@ impl<'a> TensorOp<'a> {
         state: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape;
-        let max_batch = state.shape()[2];
-        cursors.check_shape(Shape::new(shape[1], 1, 1, 1))?;
+        let num_batch = state.shape()[2];
+        // cursors.check_shape(Shape::new(shape[1], 1, 1, 1))?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
-        state.check_shape(Shape::new(shape[0], 1, max_batch, 1))?;
+        state.check_shape(Shape::new(shape[0], 1, num_batch, 1))?;
 
         let context = &x.context;
         let pipeline = context.pipeline("channel_mix")?;

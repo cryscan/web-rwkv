@@ -37,7 +37,6 @@ pub struct Model<'a> {
     runtime_cache: ResourceCache<usize, Runtime>,
     output_cache: ResourceCache<usize, Output>,
     softmax_cache: ResourceCache<usize, Softmax>,
-    stack_cache: ResourceCache<usize, TensorGpu<u32, ReadWrite>>,
     half_cache: ResourceCache<Shape, TensorGpu<f16, ReadWrite>>,
 }
 
@@ -129,9 +128,9 @@ struct Runtime {
 }
 
 impl Runtime {
-    pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
+    pub fn new(context: &Context, info: &ModelInfo, num_token: usize, max_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
-        let cursors_shape = Shape::new(num_token, 1, 1, 1);
+        let cursors_shape = Shape::new(max_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
 
         Self {
@@ -495,7 +494,7 @@ impl<'a> Model<'a> {
     #[inline]
     fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
         self.runtime_cache.request(num_token, || {
-            Runtime::new(&self.context, &self.info, num_token)
+            Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
         })
     }
 
@@ -513,12 +512,12 @@ impl<'a> Model<'a> {
         })
     }
 
-    #[inline]
-    fn request_stack(&self, num_batch: usize) -> Arc<TensorGpu<u32, ReadWrite>> {
-        self.stack_cache.request(num_batch, || {
-            self.context.zeros(Shape::new(num_batch, 1, 1, 1))
-        })
-    }
+    // #[inline]
+    // fn request_stack(&self, num_batch: usize) -> Arc<TensorGpu<u32, ReadWrite>> {
+    //     self.stack_cache.request(num_batch, || {
+    //         self.context.zeros(Shape::new(num_batch, 1, 1, 1))
+    //     })
+    // }
 
     #[inline]
     fn request_half(&self, shape: Shape) -> Arc<TensorGpu<f16, ReadWrite>> {
@@ -559,15 +558,15 @@ impl<'a> Model<'a> {
             .try_collect()?;
 
         let input = TensorStack::try_from(input)?;
-        let max_batch = input.max_batch();
         let num_batch = input.num_batch();
+        let num_active_batch = input.num_active_batch();
         let num_token = input.num_token();
         let head_size = self.info.num_emb / self.info.num_head;
         assert_ne!(num_token, 0);
-        assert_ne!(num_batch, 0);
+        assert_ne!(num_active_batch, 0);
 
         // collect batch output copy commands for later
-        let mut redirect = vec![None; max_batch];
+        let mut redirect = vec![None; num_batch];
         let headers = input
             .cursors
             .iter()
@@ -583,7 +582,7 @@ impl<'a> Model<'a> {
 
         let buffer = self.request_runtime(num_token);
         let output = self.request_output(num_header.max(1));
-        let stack = self.request_stack(num_batch);
+        // let stack = self.request_stack(num_active_batch);
 
         // gather and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
@@ -624,12 +623,10 @@ impl<'a> Model<'a> {
         //     })
         //     .try_collect()?;
 
-        let stack_host =
-            context.tensor_from_data(stack.shape(), input.cursors.clone().into_stack())?;
-        let cursors =
-            context.tensor_from_data(buffer.cursors.shape(), input.cursors.into_cursors())?;
+        let mut cursors = input.cursors.into_cursors();
+        cursors.resize(self.token_chunk_size, 0);
+        let cursors = context.tensor_from_data(buffer.cursors.shape(), cursors)?;
 
-        stack.load(&stack_host)?;
         buffer.input.load(&input.tensor)?;
         buffer.cursors.load(&cursors)?;
 
@@ -774,7 +771,7 @@ impl<'a> Model<'a> {
                 )?,
                 matmul_ops,
                 TensorOp::time_mix_v5(
-                    &stack,
+                    &buffer.cursors,
                     &time_decay,
                     &time_first,
                     &att_k,
@@ -1096,7 +1093,6 @@ impl<'a> FromBuilder for Model<'a> {
             runtime_cache: ResourceCache::new(1),
             output_cache: ResourceCache::new(1),
             softmax_cache: ResourceCache::new(1),
-            stack_cache: Default::default(),
             half_cache: ResourceCache::new(0),
         })
     }
