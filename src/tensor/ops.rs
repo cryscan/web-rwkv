@@ -349,6 +349,78 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    /// NFloat4 matrix-vector multiplication.
+    /// - `matrix` shape: `[C, R, 1]`.
+    /// - `absmax` shape: `[C / S, R, 1]`.
+    /// - `input` shape: `[C, T, B]`.
+    /// - `output` shape: `[R, T, B]`.
+    pub fn matmul_vec_nf4(
+        matrix: &'a TensorGpu<u8, ReadWrite>,
+        absmax: &'a TensorGpu<f32, ReadWrite>,
+        quant: &'a TensorGpu<f32, Uniform>,
+        input: TensorView<'a, f16>,
+        output: TensorView<'a, f32>,
+    ) -> Result<Self, TensorError> {
+        const NF4_BLOCK_SIZE: usize = 64;
+
+        let shape = output.shape();
+        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1, 1))?;
+        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
+        absmax.check_shape(Shape::new(
+            matrix.shape()[0] / NF4_BLOCK_SIZE,
+            shape[0],
+            1,
+            1,
+        ))?;
+
+        let context = &matrix.context;
+        let pipeline = context.pipeline("matmul_vec_nf4")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: matrix.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: input.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: quant.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: matrix.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: absmax.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [matrix.shape[1] as u32 / 4, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
     /// Fp16 matrix-matrix multiplication.
     /// - `matrix` shape: `[K, M, B]`.
     /// - `input` shape: `[K, N, B]`.
@@ -1480,6 +1552,32 @@ mod tests {
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matmul_nf4() -> Result<(), anyhow::Error> {
+        let _context = match create_context() {
+            Ok(context) => context,
+            Err(_) => return Ok(()),
+        };
+        fastrand::seed(42);
+
+        const C: usize = 2560;
+        const R: usize = 2048;
+        const T: usize = 31;
+
+        let _matrix = vec![(); C * R]
+            .into_iter()
+            .map(|_| 10.0 * (fastrand::f32() - 0.5))
+            .map(f16::from_f32)
+            .collect_vec();
+        let input_f32 = vec![(); C * T]
+            .into_iter()
+            .map(|_| 10.0 * (fastrand::f32() - 0.5))
+            .collect_vec();
+        let _input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
         Ok(())
     }

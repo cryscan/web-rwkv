@@ -42,7 +42,7 @@ fn reduce_sum(index: u32, stride: u32) {
 fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape.x / 4u;
     let index = invocation_id.x % BLOCK_SIZE;
-    let channel = invocation_id.x / BLOCK_SIZE;   // 1 channel: 4 rows in matrix
+    let channel = invocation_id.x / BLOCK_SIZE;     // 1 channel: 4 rows in matrix
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
