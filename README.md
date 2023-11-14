@@ -9,6 +9,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 ## Features
 - No dependencies on CUDA/Python.
 - Support Nvidia/AMD/Intel GPUs, including integrated GPUs.
+- Vulkan/Dx12/OpenGL backends.
 - Batched inference.
 - Int8 quantization.
 - Very fast.
@@ -60,11 +61,6 @@ You may download the official RWKV World series models from [HuggingFace](https:
 - "thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: HeaderTooLarge'"
   
   Your model is broken, mainly because you cloned the repo but did not set up git-lfs.Please download the model manually and overwrite that one in `assets/models`.
-
-- "thread 'main' panicked at 'wgpu error: Validation Error"
-  
-  It's most likely that you are using the D3D backend.
-  Please use Vulkan backend instead.
 
 - "thread 'main' panicked at 'Error in Queue::submit: parent device is lost'"
 
