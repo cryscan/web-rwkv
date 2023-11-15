@@ -4,7 +4,7 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 use crate::tensor::{
     ops::{TensorOp, TensorPass},
     shape::Shape,
-    ReadWrite, TensorError, TensorGpu, TensorShape, TensorView,
+    ReadWrite, TensorError, TensorGpu, TensorShape, TensorView, Uniform,
 };
 
 #[derive(Debug)]
@@ -17,11 +17,17 @@ pub enum Matrix {
         my: Box<TensorGpu<f32, ReadWrite>>,
         ry: Box<TensorGpu<f32, ReadWrite>>,
     },
+    NF4 {
+        w: Box<TensorGpu<u8, ReadWrite>>,
+        m: Box<TensorGpu<f16, ReadWrite>>,
+        q: Box<TensorGpu<f32, Uniform>>,
+    },
 }
 
 impl Matrix {
     pub fn matmul_vec_op<'a>(
         &'a self,
+        half: TensorView<'a, f16>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'a>, TensorError> {
@@ -30,35 +36,31 @@ impl Matrix {
             Matrix::Int8 { w, mx, rx, my, ry } => {
                 TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
             }
+            Matrix::NF4 { w, m, q } => Ok(TensorOp::List(vec![
+                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::matmul_vec_nf4(w, m, q, half, output)?,
+            ])),
         }
     }
 
     pub fn matmul_mat_op<'a>(
         &'a self,
-        buffer: &'a TensorGpu<f16, ReadWrite>,
+        half: TensorView<'a, f16>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'a>, TensorError> {
         match self {
             Matrix::Fp16(matrix) => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, buffer)?,
-                TensorOp::matmul_mat_fp16(
-                    matrix.view(.., .., .., ..)?,
-                    buffer.view(.., .., .., ..)?,
-                    output,
-                )?,
+                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, half, output)?,
             ])),
             Matrix::Int8 { w, mx, rx, my, ry } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, buffer)?,
-                TensorOp::matmul_mat_int8(
-                    w.view(.., .., .., ..)?,
-                    mx,
-                    rx,
-                    my,
-                    ry,
-                    buffer.view(.., .., .., ..)?,
-                    output,
-                )?,
+                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, half, output)?,
+            ])),
+            Matrix::NF4 { w, m, q } => Ok(TensorOp::List(vec![
+                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::matmul_vec_nf4(w, m, q, half, output)?,
             ])),
         }
     }
@@ -98,5 +100,9 @@ impl Matrix {
         matrix.destroy();
 
         Ok(Matrix::Int8 { w, mx, rx, my, ry })
+    }
+
+    pub fn quant_nf4(_matrix: TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
+        todo!()
     }
 }

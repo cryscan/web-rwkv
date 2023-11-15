@@ -358,18 +358,77 @@ impl<'a> ContextBuilder<'a> {
             },
         ];
         let layout: Option<&[BindGroupLayoutEntry]> = Some(entries);
-
-        self.with_pipeline("quant_mat_int8", shader, "quantize", layout)
+        let context = self
+            .with_pipeline("quant_mat_int8", shader, "quantize", layout)
             .with_pipeline("quant_mat_int8_mx", shader, "compute_mx", layout)
             .with_pipeline("quant_mat_int8_my", shader, "compute_my", layout)
             .with_pipeline("quant_mat_int8_rx", shader, "compute_rx", layout)
-            .with_pipeline("quant_mat_int8_ry", shader, "compute_ry", layout)
-            .with_pipeline(
-                "quant_fp16",
-                include_str!("shaders/quant_fp16.wgsl"),
-                "quantize",
-                None,
-            )
+            .with_pipeline("quant_mat_int8_ry", shader, "compute_ry", layout);
+
+        let shader = include_str!("shaders/quant_mat_nf4.wgsl");
+        let entries = &[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
+        let layout: Option<&[BindGroupLayoutEntry]> = Some(entries);
+        let context = context
+            .with_pipeline("quant_mat_nf4_absmax", shader, "compute_absmax", layout)
+            .with_pipeline("quant_mat_nf4", shader, "quantize", layout);
+
+        context.with_pipeline(
+            "quant_fp16",
+            include_str!("shaders/quant_fp16.wgsl"),
+            "quantize",
+            None,
+        )
     }
 }
 
