@@ -35,18 +35,30 @@ impl Matrix {
 
     pub fn matmul_mat_op<'a>(
         &'a self,
-        buffer: TensorView<'a, f16>,
+        buffer: &'a TensorGpu<f16, ReadWrite>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'a>, TensorError> {
         match self {
             Matrix::Fp16(matrix) => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, buffer.tensor)?,
-                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, buffer, output)?,
+                TensorOp::quantize_fp16(input.tensor, buffer)?,
+                TensorOp::matmul_mat_fp16(
+                    matrix.view(.., .., .., ..)?,
+                    buffer.view(.., .., .., ..)?,
+                    output,
+                )?,
             ])),
             Matrix::Int8 { w, mx, rx, my, ry } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, buffer.tensor)?,
-                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, buffer, output)?,
+                TensorOp::quantize_fp16(input.tensor, buffer)?,
+                TensorOp::matmul_mat_int8(
+                    w.view(.., .., .., ..)?,
+                    mx,
+                    rx,
+                    my,
+                    ry,
+                    buffer.view(.., .., .., ..)?,
+                    output,
+                )?,
             ])),
         }
     }

@@ -575,17 +575,17 @@ impl<'a> Model<'a> {
             let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
                 TensorOp::List(vec![
                     layer.att.w_k.matmul_mat_op(
-                        temp_x.view(.., .., .., ..)?,
+                        &temp_x,
                         buffer.att_kx.view(.., .., .., ..)?,
                         buffer.att_k.view(.., .., .., ..)?,
                     )?,
                     layer.att.w_v.matmul_mat_op(
-                        temp_x.view(.., .., .., ..)?,
+                        &temp_x,
                         buffer.att_vx.view(.., .., .., ..)?,
                         buffer.att_v.view(.., .., .., ..)?,
                     )?,
                     layer.att.w_r.matmul_mat_op(
-                        temp_x.view(.., .., .., ..)?,
+                        &temp_x,
                         buffer.att_rx.view(.., .., .., ..)?,
                         buffer.att_r.view(.., .., .., ..)?,
                     )?,
@@ -659,18 +659,18 @@ impl<'a> Model<'a> {
             let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
                 TensorOp::List(vec![
                     layer.ffn.w_k.matmul_mat_op(
-                        temp_x.view(.., .., .., ..)?,
+                        &temp_x,
                         buffer.ffn_kx.view(.., .., .., ..)?,
                         buffer.ffn_k.view(.., .., .., ..)?,
                     )?,
                     TensorOp::squared_relu(&buffer.ffn_k)?,
                     layer.ffn.w_v.matmul_mat_op(
-                        temp_k.view(.., .., .., ..)?,
+                        &temp_k,
                         buffer.ffn_k.view(.., .., .., ..)?,
                         buffer.ffn_v.view(.., .., .., ..)?,
                     )?,
                     layer.ffn.w_r.matmul_mat_op(
-                        temp_x.view(.., .., .., ..)?,
+                        &temp_x,
                         buffer.ffn_rx.view(.., .., .., ..)?,
                         buffer.ffn_r.view(.., .., .., ..)?,
                     )?,
