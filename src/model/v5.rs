@@ -1024,7 +1024,20 @@ impl<'a> FromBuilder for Model<'a> {
                         w_o: Matrix::quant_u8(w_o)?,
                         group_norm,
                     },
-                    _ => todo!(),
+                    Quant::NF4 => Att {
+                        time_decay,
+                        time_first,
+                        time_mix_k,
+                        time_mix_v,
+                        time_mix_r,
+                        time_mix_g,
+                        w_k: Matrix::quant_nf4(w_k)?,
+                        w_v: Matrix::quant_nf4(w_v)?,
+                        w_r: Matrix::quant_nf4(w_r)?,
+                        w_g: Matrix::quant_nf4(w_g)?,
+                        w_o: Matrix::quant_nf4(w_o)?,
+                        group_norm,
+                    },
                 };
 
                 let ffn_layer_norm = LayerNorm {
@@ -1056,7 +1069,13 @@ impl<'a> FromBuilder for Model<'a> {
                         w_v: Matrix::quant_u8(w_v)?,
                         w_r: Matrix::quant_u8(w_r)?,
                     },
-                    _ => todo!(),
+                    Quant::NF4 => Ffn {
+                        time_mix_k,
+                        time_mix_r,
+                        w_k: Matrix::quant_nf4(w_k)?,
+                        w_v: Matrix::quant_nf4(w_v)?,
+                        w_r: Matrix::quant_nf4(w_r)?,
+                    },
                 };
 
                 context.queue.submit(None);

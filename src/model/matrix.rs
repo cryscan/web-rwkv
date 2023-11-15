@@ -102,7 +102,52 @@ impl Matrix {
         Ok(Matrix::Int8 { w, mx, rx, my, ry })
     }
 
-    pub fn quant_nf4(_matrix: TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
-        todo!()
+    pub fn quant_nf4(matrix: TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
+        let context = &matrix.context;
+        let shape = matrix.shape();
+
+        let quant = vec![
+            -1.0,
+            -0.6961928009986877,
+            -0.5250730514526367,
+            -0.39491748809814453,
+            -0.28444138169288635,
+            -0.18477343022823334,
+            -0.09105003625154495,
+            0.0,
+            0.07958029955625534,
+            0.16093020141124725,
+            0.24611230194568634,
+            0.33791524171829224,
+            0.44070982933044434,
+            0.5626170039176941,
+            0.7229568362236023,
+            1.0,
+        ];
+        let q = Box::new(context.tensor_from_data(Shape::new(quant.len(), 1, 1, 1), quant)?);
+
+        let w =
+            Box::new(context.tensor_init(Shape::new(shape[0] / 2, shape[1], shape[2], shape[3])));
+        let m = Box::new(context.tensor_init(Shape::new(
+            shape[0] / TensorOp::NF4_BLOCK_SIZE,
+            shape[1],
+            shape[2],
+            shape[3],
+        )));
+
+        let op = TensorOp::quantize_mat_nf4(&matrix, &q, &m, &w)?;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
+        context.queue.submit(Some(encoder.finish()));
+        matrix.destroy();
+
+        Ok(Matrix::NF4 { w, m, q })
     }
 }

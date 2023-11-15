@@ -88,8 +88,8 @@ pub enum TensorOp<'a> {
 }
 
 impl<'a> TensorOp<'a> {
-    const BLOCK_SIZE: u32 = 128;
-    const NF4_BLOCK_SIZE: usize = 64;
+    pub const BLOCK_SIZE: u32 = 128;
+    pub const NF4_BLOCK_SIZE: usize = 64;
 
     #[inline]
     fn round(x: u32, div: u32) -> u32 {
