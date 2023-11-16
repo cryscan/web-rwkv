@@ -1235,8 +1235,9 @@ impl<'a> TensorOp<'a> {
         absmax: &'a TensorGpu<f16, ReadWrite>,
         output: &'a TensorGpu<u8, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        let context = &output.context;
         let shape = output.shape();
-        let input_shape = Shape::new(shape[0] * 2, shape[1], shape[2], shape[3]);
+        let input_shape = Shape::new(shape[0] << 1, shape[1], shape[2], shape[3]);
         let absmax_shape = Shape::new(
             input_shape[0] / Self::NF4_BLOCK_SIZE,
             shape[1],
@@ -1247,29 +1248,6 @@ impl<'a> TensorOp<'a> {
         input.check_shape(input_shape)?;
         absmax.check_shape(absmax_shape)?;
 
-        let context = &output.context;
-
-        // #[allow(clippy::lossy_float_literal)]
-        // let quant = vec![
-        //     -1.0,
-        //     -0.6961928009986877,
-        //     -0.5250730514526367,
-        //     -0.39491748809814453,
-        //     -0.28444138169288635,
-        //     -0.18477343022823334,
-        //     -0.09105003625154495,
-        //     0.0,
-        //     0.07958029955625534,
-        //     0.16093020141124725,
-        //     0.24611230194568634,
-        //     0.33791524171829224,
-        //     0.44070982933044434,
-        //     0.5626170039176941,
-        //     0.7229568362236023,
-        //     1.0,
-        // ];
-        // let quant: TensorGpu<f32, Uniform> =
-        //     context.tensor_from_data(Shape::new(16, 1, 1, 1), quant)?;
         let absmax_f32: TensorGpu<f32, ReadWrite> = context.tensor_init(absmax_shape);
 
         let pipeline = context.pipeline("quant_mat_nf4_absmax")?;
@@ -1279,7 +1257,7 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.meta_binding(),
+                    resource: absmax_f32.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
@@ -1302,7 +1280,11 @@ impl<'a> TensorOp<'a> {
         let compute_absmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::block_count(absmax_shape.len() as u32), 1, 1],
+            dispatch: [
+                Self::block_count(absmax_shape[0] as u32),
+                absmax_shape[1] as u32,
+                absmax_shape[2] as u32,
+            ],
         };
 
         let pipeline = context.pipeline("quant_mat_nf4")?;
@@ -1335,7 +1317,11 @@ impl<'a> TensorOp<'a> {
         let quantize = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::block_count(shape.len() as u32), 1, 1],
+            dispatch: [
+                Self::block_count(shape[0] as u32),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
         };
 
         let pipeline = context.pipeline("quant_fp16")?;
@@ -1725,12 +1711,10 @@ mod tests {
             0.7229568362236023,
             1.0,
         ];
-        let (_matrix_u4, matrix_u8, absmax) = {
+        let (matrix_u8, absmax) = {
             let mut matrix_u8: Vec<u8> = vec![];
-            let mut matrix_u4: Vec<u8> = vec![];
             let mut absmax = vec![];
             matrix_u8.resize(matrix.len(), 0);
-            matrix_u4.resize(matrix.len() / 2, 0);
             absmax.resize(matrix.len() / TensorOp::NF4_BLOCK_SIZE, f16::ZERO);
 
             for (i, absmax) in absmax.iter_mut().enumerate() {
@@ -1753,13 +1737,7 @@ mod tests {
                 }
             }
 
-            for i in 0..matrix_u4.len() {
-                let u = matrix_u8[2 * i];
-                let v = matrix_u8[2 * i + 1];
-                matrix_u4[i] = u | (v << 4);
-            }
-
-            (matrix_u4, matrix_u8, absmax)
+            (matrix_u8, absmax)
         };
 
         let quant_shape = Shape::new(quant.len(), 1, 1, 1);

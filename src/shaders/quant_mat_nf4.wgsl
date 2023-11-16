@@ -1,4 +1,4 @@
-@group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C / 2, R]
+@group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C / S, R]. [C / 2, R]
 @group(0) @binding(1) var<uniform> quant: array<vec4<f32>, 4>; 
 
 @group(0) @binding(2) var<storage, read> input: array<vec4<u32>>;           // (R, C)
@@ -20,27 +20,32 @@ fn unpack_input(packed: vec4<u32>) -> array<vec4<f32>, 2> {
     return x;
 }
 
+struct Input {
+    @builtin(global_invocation_id) uid: vec3<u32>,
+    @builtin(num_workgroups) nb: vec3<u32>,
+};
+
 @compute @workgroup_size(128, 1, 1)
-fn compute_absmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
-    let index = invocation_id.x;
-    let stride = NF4_BLOCK_SIZE / 8u;
+fn compute_absmax(in: Input) {
+    let step = NF4_BLOCK_SIZE / 8u;
+    let bti = in.uid.x + (BLOCK_SIZE * in.nb.x) * in.uid.y + (BLOCK_SIZE * in.nb.x * in.nb.y) * in.uid.z;
 
     var maximum = vec4<f32>(0.0);
-    for (var i = 0u; i < stride; i += 1u) {
-        let x = unpack_input(input[index * stride + i]);
+    for (var i = 0u; i < step; i += 1u) {
+        let x = unpack_input(input[bti * step + i]);
         maximum = max(abs(x[0]), maximum);
         maximum = max(abs(x[1]), maximum);
     }
-    absmax[index] = max(max(maximum[0], maximum[1]), max(maximum[2], maximum[3]));
+    absmax[bti] = max(max(maximum[0], maximum[1]), max(maximum[2], maximum[3]));
 }
 
 @compute @workgroup_size(128, 1, 1)
-fn quantize(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
-    let index = invocation_id.x;
-    let stride = NF4_BLOCK_SIZE / 8u;
+fn quantize(in: Input) {
+    let step = NF4_BLOCK_SIZE / 8u;
+    let bti = in.uid.x + (BLOCK_SIZE * in.nb.x) * in.uid.y + (BLOCK_SIZE * in.nb.x * in.nb.y) * in.uid.z;
 
-    let amp = absmax[index / stride];
-    var x = unpack_input(input[index]);
+    let amp = absmax[bti / step];
+    var x = unpack_input(input[bti]);
     x[0] /= amp;
     x[1] /= amp;
 
@@ -59,5 +64,5 @@ fn quantize(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         y |= min_index << (i * 4u);
     }
 
-    output[index] = y;
+    output[bti] = y;
 }

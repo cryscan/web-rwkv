@@ -106,6 +106,14 @@ impl Matrix {
         let context = &matrix.context;
         let shape = matrix.shape();
 
+        let matrix_shape = Shape::new(shape[0] / 2, shape[1], shape[2], shape[3]);
+        let absmax_shape = Shape::new(
+            shape[0] / TensorOp::NF4_BLOCK_SIZE,
+            shape[1],
+            shape[2],
+            shape[3],
+        );
+
         let quant = vec![
             -1.0,
             -0.696_192_8,
@@ -126,14 +134,8 @@ impl Matrix {
         ];
         let q = Box::new(context.tensor_from_data(Shape::new(quant.len(), 1, 1, 1), quant)?);
 
-        let w =
-            Box::new(context.tensor_init(Shape::new(shape[0] / 2, shape[1], shape[2], shape[3])));
-        let m = Box::new(context.tensor_init(Shape::new(
-            shape[0] / TensorOp::NF4_BLOCK_SIZE,
-            shape[1],
-            shape[2],
-            shape[3],
-        )));
+        let w = Box::new(context.tensor_init(matrix_shape));
+        let m = Box::new(context.tensor_init(absmax_shape));
 
         let op = TensorOp::quantize_mat_nf4(&matrix, &q, &m, &w)?;
 
