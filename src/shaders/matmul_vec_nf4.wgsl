@@ -34,21 +34,21 @@ fn unpack_absmax(index: u32) -> f32 {
     return unpack2x16float(absmax[i >> 1u])[i & 1u];
 }
 
-fn unpack_matrix_0(packed: u32) -> vec4<f32> {
+fn unpack_matrix_0(v: u32) -> vec4<f32> {
     var x: vec4<f32>;
-    x[0] = quant[(packed >> (2u)) & 3u][(packed >> (0u)) & 3u];
-    x[1] = quant[(packed >> (6u)) & 3u][(packed >> (4u)) & 3u];
-    x[2] = quant[(packed >> (10u)) & 3u][(packed >> (8u)) & 3u];
-    x[3] = quant[(packed >> (14u)) & 3u][(packed >> (12u)) & 3u];
+    x[0] = quant[(v >> (2u)) & 3u][(v >> (0u)) & 3u];
+    x[1] = quant[(v >> (6u)) & 3u][(v >> (4u)) & 3u];
+    x[2] = quant[(v >> (10u)) & 3u][(v >> (8u)) & 3u];
+    x[3] = quant[(v >> (14u)) & 3u][(v >> (12u)) & 3u];
     return x;
 }
 
-fn unpack_matrix_1(packed: u32) -> vec4<f32> {
+fn unpack_matrix_1(v: u32) -> vec4<f32> {
     var x: vec4<f32>;
-    x[0] = quant[(packed >> (18u)) & 3u][(packed >> (16u)) & 3u];
-    x[1] = quant[(packed >> (22u)) & 3u][(packed >> (20u)) & 3u];
-    x[2] = quant[(packed >> (26u)) & 3u][(packed >> (24u)) & 3u];
-    x[3] = quant[(packed >> (30u)) & 3u][(packed >> (28u)) & 3u];
+    x[0] = quant[(v >> (18u)) & 3u][(v >> (16u)) & 3u];
+    x[1] = quant[(v >> (22u)) & 3u][(v >> (20u)) & 3u];
+    x[2] = quant[(v >> (26u)) & 3u][(v >> (24u)) & 3u];
+    x[3] = quant[(v >> (30u)) & 3u][(v >> (28u)) & 3u];
     return x;
 }
 
@@ -86,11 +86,11 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         v = matrix[ci]; a[3] = unpack_absmax(ci); m[3] = unpack_matrix_0(v); n[3] = unpack_matrix_1(v);
 
         // read 8 elements from the input
-        let packed = input[bti];
-        let x = unpack4x16float(packed.xy);
-        let y = unpack4x16float(packed.zw);
+        let u = input[bti];
+        let x = unpack4x16float(u.xy);
+        let y = unpack4x16float(u.zw);
 
-        local_sum += a * (transpose(m) * x + transpose(n) * y);
+        local_sum = fma(transpose(m) * x + transpose(n) * y, a, local_sum);
     }
     sketch[index] = local_sum;
     workgroupBarrier();

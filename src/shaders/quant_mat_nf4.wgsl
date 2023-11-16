@@ -25,9 +25,9 @@ fn compute_absmax(in: Input) {
 
     var maximum = vec4<f32>(0.0);
     for (var i = 0u; i < step; i += 1u) {
-        let packed = input[bti * step + i];
-        let x = unpack4x16float(packed.xy);
-        let y = unpack4x16float(packed.zw);
+        let v = input[bti * step + i];
+        let x = unpack4x16float(v.xy);
+        let y = unpack4x16float(v.zw);
 
         maximum = max(abs(x), maximum);
         maximum = max(abs(y), maximum);
@@ -41,10 +41,10 @@ fn quantize(in: Input) {
     let bti = in.uid.x + (BLOCK_SIZE * in.nb.x) * in.uid.y + (BLOCK_SIZE * in.nb.x * in.nb.y) * in.uid.z;
 
     let amp = 1.0 / absmax[bti / step];
-    let packed = input[bti];
+    let v = input[bti];
     var x: array<vec4<f32>, 2>;
-    x[0] = unpack4x16float(packed.xy) * amp;
-    x[1] = unpack4x16float(packed.zw) * amp;
+    x[0] = unpack4x16float(v.xy) * amp;
+    x[1] = unpack4x16float(v.zw) * amp;
 
     var y = 0u;
     for (var i = 0u; i < 8u; i += 1u) {
