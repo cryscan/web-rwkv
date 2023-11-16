@@ -34,13 +34,23 @@ fn unpack_absmax(index: u32) -> f32 {
     return unpack2x16float(absmax[i >> 1u])[i & 1u];
 }
 
-fn unpack_matrix(packed: u32, offset: u32) -> vec4<f32> {
-    var i: u32;
+fn unpack_matrix_0(packed: u32) -> vec4<f32> {
     var x: vec4<f32>;
-    i = (packed >> (offset + 0u)) & 0xfu; x[0] = quant[i >> 2u][i & 3u];
-    i = (packed >> (offset + 4u)) & 0xfu; x[1] = quant[i >> 2u][i & 3u];
-    i = (packed >> (offset + 8u)) & 0xfu; x[2] = quant[i >> 2u][i & 3u];
-    i = (packed >> (offset + 12u)) & 0xfu; x[3] = quant[i >> 2u][i & 3u];
+    var q = quant;
+    x[0] = q[(packed >> (2u)) & 3u][(packed >> (0u)) & 3u];
+    x[1] = q[(packed >> (6u)) & 3u][(packed >> (4u)) & 3u];
+    x[2] = q[(packed >> (10u)) & 3u][(packed >> (8u)) & 3u];
+    x[3] = q[(packed >> (14u)) & 3u][(packed >> (12u)) & 3u];
+    return x;
+}
+
+fn unpack_matrix_1(packed: u32) -> vec4<f32> {
+    var x: vec4<f32>;
+    var q = quant;
+    x[0] = q[(packed >> (18u)) & 3u][(packed >> (16u)) & 3u];
+    x[1] = q[(packed >> (22u)) & 3u][(packed >> (20u)) & 3u];
+    x[2] = q[(packed >> (26u)) & 3u][(packed >> (24u)) & 3u];
+    x[3] = q[(packed >> (30u)) & 3u][(packed >> (28u)) & 3u];
     return x;
 }
 
@@ -70,10 +80,10 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         // read 4 rows from the matrix, each with 4x2 unpacked floats, forming 2 4x4 sub-blocks
         var v: u32;
         var a: f32;
-        v = matrix[ci]; a = unpack_absmax(ci); let m_0 = a * unpack_matrix(v, 0u); let n_0 = a * unpack_matrix(v, 16u); ci += stride;
-        v = matrix[ci]; a = unpack_absmax(ci); let m_1 = a * unpack_matrix(v, 0u); let n_1 = a * unpack_matrix(v, 16u); ci += stride;
-        v = matrix[ci]; a = unpack_absmax(ci); let m_2 = a * unpack_matrix(v, 0u); let n_2 = a * unpack_matrix(v, 16u); ci += stride;
-        v = matrix[ci]; a = unpack_absmax(ci); let m_3 = a * unpack_matrix(v, 0u); let n_3 = a * unpack_matrix(v, 16u);
+        v = matrix[ci]; a = unpack_absmax(ci); let m_0 = a * unpack_matrix_0(v); let n_0 = a * unpack_matrix_1(v); ci += stride;
+        v = matrix[ci]; a = unpack_absmax(ci); let m_1 = a * unpack_matrix_0(v); let n_1 = a * unpack_matrix_1(v); ci += stride;
+        v = matrix[ci]; a = unpack_absmax(ci); let m_2 = a * unpack_matrix_0(v); let n_2 = a * unpack_matrix_1(v); ci += stride;
+        v = matrix[ci]; a = unpack_absmax(ci); let m_3 = a * unpack_matrix_0(v); let n_3 = a * unpack_matrix_1(v);
 
         // read 8 elements from the input
         let packed = input[bti];
