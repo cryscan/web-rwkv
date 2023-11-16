@@ -13,13 +13,6 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-fn unpack_input(packed: vec4<u32>) -> array<vec4<f32>, 2> {
-    var x: array<vec4<f32>, 2>;
-    x[0] = unpack4x16float(packed.xy);
-    x[1] = unpack4x16float(packed.zw);
-    return x;
-}
-
 struct Input {
     @builtin(global_invocation_id) uid: vec3<u32>,
     @builtin(num_workgroups) nb: vec3<u32>,
@@ -32,9 +25,12 @@ fn compute_absmax(in: Input) {
 
     var maximum = vec4<f32>(0.0);
     for (var i = 0u; i < step; i += 1u) {
-        let x = unpack_input(input[bti * step + i]);
-        maximum = max(abs(x[0]), maximum);
-        maximum = max(abs(x[1]), maximum);
+        let packed = input[bti * step + i];
+        let x = unpack4x16float(packed.xy);
+        let y = unpack4x16float(packed.zw);
+
+        maximum = max(abs(x), maximum);
+        maximum = max(abs(y), maximum);
     }
     absmax[bti] = max(max(maximum[0], maximum[1]), max(maximum[2], maximum[3]));
 }
@@ -44,10 +40,11 @@ fn quantize(in: Input) {
     let step = NF4_BLOCK_SIZE / 8u;
     let bti = in.uid.x + (BLOCK_SIZE * in.nb.x) * in.uid.y + (BLOCK_SIZE * in.nb.x * in.nb.y) * in.uid.z;
 
-    let amp = absmax[bti / step];
-    var x = unpack_input(input[bti]);
-    x[0] /= amp;
-    x[1] /= amp;
+    let amp = 1.0 / absmax[bti / step];
+    let packed = input[bti];
+    var x: array<vec4<f32>, 2>;
+    x[0] = unpack4x16float(packed.xy) * amp;
+    x[1] = unpack4x16float(packed.zw) * amp;
 
     var y = 0u;
     for (var i = 0u; i < 8u; i += 1u) {
