@@ -88,7 +88,8 @@ pub enum TensorOp<'a> {
 }
 
 impl<'a> TensorOp<'a> {
-    const BLOCK_SIZE: u32 = 128;
+    pub const BLOCK_SIZE: u32 = 128;
+    pub const NF4_BLOCK_SIZE: usize = 64;
 
     #[inline]
     fn round(x: u32, div: u32) -> u32 {
@@ -337,6 +338,76 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 9,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [matrix.shape[1] as u32 / 4, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
+    /// NFloat4 matrix-vector multiplication.
+    /// - `matrix` shape: `[C, R, 1]`.
+    /// - `absmax` shape: `[C / S, R, 1]`.
+    /// - `input` shape: `[C, T, B]`.
+    /// - `output` shape: `[R, T, B]`.
+    pub fn matmul_vec_nf4(
+        matrix: &'a TensorGpu<u8, ReadWrite>,
+        absmax: &'a TensorGpu<f16, ReadWrite>,
+        quant: &'a TensorGpu<f32, Uniform>,
+        input: TensorView<'a, f16>,
+        output: TensorView<'a, f32>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        matrix.check_shape(Shape::new(input.shape()[0] / 2, shape[0], 1, 1))?;
+        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
+        absmax.check_shape(Shape::new(
+            input.shape()[0] / Self::NF4_BLOCK_SIZE,
+            shape[0],
+            1,
+            1,
+        ))?;
+
+        let context = &matrix.context;
+        let pipeline = context.pipeline("matmul_vec_nf4")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                // BindGroupEntry {
+                //     binding: 0,
+                //     resource: matrix.meta_binding(),
+                // },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: input.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: quant.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: matrix.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: absmax.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
                     resource: output.binding(),
                 },
             ],
@@ -1157,10 +1228,139 @@ impl<'a> TensorOp<'a> {
             ],
         })
     }
+
+    pub fn quantize_mat_nf4(
+        input: &'a TensorGpu<f16, ReadWrite>,
+        quant: &'a TensorGpu<f32, Uniform>,
+        absmax: &'a TensorGpu<f16, ReadWrite>,
+        output: &'a TensorGpu<u8, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let context = &output.context;
+        let shape = output.shape();
+        let input_shape = Shape::new(shape[0] << 1, shape[1], shape[2], shape[3]);
+        let absmax_shape = Shape::new(
+            input_shape[0] / Self::NF4_BLOCK_SIZE,
+            shape[1],
+            shape[2],
+            shape[3],
+        );
+
+        input.check_shape(input_shape)?;
+        absmax.check_shape(absmax_shape)?;
+
+        let absmax_f32: TensorGpu<f32, ReadWrite> = context.tensor_init(absmax_shape);
+
+        let pipeline = context.pipeline("quant_mat_nf4_absmax")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: absmax_f32.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: quant.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: absmax_f32.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+        let compute_absmax = Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(absmax_shape[0] as u32),
+                absmax_shape[1] as u32,
+                absmax_shape[2] as u32,
+            ],
+        };
+
+        let pipeline = context.pipeline("quant_mat_nf4")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: quant.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: absmax_f32.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+        let quantize = Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        };
+
+        let pipeline = context.pipeline("quant_fp16")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: absmax.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: absmax_f32.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: absmax.binding(),
+                },
+            ],
+        })];
+        let quantize_absmax = Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(absmax_shape[0] as u32 / 4),
+                absmax_shape[1] as u32,
+                absmax_shape[2] as u32,
+            ],
+        };
+
+        Ok(Self::List(vec![compute_absmax, quantize, quantize_absmax]))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::PI;
+
     use half::f16;
     use itertools::Itertools;
     use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, PowerPreference};
@@ -1382,57 +1582,36 @@ mod tests {
             .collect_vec();
         let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
-        let matrix_dev = context.tensor_from_data(Shape::new(C, R, 1, 1), matrix.clone())?;
-        let input_f32_dev =
-            TensorGpu::from_data(&context, Shape::new(C, T, 1, 1), input_f32.clone())?;
-        let input_f16_dev = context.tensor_init(input_f32_dev.shape());
-        let output_dev = TensorGpu::init(&context, Shape::new(R, T, 2, 1));
-        let output_map = TensorGpu::init(&context, output_dev.shape());
+        let matrix_shape = Shape::new(C, R, 1, 1);
+        let input_shape = Shape::new(C, T, 1, 1);
+        let output_shape = Shape::new(R, T, 2, 1);
 
-        let quant_input = TensorOp::quantize_fp16(&input_f32_dev, &input_f16_dev)?;
-        let matmul_vec_fp16 = TensorOp::matmul_vec_fp16(
-            &matrix_dev,
-            input_f32_dev.view(.., .., .., ..)?,
-            output_dev.view(.., .., 0, ..)?,
-        )?;
-        let matmul_mat_fp16 = TensorOp::matmul_mat_fp16(
-            matrix_dev.view(.., .., .., ..)?,
-            input_f16_dev.view(.., .., .., ..)?,
-            output_dev.view(.., .., 1, ..)?,
-        )?;
+        let matrix_dev = context.tensor_from_data(matrix_shape, matrix.clone())?;
+        let input_f32_dev = TensorGpu::from_data(&context, input_shape, input_f32.clone())?;
+        let input_f16_dev = context.tensor_init(input_shape);
+        let output_dev = TensorGpu::init(&context, output_shape);
+        let output_map = TensorGpu::init(&context, output_shape);
+
+        let ops = TensorOp::List(vec![
+            TensorOp::quantize_fp16(&input_f32_dev, &input_f16_dev)?,
+            TensorOp::matmul_vec_fp16(
+                &matrix_dev,
+                input_f32_dev.view(.., .., .., ..)?,
+                output_dev.view(.., .., 0, ..)?,
+            )?,
+            TensorOp::matmul_mat_fp16(
+                matrix_dev.view(.., .., .., ..)?,
+                input_f16_dev.view(.., .., .., ..)?,
+                output_dev.view(.., .., 1, ..)?,
+            )?,
+        ]);
 
         let mut encoder = context
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        {
-            // let mut pass = wgpu_profiler::scope::Scope::start(
-            //     "quant_fp16",
-            //     &mut profiler,
-            //     &mut pass,
-            //     &context.device,
-            // );
-            pass.execute_tensor_op(&quant_input);
-        }
-        {
-            // let mut pass = wgpu_profiler::scope::Scope::start(
-            //     "matmul_vec_fp16",
-            //     &mut profiler,
-            //     &mut pass,
-            //     &context.device,
-            // );
-            pass.execute_tensor_op(&matmul_vec_fp16);
-        }
-        {
-            // let mut pass = wgpu_profiler::scope::Scope::start(
-            //     "matmul_mat_fp16",
-            //     &mut profiler,
-            //     &mut pass,
-            //     &context.device,
-            // );
-            pass.execute_tensor_op(&matmul_mat_fp16);
-        }
+        pass.execute_tensor_op(&ops);
         drop(pass);
 
         // profiler.resolve_queries(&mut encoder);
@@ -1477,6 +1656,233 @@ mod tests {
         for (index, (a, b)) in Iterator::zip(output_host.into_iter(), ans.into_iter()).enumerate() {
             assert!(
                 is_approx_eps(a, b, 1.0e-3),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matmul_nf4() -> Result<(), anyhow::Error> {
+        let context = match create_context() {
+            Ok(context) => context,
+            Err(_) => return Ok(()),
+        };
+        fastrand::seed(42);
+
+        const C: usize = 2560;
+        const R: usize = 2048;
+        const T: usize = 31;
+
+        fn normal() -> f32 {
+            let u = fastrand::f32();
+            let v = fastrand::f32();
+            (-2.0 * u.ln()).sqrt() * (2.0 * PI * v).cos()
+        }
+
+        let matrix = vec![(); C * R]
+            .into_iter()
+            .map(|_| normal())
+            .map(f16::from_f32)
+            .collect_vec();
+        let input_f32 = vec![(); C * T]
+            .into_iter()
+            .map(|_| 2.0 * fastrand::f32() - 1.0)
+            .collect_vec();
+        let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
+
+        #[allow(clippy::lossy_float_literal)]
+        let quant: [f32; 16] = [
+            -1.0,
+            -0.6961928009986877,
+            -0.5250730514526367,
+            -0.39491748809814453,
+            -0.28444138169288635,
+            -0.18477343022823334,
+            -0.09105003625154495,
+            0.0,
+            0.07958029955625534,
+            0.16093020141124725,
+            0.24611230194568634,
+            0.33791524171829224,
+            0.44070982933044434,
+            0.5626170039176941,
+            0.7229568362236023,
+            1.0,
+        ];
+        let (matrix_u8, absmax) = {
+            let mut matrix_u8: Vec<u8> = vec![];
+            let mut absmax = vec![];
+            matrix_u8.resize(matrix.len(), 0);
+            absmax.resize(matrix.len() / TensorOp::NF4_BLOCK_SIZE, f16::ZERO);
+
+            for (i, absmax) in absmax.iter_mut().enumerate() {
+                let start = i * TensorOp::NF4_BLOCK_SIZE;
+                let end = start + TensorOp::NF4_BLOCK_SIZE;
+                let chunk = &matrix[start..end];
+                *absmax = chunk
+                    .iter()
+                    .map(|&x| if x >= f16::ZERO { x } else { -x })
+                    .reduce(f16::max)
+                    .unwrap();
+                for (j, value) in chunk.iter().enumerate() {
+                    let value = value.to_f32() / absmax.to_f32();
+                    matrix_u8[start + j] = quant
+                        .iter()
+                        .map(|quant| (value - quant).abs())
+                        .enumerate()
+                        .fold((0, f32::MAX), |acc, x| if x.1 < acc.1 { x } else { acc })
+                        .0 as u8;
+                }
+            }
+
+            (matrix_u8, absmax)
+        };
+
+        let quant_shape = Shape::new(quant.len(), 1, 1, 1);
+        let absmax_shape = Shape::new(C / TensorOp::NF4_BLOCK_SIZE, R, 1, 1);
+        let matrix_f16_shape = Shape::new(C, R, 1, 1);
+        let matrix_u4_shape = Shape::new(C / 2, R, 1, 1);
+        let input_shape = Shape::new(C, T, 1, 1);
+        let output_shape = Shape::new(R, T, 1, 1);
+
+        let quant_dev = context.tensor_from_data(quant_shape, quant.to_vec())?;
+        // let absmax_dev = context.tensor_from_data(absmax_shape, absmax.clone())?;
+        let absmax_dev = context.tensor_init(absmax_shape);
+        let matrix_f16_dev = context.tensor_from_data(matrix_f16_shape, matrix.clone())?;
+
+        let matrix_u4_dev = context.tensor_init(matrix_u4_shape);
+        // let matrix_dev = context.tensor_from_data(matrix_shape, matrix_u4)?;
+        let input_dev = TensorGpu::from_data(&context, input_shape, input_f16.clone())?;
+        let output_dev: TensorGpu<f32, _> = TensorGpu::init(&context, output_shape);
+        let output_map = TensorGpu::init(&context, output_shape);
+
+        let ops = TensorOp::List(vec![
+            TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
+            TensorOp::matmul_vec_nf4(
+                &matrix_u4_dev,
+                &absmax_dev,
+                &quant_dev,
+                input_dev.view(.., .., .., ..)?,
+                output_dev.view(.., .., .., ..)?,
+            )?,
+        ]);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&ops);
+        drop(pass);
+
+        encoder.copy_tensor(&output_dev, &output_map)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let output_host = TensorCpu::from(output_map);
+        let output_host = Vec::from(output_host);
+
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        let mut truth = vec![0.0; output_host.len()];
+        for token in 0..T {
+            for line in 0..R {
+                let matrix = &matrix[line * C..(line + 1) * C];
+                let input = &input_f16[token * C..(token + 1) * C];
+                let product = matrix
+                    .iter()
+                    .zip(input.iter())
+                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
+                truth[token * R + line] = product;
+            }
+        }
+
+        let mut ans = vec![0.0; output_host.len()];
+        for token in 0..T {
+            for line in 0..R {
+                let matrix = &matrix_u8[line * C..(line + 1) * C];
+                let input = &input_f16[token * C..(token + 1) * C];
+                let product =
+                    matrix
+                        .iter()
+                        .zip(input.iter())
+                        .enumerate()
+                        .fold(0.0f32, |acc, (i, x)| {
+                            let amp = absmax[(line * C + i) / TensorOp::NF4_BLOCK_SIZE];
+                            acc + quant[*x.0 as usize] * amp.to_f32() * x.1.to_f32()
+                        });
+                ans[token * R + line] = product;
+            }
+        }
+
+        let mean = Iterator::zip(matrix.iter(), matrix_u8.iter())
+            .enumerate()
+            .map(|(i, (a, b))| {
+                let amp = absmax[i / TensorOp::NF4_BLOCK_SIZE];
+                (a.to_f32() - amp.to_f32() * quant[*b as usize]).abs()
+            })
+            .sum::<f32>()
+            / matrix.len() as f32;
+        println!("Recovery error: {mean}");
+
+        let mean = Iterator::zip(ans.iter(), truth.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>()
+            / truth.len() as f32;
+        println!("CPU mean error: {mean}");
+        let mean = Iterator::zip(ans.iter(), truth.iter())
+            .map(|(a, b)| (a - b).abs() / b.abs())
+            .sum::<f32>()
+            / truth.len() as f32;
+        println!("CPU mean relative error: {mean}");
+        let max = Iterator::zip(ans.iter(), truth.iter())
+            .map(|(a, b)| (a - b).abs())
+            .enumerate()
+            .fold((0, 0.0), |acc, x| if x.1 >= acc.1 { x } else { acc });
+        println!(
+            "CPU max error at {}: {}, truth: {}, nf4: {}",
+            max.0, max.1, truth[max.0], ans[max.0]
+        );
+        let min = Iterator::zip(ans.iter(), truth.iter())
+            .map(|(a, b)| (a - b).abs())
+            .enumerate()
+            .fold((0, f32::MAX), |acc, x| if x.1 <= acc.1 { x } else { acc });
+        println!(
+            "CPU min error at {}: {}, truth: {}, nf4: {}",
+            min.0, min.1, truth[min.0], ans[min.0]
+        );
+
+        let mean = Iterator::zip(output_host.iter(), truth.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>()
+            / truth.len() as f32;
+        println!("GPU mean error: {mean}");
+        let mean = Iterator::zip(output_host.iter(), truth.iter())
+            .map(|(a, b)| (a - b).abs() / b.abs())
+            .sum::<f32>()
+            / truth.len() as f32;
+        println!("GPU mean relative error: {mean}");
+        let max = Iterator::zip(output_host.iter(), truth.iter())
+            .map(|(a, b)| (a - b).abs())
+            .enumerate()
+            .fold((0, 0.0), |acc, x| if x.1 >= acc.1 { x } else { acc });
+        println!(
+            "GPU max error at {}: {}, truth: {}, nf4: {}",
+            max.0, max.1, truth[max.0], output_host[max.0]
+        );
+        let min = Iterator::zip(output_host.iter(), truth.iter())
+            .map(|(a, b)| (a - b).abs())
+            .enumerate()
+            .fold((0, f32::MAX), |acc, x| if x.1 <= acc.1 { x } else { acc });
+        println!(
+            "GPU min error at {}: {}, truth: {}, nf4: {}",
+            min.0, min.1, truth[min.0], output_host[min.0]
+        );
+
+        for (index, (a, b)) in Iterator::zip(output_host.into_iter(), ans.into_iter()).enumerate() {
+            assert!(
+                is_approx_eps(a, b, 1.0e-2),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }

@@ -4,7 +4,7 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 use crate::tensor::{
     ops::{TensorOp, TensorPass},
     shape::Shape,
-    ReadWrite, TensorError, TensorGpu, TensorShape, TensorView,
+    ReadWrite, TensorError, TensorGpu, TensorShape, TensorView, Uniform,
 };
 
 #[derive(Debug)]
@@ -17,11 +17,17 @@ pub enum Matrix {
         my: Box<TensorGpu<f32, ReadWrite>>,
         ry: Box<TensorGpu<f32, ReadWrite>>,
     },
+    NF4 {
+        w: Box<TensorGpu<u8, ReadWrite>>,
+        m: Box<TensorGpu<f16, ReadWrite>>,
+        q: Box<TensorGpu<f32, Uniform>>,
+    },
 }
 
 impl Matrix {
     pub fn matmul_vec_op<'a>(
         &'a self,
+        half: TensorView<'a, f16>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'a>, TensorError> {
@@ -30,23 +36,31 @@ impl Matrix {
             Matrix::Int8 { w, mx, rx, my, ry } => {
                 TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
             }
+            Matrix::NF4 { w, m, q } => Ok(TensorOp::List(vec![
+                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::matmul_vec_nf4(w, m, q, half, output)?,
+            ])),
         }
     }
 
     pub fn matmul_mat_op<'a>(
         &'a self,
-        buffer: TensorView<'a, f16>,
+        half: TensorView<'a, f16>,
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<TensorOp<'a>, TensorError> {
         match self {
             Matrix::Fp16(matrix) => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, buffer.tensor)?,
-                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, buffer, output)?,
+                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, half, output)?,
             ])),
             Matrix::Int8 { w, mx, rx, my, ry } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, buffer.tensor)?,
-                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, buffer, output)?,
+                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, half, output)?,
+            ])),
+            Matrix::NF4 { w, m, q } => Ok(TensorOp::List(vec![
+                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::matmul_vec_nf4(w, m, q, half, output)?,
             ])),
         }
     }
@@ -86,5 +100,56 @@ impl Matrix {
         matrix.destroy();
 
         Ok(Matrix::Int8 { w, mx, rx, my, ry })
+    }
+
+    pub fn quant_nf4(matrix: TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
+        let context = &matrix.context;
+        let shape = matrix.shape();
+
+        let matrix_shape = Shape::new(shape[0] / 2, shape[1], shape[2], shape[3]);
+        let absmax_shape = Shape::new(
+            shape[0] / TensorOp::NF4_BLOCK_SIZE,
+            shape[1],
+            shape[2],
+            shape[3],
+        );
+
+        let quant = vec![
+            -1.0,
+            -0.696_192_8,
+            -0.525_073_05,
+            -0.394_917_5,
+            -0.284_441_38,
+            -0.184_773_43,
+            -0.091_050_036,
+            0.0,
+            0.079_580_3,
+            0.160_930_2,
+            0.246_112_3,
+            0.337_915_24,
+            0.440_709_83,
+            0.562_617,
+            0.722_956_84,
+            1.0,
+        ];
+        let q = Box::new(context.tensor_from_data(Shape::new(quant.len(), 1, 1, 1), quant)?);
+
+        let w = Box::new(context.tensor_init(matrix_shape));
+        let m = Box::new(context.tensor_init(absmax_shape));
+
+        let op = TensorOp::quantize_mat_nf4(&matrix, &q, &m, &w)?;
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
+        context.queue.submit(Some(encoder.finish()));
+        matrix.destroy();
+
+        Ok(Matrix::NF4 { w, m, q })
     }
 }

@@ -117,8 +117,8 @@ pub enum Quant {
     None,
     /// Use `Int8` quantization.
     Int8,
-    /// Use `NFloat4` quantization.
-    NFloat4,
+    /// Use `NF4` quantization.
+    NF4,
 }
 
 #[derive(Debug, Clone)]

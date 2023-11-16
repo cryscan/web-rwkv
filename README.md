@@ -11,7 +11,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - Support Nvidia/AMD/Intel GPUs, including integrated GPUs.
 - Vulkan/Dx12/OpenGL backends.
 - Batched inference.
-- Int8 quantization.
+- Int8 and NF4 quantization.
 - Very fast.
 - LoRA merging at loading time.
 - Support RWKV V4 and V5.
@@ -29,7 +29,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 5. Run `cargo run --release --example batch` to generate 4 batches of text with various lengths simultaneously.
 6. To specify the location of your safetensors model, use `cargo run --release --example chat -- --model /path/to/model`.
 7. To load custom prompts for chat, use `cargo run --release --example chat -- --prompt /path/to/prompt`. See [`assets/prompt.json`](./assets/prompt.json) for details.
-8. To specify layer quantization, use `--quant <LAYERS>` to quantize the first `<LAYERS>` layers. For example, use `cargo run --release --example chat -- --quant 32` to quantize all 32 layers.
+8. To specify layer quantization, use `--quant <LAYERS>` or `-quant-nf4 <LAYERS>` to quantize the first `<LAYERS>` layers. For example, use `cargo run --release --example chat -- --quant 32` to quantize all 32 layers.
 9. Use `-turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.
 
 ## Use in Your Project

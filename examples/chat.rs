@@ -112,14 +112,19 @@ fn load_model<'a, M>(
     data: &'a [u8],
     lora: Option<PathBuf>,
     quant: Option<usize>,
+    quant_nf4: Option<usize>,
     turbo: bool,
 ) -> Result<M>
 where
     M: Model + FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>,
 {
     let quant = quant
-        .map(|layer| (0..layer).map(|layer| (layer, Quant::Int8)).collect())
+        .map(|layer| (0..layer).map(|layer| (layer, Quant::Int8)).collect_vec())
         .unwrap_or_default();
+    let quant_nf4 = quant_nf4
+        .map(|layer| (0..layer).map(|layer| (layer, Quant::NF4)).collect_vec())
+        .unwrap_or_default();
+    let quant = quant.into_iter().chain(quant_nf4.into_iter()).collect();
     let model = ModelBuilder::new(context, data)
         .with_quant(quant)
         .with_turbo(turbo);
@@ -184,12 +189,26 @@ async fn run(cli: Cli) -> Result<()> {
 
     match info.version {
         ModelVersion::V4 => {
-            let model: v4::Model = load_model(&context, &map, cli.lora, cli.quant, cli.turbo)?;
+            let model: v4::Model = load_model(
+                &context,
+                &map,
+                cli.lora,
+                cli.quant,
+                cli.quant_nf4,
+                cli.turbo,
+            )?;
             let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer, prompt, sampler)
         }
         ModelVersion::V5 => {
-            let model: v5::Model = load_model(&context, &map, cli.lora, cli.quant, cli.turbo)?;
+            let model: v5::Model = load_model(
+                &context,
+                &map,
+                cli.lora,
+                cli.quant,
+                cli.quant_nf4,
+                cli.turbo,
+            )?;
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer, prompt, sampler)
         }
@@ -313,6 +332,8 @@ struct Cli {
     prompt: Option<PathBuf>,
     #[arg(short, long, value_name = "LAYERS")]
     quant: Option<usize>,
+    #[arg(long, value_name = "LAYERS")]
+    quant_nf4: Option<usize>,
     #[arg(short, long, action)]
     turbo: bool,
     #[command(flatten)]
