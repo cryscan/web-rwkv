@@ -14,7 +14,7 @@ struct View {
 @group(0) @binding(6) var<storage, read> input: array<vec4<u32>>;           // (B, T, C)
 @group(0) @binding(7) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, R)
 
-const BLOCK_SIZE: u32 = 128u;
+const BLOCK_SIZE: u32 = 64u;
 const NF4_BLOCK_SIZE: u32 = 64u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
@@ -51,7 +51,7 @@ fn reduce_sum(index: u32, stride: u32) {
     workgroupBarrier();
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(64, 1, 1)
 fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = source.stride.x / 8u;
     let index = invocation_id.x % BLOCK_SIZE;
@@ -89,7 +89,6 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     sketch[index] = local_sum;
     workgroupBarrier();
 
-    reduce_sum(index, 64u);
     reduce_sum(index, 32u);
     reduce_sum(index, 16u);
     reduce_sum(index, 8u);
