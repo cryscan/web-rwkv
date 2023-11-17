@@ -6,7 +6,7 @@ struct View {
 
 @group(0) @binding(1) var<uniform> source: View;                            // [R, T, B]
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
-@group(0) @binding(3) var<uniform> quant: array<vec4<f32>, 4>;
+@group(0) @binding(3) var<uniform> quant: mat4x4<f32>;
 
 @group(0) @binding(4) var<storage, read> matrix: array<u32>;                // (R, C)
 @group(0) @binding(5) var<storage, read> absmax: array<u32>;
@@ -16,24 +16,6 @@ struct View {
 
 const BLOCK_SIZE: u32 = 128u;
 const NF4_BLOCK_SIZE: u32 = 64u;
-const QUANT = array<f32, 16>(
-    -1.0,
-    -0.6961928,
-    -0.52507305,
-    -0.3949175,
-    -0.28444138,
-    -0.18477343,
-    -0.091050036,
-    0.0,
-    0.0795803,
-    0.1609302,
-    0.2461123,
-    0.33791524,
-    0.44070983,
-    0.562617,
-    0.72295684,
-    1.0,
-);
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 
@@ -57,7 +39,6 @@ fn unpack_absmax(index: u32) -> f32 {
 }
 
 fn unpack_matrix_0(v: u32) -> vec4<f32> {
-    var quant = QUANT;
     // x[0] = quant[(v >> 0u) & 0xfu];
     // x[1] = quant[(v >> 4u) & 0xfu];
     // x[2] = quant[(v >> 8u) & 0xfu];
@@ -66,16 +47,22 @@ fn unpack_matrix_0(v: u32) -> vec4<f32> {
     // x[1] = quant[(v >> 6u) & 3u][(v >> 4u) & 3u];
     // x[2] = quant[(v >> 10u) & 3u][(v >> 8u) & 3u];
     // x[3] = quant[(v >> 14u) & 3u][(v >> 12u) & 3u];
+    var q = quant;
+    let i = vec4<u32>(
+        (v & 0x0000000fu),
+        (v & 0x000000f0u) >> 4u,
+        (v & 0x00000f00u) >> 8u,
+        (v & 0x0000f000u) >> 12u,
+    );
     return vec4<f32>(
-        quant[(v & 0x0000000fu)],
-        quant[(v & 0x000000f0u) >> 4u],
-        quant[(v & 0x00000f00u) >> 8u],
-        quant[(v & 0x0000f000u) >> 12u]
+        q[i.x >> 2u][i.x & 3u],
+        q[i.y >> 2u][i.y & 3u],
+        q[i.z >> 2u][i.z & 3u],
+        q[i.w >> 2u][i.w & 3u],
     );
 }
 
 fn unpack_matrix_1(v: u32) -> vec4<f32> {
-    var quant = QUANT;
     // x[0] = quant[(v >> 16u) & 0xfu];
     // x[1] = quant[(v >> 20u) & 0xfu];
     // x[2] = quant[(v >> 24u) & 0xfu];
@@ -84,11 +71,18 @@ fn unpack_matrix_1(v: u32) -> vec4<f32> {
     // x[1] = quant[(v >> 22u) & 3u][(v >> 20u) & 3u];
     // x[2] = quant[(v >> 26u) & 3u][(v >> 24u) & 3u];
     // x[3] = quant[(v >> 30u) & 3u][(v >> 28u) & 3u];
+    var q = quant;
+    let i = vec4<u32>(
+        (v & 0x000f0000u) >> 16u,
+        (v & 0x00f00000u) >> 20u,
+        (v & 0x0f000000u) >> 24u,
+        (v & 0xf0000000u) >> 28u,
+    );
     return vec4<f32>(
-        quant[(v & 0x000f0000u) >> 16u],
-        quant[(v & 0x00f00000u) >> 20u],
-        quant[(v & 0x0f000000u) >> 24u],
-        quant[(v & 0xf0000000u) >> 28u]
+        q[i.x >> 2u][i.x & 3u],
+        q[i.y >> 2u][i.y & 3u],
+        q[i.z >> 2u][i.z & 3u],
+        q[i.w >> 2u][i.w & 3u],
     );
 }
 
@@ -129,15 +123,19 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         m[1] = unpack_matrix_0(v[1]);
         m[2] = unpack_matrix_0(v[2]);
         m[3] = unpack_matrix_0(v[3]);
-        var s = transpose(m) * unpack4x16float(x.xy);
+        m = transpose(m);
+        // var s = transpose(m) * unpack4x16float(x.xy);
+        local_sum = fma(m * unpack4x16float(x.xy), a, local_sum);
 
         m[0] = unpack_matrix_1(v[0]);
         m[1] = unpack_matrix_1(v[1]);
         m[2] = unpack_matrix_1(v[2]);
         m[3] = unpack_matrix_1(v[3]);
-        s += transpose(m) * unpack4x16float(x.zw);
+        m = transpose(m);
+        // s += transpose(m) * unpack4x16float(x.zw);
+        local_sum = fma(m * unpack4x16float(x.zw), a, local_sum);
 
-        local_sum = fma(s, a, local_sum);
+        // local_sum = fma(s, a, local_sum);
     }
     sketch[index] = local_sum;
     workgroupBarrier();

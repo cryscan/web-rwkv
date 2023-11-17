@@ -358,7 +358,7 @@ impl<'a> TensorOp<'a> {
     pub fn matmul_vec_nf4(
         matrix: &'a TensorGpu<u8, ReadWrite>,
         absmax: &'a TensorGpu<f16, ReadWrite>,
-        _quant: &'a TensorGpu<f32, Uniform>,
+        quant: &'a TensorGpu<f32, Uniform>,
         input: TensorView<'a, f16>,
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
@@ -390,10 +390,10 @@ impl<'a> TensorOp<'a> {
                     binding: 2,
                     resource: output.meta_binding(),
                 },
-                // BindGroupEntry {
-                //     binding: 3,
-                //     resource: quant.binding(),
-                // },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: quant.binding(),
+                },
                 BindGroupEntry {
                     binding: 4,
                     resource: matrix.binding(),
