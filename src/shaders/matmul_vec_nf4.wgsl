@@ -18,6 +18,7 @@ const BLOCK_SIZE: u32 = 128u;
 const NF4_BLOCK_SIZE: u32 = 64u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
+var<workgroup> q: array<vec4<f32>, 4>;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32, step: u32) -> u32 {
     let stride = view.stride.x / step;
@@ -29,27 +30,59 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
+fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
+    return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
+}
+
 fn unpack_absmax(index: u32) -> f32 {
     let i = index / (NF4_BLOCK_SIZE / 8u);              // 1 block of absmax: NF4_BLOCK_SIZE / 8u entries in matrix
     return unpack2x16float(absmax[i >> 1u])[i & 1u];
 }
 
 fn unpack_matrix_0(v: u32) -> vec4<f32> {
-    var x: vec4<f32>;
-    x[0] = quant[(v >> (2u)) & 3u][(v >> (0u)) & 3u];
-    x[1] = quant[(v >> (6u)) & 3u][(v >> (4u)) & 3u];
-    x[2] = quant[(v >> (10u)) & 3u][(v >> (8u)) & 3u];
-    x[3] = quant[(v >> (14u)) & 3u][(v >> (12u)) & 3u];
-    return x;
+    // x[0] = quant[(v >> 0u) & 0xfu];
+    // x[1] = quant[(v >> 4u) & 0xfu];
+    // x[2] = quant[(v >> 8u) & 0xfu];
+    // x[3] = quant[(v >> 12u) & 0xfu];
+    // x[0] = quant[(v >> 2u) & 3u][(v >> 0u) & 3u];
+    // x[1] = quant[(v >> 6u) & 3u][(v >> 4u) & 3u];
+    // x[2] = quant[(v >> 10u) & 3u][(v >> 8u) & 3u];
+    // x[3] = quant[(v >> 14u) & 3u][(v >> 12u) & 3u];
+    let i = vec4<u32>(
+        (v & 0x0000000fu),
+        (v & 0x000000f0u) >> 4u,
+        (v & 0x00000f00u) >> 8u,
+        (v & 0x0000f000u) >> 12u,
+    );
+    return vec4<f32>(
+        q[i.x >> 2u][i.x & 3u],
+        q[i.y >> 2u][i.y & 3u],
+        q[i.z >> 2u][i.z & 3u],
+        q[i.w >> 2u][i.w & 3u],
+    );
 }
 
 fn unpack_matrix_1(v: u32) -> vec4<f32> {
-    var x: vec4<f32>;
-    x[0] = quant[(v >> (18u)) & 3u][(v >> (16u)) & 3u];
-    x[1] = quant[(v >> (22u)) & 3u][(v >> (20u)) & 3u];
-    x[2] = quant[(v >> (26u)) & 3u][(v >> (24u)) & 3u];
-    x[3] = quant[(v >> (30u)) & 3u][(v >> (28u)) & 3u];
-    return x;
+    // x[0] = quant[(v >> 16u) & 0xfu];
+    // x[1] = quant[(v >> 20u) & 0xfu];
+    // x[2] = quant[(v >> 24u) & 0xfu];
+    // x[3] = quant[(v >> 28u) & 0xfu];
+    // x[0] = quant[(v >> 18u) & 3u][(v >> 16u) & 3u];
+    // x[1] = quant[(v >> 22u) & 3u][(v >> 20u) & 3u];
+    // x[2] = quant[(v >> 26u) & 3u][(v >> 24u) & 3u];
+    // x[3] = quant[(v >> 30u) & 3u][(v >> 28u) & 3u];
+    let i = vec4<u32>(
+        (v & 0x000f0000u) >> 16u,
+        (v & 0x00f00000u) >> 20u,
+        (v & 0x0f000000u) >> 24u,
+        (v & 0xf0000000u) >> 28u,
+    );
+    return vec4<f32>(
+        q[i.x >> 2u][i.x & 3u],
+        q[i.y >> 2u][i.y & 3u],
+        q[i.z >> 2u][i.z & 3u],
+        q[i.w >> 2u][i.w & 3u],
+    );
 }
 
 fn reduce_sum(index: u32, stride: u32) {
@@ -70,27 +103,43 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let bb = compute_index(source, batch, token, 0u, 8u);
     let cb = channel * 4u * stride;
 
+    if index == 0u {
+        q = quant;
+    }
+    workgroupBarrier();
+
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-        let bti = bb + i;
-        var ci = cb + i;
-
         // read 4 rows from the matrix, each with 4x2 unpacked floats, forming 2 4x4 sub-blocks
-        var v: u32;
+        var ci = cb + i;
+        var v: vec4<u32>;
         var a: vec4<f32>;
-        var m: mat4x4<f32>;
-        var n: mat4x4<f32>;
-        v = matrix[ci]; a[0] = unpack_absmax(ci); m[0] = unpack_matrix_0(v); n[0] = unpack_matrix_1(v); ci += stride;
-        v = matrix[ci]; a[1] = unpack_absmax(ci); m[1] = unpack_matrix_0(v); n[1] = unpack_matrix_1(v); ci += stride;
-        v = matrix[ci]; a[2] = unpack_absmax(ci); m[2] = unpack_matrix_0(v); n[2] = unpack_matrix_1(v); ci += stride;
-        v = matrix[ci]; a[3] = unpack_absmax(ci); m[3] = unpack_matrix_0(v); n[3] = unpack_matrix_1(v);
+        v[0] = matrix[ci]; a[0] = unpack_absmax(ci); ci += stride;
+        v[1] = matrix[ci]; a[1] = unpack_absmax(ci); ci += stride;
+        v[2] = matrix[ci]; a[2] = unpack_absmax(ci); ci += stride;
+        v[3] = matrix[ci]; a[3] = unpack_absmax(ci);
 
         // read 8 elements from the input
-        let u = input[bti];
-        let x = unpack4x16float(u.xy);
-        let y = unpack4x16float(u.zw);
+        let x = input[bb + i];
 
-        local_sum = fma(transpose(m) * x + transpose(n) * y, a, local_sum);
+        var m: mat4x4<f32>;
+        m[0] = unpack_matrix_0(v[0]);
+        m[1] = unpack_matrix_0(v[1]);
+        m[2] = unpack_matrix_0(v[2]);
+        m[3] = unpack_matrix_0(v[3]);
+        m = transpose(m);
+        // var s = transpose(m) * unpack4x16float(x.xy);
+        local_sum = fma(m * unpack4x16float(x.xy), a, local_sum);
+
+        m[0] = unpack_matrix_1(v[0]);
+        m[1] = unpack_matrix_1(v[1]);
+        m[2] = unpack_matrix_1(v[2]);
+        m[3] = unpack_matrix_1(v[3]);
+        m = transpose(m);
+        // s += transpose(m) * unpack4x16float(x.zw);
+        local_sum = fma(m * unpack4x16float(x.zw), a, local_sum);
+
+        // local_sum = fma(s, a, local_sum);
     }
     sketch[index] = local_sum;
     workgroupBarrier();
