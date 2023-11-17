@@ -6,7 +6,7 @@ struct View {
 
 @group(0) @binding(1) var<uniform> source: View;                            // [R, T, B]
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
-@group(0) @binding(3) var<uniform> quant: mat4x4<f32>;
+@group(0) @binding(3) var<uniform> quant: array<vec4<f32>, 4>;
 
 @group(0) @binding(4) var<storage, read> matrix: array<u32>;                // (R, C)
 @group(0) @binding(5) var<storage, read> absmax: array<u32>;
@@ -18,6 +18,7 @@ const BLOCK_SIZE: u32 = 128u;
 const NF4_BLOCK_SIZE: u32 = 64u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
+var<workgroup> q: array<vec4<f32>, 4>;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32, step: u32) -> u32 {
     let stride = view.stride.x / step;
@@ -38,7 +39,7 @@ fn unpack_absmax(index: u32) -> f32 {
     return unpack2x16float(absmax[i >> 1u])[i & 1u];
 }
 
-fn unpack_matrix_0(v: u32, quant: mat4x4<f32>) -> vec4<f32> {
+fn unpack_matrix_0(v: u32) -> vec4<f32> {
     // x[0] = quant[(v >> 0u) & 0xfu];
     // x[1] = quant[(v >> 4u) & 0xfu];
     // x[2] = quant[(v >> 8u) & 0xfu];
@@ -47,7 +48,6 @@ fn unpack_matrix_0(v: u32, quant: mat4x4<f32>) -> vec4<f32> {
     // x[1] = quant[(v >> 6u) & 3u][(v >> 4u) & 3u];
     // x[2] = quant[(v >> 10u) & 3u][(v >> 8u) & 3u];
     // x[3] = quant[(v >> 14u) & 3u][(v >> 12u) & 3u];
-    var q = quant;
     let i = vec4<u32>(
         (v & 0x0000000fu),
         (v & 0x000000f0u) >> 4u,
@@ -62,7 +62,7 @@ fn unpack_matrix_0(v: u32, quant: mat4x4<f32>) -> vec4<f32> {
     );
 }
 
-fn unpack_matrix_1(v: u32, quant: mat4x4<f32>) -> vec4<f32> {
+fn unpack_matrix_1(v: u32) -> vec4<f32> {
     // x[0] = quant[(v >> 16u) & 0xfu];
     // x[1] = quant[(v >> 20u) & 0xfu];
     // x[2] = quant[(v >> 24u) & 0xfu];
@@ -71,7 +71,6 @@ fn unpack_matrix_1(v: u32, quant: mat4x4<f32>) -> vec4<f32> {
     // x[1] = quant[(v >> 22u) & 3u][(v >> 20u) & 3u];
     // x[2] = quant[(v >> 26u) & 3u][(v >> 24u) & 3u];
     // x[3] = quant[(v >> 30u) & 3u][(v >> 28u) & 3u];
-    var q = quant;
     let i = vec4<u32>(
         (v & 0x000f0000u) >> 16u,
         (v & 0x00f00000u) >> 20u,
@@ -104,7 +103,11 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let bb = compute_index(source, batch, token, 0u, 8u);
     let cb = channel * 4u * stride;
 
-    let q = quant;
+    if index == 0u {
+        q = quant;
+    }
+    workgroupBarrier();
+
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         // read 4 rows from the matrix, each with 4x2 unpacked floats, forming 2 4x4 sub-blocks
@@ -120,18 +123,18 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let x = input[bb + i];
 
         var m: mat4x4<f32>;
-        m[0] = unpack_matrix_0(v[0], q);
-        m[1] = unpack_matrix_0(v[1], q);
-        m[2] = unpack_matrix_0(v[2], q);
-        m[3] = unpack_matrix_0(v[3], q);
+        m[0] = unpack_matrix_0(v[0]);
+        m[1] = unpack_matrix_0(v[1]);
+        m[2] = unpack_matrix_0(v[2]);
+        m[3] = unpack_matrix_0(v[3]);
         m = transpose(m);
         // var s = transpose(m) * unpack4x16float(x.xy);
         local_sum = fma(m * unpack4x16float(x.xy), a, local_sum);
 
-        m[0] = unpack_matrix_1(v[0], q);
-        m[1] = unpack_matrix_1(v[1], q);
-        m[2] = unpack_matrix_1(v[2], q);
-        m[3] = unpack_matrix_1(v[3], q);
+        m[0] = unpack_matrix_1(v[0]);
+        m[1] = unpack_matrix_1(v[1]);
+        m[2] = unpack_matrix_1(v[2]);
+        m[3] = unpack_matrix_1(v[3]);
         m = transpose(m);
         // s += transpose(m) * unpack4x16float(x.zw);
         local_sum = fma(m * unpack4x16float(x.zw), a, local_sum);
