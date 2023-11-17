@@ -143,8 +143,7 @@ impl Tokenizer {
     }
 
     pub fn decode(&self, tokens: &[u16]) -> Result<Vec<u8>, TokenizerError> {
-        let mut output = Vec::new();
-        output.reserve(tokens.len());
+        let mut output = Vec::with_capacity(tokens.len());
         self.decode_into(tokens, &mut output)?;
         Ok(output)
     }
