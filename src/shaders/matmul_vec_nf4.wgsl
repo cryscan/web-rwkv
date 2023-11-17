@@ -38,7 +38,7 @@ fn unpack_absmax(index: u32) -> f32 {
     return unpack2x16float(absmax[i >> 1u])[i & 1u];
 }
 
-fn unpack_matrix_0(v: u32) -> vec4<f32> {
+fn unpack_matrix_0(v: u32, quant: mat4x4<f32>) -> vec4<f32> {
     // x[0] = quant[(v >> 0u) & 0xfu];
     // x[1] = quant[(v >> 4u) & 0xfu];
     // x[2] = quant[(v >> 8u) & 0xfu];
@@ -62,7 +62,7 @@ fn unpack_matrix_0(v: u32) -> vec4<f32> {
     );
 }
 
-fn unpack_matrix_1(v: u32) -> vec4<f32> {
+fn unpack_matrix_1(v: u32, quant: mat4x4<f32>) -> vec4<f32> {
     // x[0] = quant[(v >> 16u) & 0xfu];
     // x[1] = quant[(v >> 20u) & 0xfu];
     // x[2] = quant[(v >> 24u) & 0xfu];
@@ -104,6 +104,7 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let bb = compute_index(source, batch, token, 0u, 8u);
     let cb = channel * 4u * stride;
 
+    let q = quant;
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         // read 4 rows from the matrix, each with 4x2 unpacked floats, forming 2 4x4 sub-blocks
@@ -119,18 +120,18 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let x = input[bb + i];
 
         var m: mat4x4<f32>;
-        m[0] = unpack_matrix_0(v[0]);
-        m[1] = unpack_matrix_0(v[1]);
-        m[2] = unpack_matrix_0(v[2]);
-        m[3] = unpack_matrix_0(v[3]);
+        m[0] = unpack_matrix_0(v[0], q);
+        m[1] = unpack_matrix_0(v[1], q);
+        m[2] = unpack_matrix_0(v[2], q);
+        m[3] = unpack_matrix_0(v[3], q);
         m = transpose(m);
         // var s = transpose(m) * unpack4x16float(x.xy);
         local_sum = fma(m * unpack4x16float(x.xy), a, local_sum);
 
-        m[0] = unpack_matrix_1(v[0]);
-        m[1] = unpack_matrix_1(v[1]);
-        m[2] = unpack_matrix_1(v[2]);
-        m[3] = unpack_matrix_1(v[3]);
+        m[0] = unpack_matrix_1(v[0], q);
+        m[1] = unpack_matrix_1(v[1], q);
+        m[2] = unpack_matrix_1(v[2], q);
+        m[3] = unpack_matrix_1(v[3], q);
         m = transpose(m);
         // s += transpose(m) * unpack4x16float(x.zw);
         local_sum = fma(m * unpack4x16float(x.zw), a, local_sum);
