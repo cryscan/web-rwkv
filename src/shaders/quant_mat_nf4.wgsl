@@ -6,6 +6,8 @@
 @group(0) @binding(3) var<storage, read_write> absmax: array<f32>;          // (R, C / S)
 @group(0) @binding(4) var<storage, read_write> output: array<u32>;          // (R, C / 2)
 
+var<workgroup> q: array<f32, 16>;
+
 const BLOCK_SIZE: u32 = 128u;
 const NF4_BLOCK_SIZE: u32 = 64u;
 
@@ -15,13 +17,14 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 
 struct Input {
     @builtin(global_invocation_id) uid: vec3<u32>,
-    @builtin(num_workgroups) nb: vec3<u32>,
+    @builtin(local_invocation_id) tid: vec3<u32>,
+    @builtin(num_workgroups) b: vec3<u32>,
 };
 
 @compute @workgroup_size(128, 1, 1)
 fn compute_absmax(in: Input) {
     let step = NF4_BLOCK_SIZE / 8u;
-    let bti = in.uid.x + (BLOCK_SIZE * in.nb.x) * in.uid.y + (BLOCK_SIZE * in.nb.x * in.nb.y) * in.uid.z;
+    let bti = in.uid.x + (BLOCK_SIZE * in.b.x) * in.uid.y + (BLOCK_SIZE * in.b.x * in.b.y) * in.uid.z;
 
     var maximum = vec4<f32>(0.0);
     for (var i = 0u; i < step; i += 1u) {
@@ -35,10 +38,28 @@ fn compute_absmax(in: Input) {
     absmax[bti] = max(max(maximum[0], maximum[1]), max(maximum[2], maximum[3]));
 }
 
+struct MinPayload {
+    min_value: f32,
+    min_index: u32,
+};
+
+fn argmin(acc: MinPayload, x: MinPayload) -> MinPayload {
+    if acc.min_value < x.min_value {
+        return acc;
+    } else {
+        return x;
+    }
+}
+
 @compute @workgroup_size(128, 1, 1)
 fn quantize(in: Input) {
     let step = NF4_BLOCK_SIZE / 8u;
-    let bti = in.uid.x + (BLOCK_SIZE * in.nb.x) * in.uid.y + (BLOCK_SIZE * in.nb.x * in.nb.y) * in.uid.z;
+    let bti = in.uid.x + (BLOCK_SIZE * in.b.x) * in.uid.y + (BLOCK_SIZE * in.b.x * in.b.y) * in.uid.z;
+
+    if in.tid.x <= 16u {
+        q[in.tid.x] = quant[in.tid.x >> 2u][in.tid.x & 3u];
+    }
+    workgroupBarrier();
 
     let amp = 1.0 / absmax[bti / step];
     let v = input[bti];
@@ -48,17 +69,19 @@ fn quantize(in: Input) {
 
     var y = 0u;
     for (var i = 0u; i < 8u; i += 1u) {
-        var min_dist = 2.0;
-        var min_index = 0u;
+        var mp: MinPayload;
+        mp.min_index = 0u;
+        mp.min_value = 2.0;
         let xx = x[i >> 2u][i & 3u];
+
         for (var j = 0u; j < 16u; j += 1u) {
-            let qq = quant[j >> 2u][j & 3u];
-            if abs(qq - xx) <= min_dist {
-                min_dist = abs(qq - xx);
-                min_index = j;
-            }
+            let qq = q[j];
+            var mx: MinPayload;
+            mx.min_index = j;
+            mx.min_value = abs(qq - xx);
+            mp = argmin(mp, mx);
         }
-        y |= min_index << (i * 4u);
+        y |= mp.min_index << (i * 4u);
     }
 
     output[bti] = y;
