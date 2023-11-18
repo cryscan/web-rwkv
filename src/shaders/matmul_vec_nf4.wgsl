@@ -18,7 +18,7 @@ const BLOCK_SIZE: u32 = 128u;
 const NF4_BLOCK_SIZE: u32 = 64u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
-var<workgroup> q: array<f32, 16>;
+var<workgroup> q: array<vec4<f32>, 4>;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32, step: u32) -> u32 {
     let stride = view.stride.x / step;
@@ -48,11 +48,17 @@ fn unpack_matrix_0(v: u32) -> vec4<f32> {
     // x[1] = quant[(v >> 6u) & 3u][(v >> 4u) & 3u];
     // x[2] = quant[(v >> 10u) & 3u][(v >> 8u) & 3u];
     // x[3] = quant[(v >> 14u) & 3u][(v >> 12u) & 3u];
+    let i = vec4<u32>(
+        (v & 0x0000000fu),
+        (v & 0x000000f0u) >> 4u,
+        (v & 0x00000f00u) >> 8u,
+        (v & 0x0000f000u) >> 12u,
+    );
     return vec4<f32>(
-        q[(v & 0x0000000fu)],
-        q[(v & 0x000000f0u) >> 4u],
-        q[(v & 0x00000f00u) >> 8u],
-        q[(v & 0x0000f000u) >> 12u],
+        q[i.x >> 2u][i.x & 3u],
+        q[i.y >> 2u][i.y & 3u],
+        q[i.z >> 2u][i.z & 3u],
+        q[i.w >> 2u][i.w & 3u],
     );
 }
 
@@ -65,11 +71,17 @@ fn unpack_matrix_1(v: u32) -> vec4<f32> {
     // x[1] = quant[(v >> 22u) & 3u][(v >> 20u) & 3u];
     // x[2] = quant[(v >> 26u) & 3u][(v >> 24u) & 3u];
     // x[3] = quant[(v >> 30u) & 3u][(v >> 28u) & 3u];
+    let i = vec4<u32>(
+        (v & 0x000f0000u) >> 16u,
+        (v & 0x00f00000u) >> 20u,
+        (v & 0x0f000000u) >> 24u,
+        (v & 0xf0000000u) >> 28u,
+    );
     return vec4<f32>(
-        q[(v & 0x000f0000u) >> 16u],
-        q[(v & 0x00f00000u) >> 20u],
-        q[(v & 0x0f000000u) >> 24u],
-        q[(v & 0xf0000000u) >> 28u],
+        q[i.x >> 2u][i.x & 3u],
+        q[i.y >> 2u][i.y & 3u],
+        q[i.z >> 2u][i.z & 3u],
+        q[i.w >> 2u][i.w & 3u],
     );
 }
 
@@ -91,8 +103,8 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let bb = compute_index(source, batch, token, 0u, 8u);
     let cb = channel * 4u * stride;
 
-    if index <= 16u {
-        q[index] = quant[index >> 2u][index & 3u];
+    if index == 0u {
+        q = quant;
     }
     workgroupBarrier();
 
