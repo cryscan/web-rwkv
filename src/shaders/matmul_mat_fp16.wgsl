@@ -67,19 +67,18 @@ fn matmul(in: Input) {
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
-            let reduce = min(32u, stride - k);
-            for (x = 0u; x < reduce; x += 1u) {
+            for (x = 0u; x < 32u; x += 1u) {
                 let aa = mat4x4<f32>(
                     unpack4x16float(sa[t.x][x]),
                     unpack4x16float(sa[t.x + 1u][x]),
                     unpack4x16float(sa[t.x + 2u][x]),
-                    unpack4x16float(sa[t.x + 3u][x])
+                    unpack4x16float(sa[t.x + 3u][x]),
                 );
                 let bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x]),
                     unpack4x16float(sb[t.y + 1u][x]),
                     unpack4x16float(sb[t.y + 2u][x]),
-                    unpack4x16float(sb[t.y + 3u][x])
+                    unpack4x16float(sb[t.y + 3u][x]),
                 );
                 local_sum += transpose(aa) * bb;
             }

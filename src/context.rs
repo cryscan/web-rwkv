@@ -232,6 +232,12 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
+            "matmul_mat_nf4",
+            include_str!("shaders/matmul_mat_nf4.wgsl"),
+            "matmul",
+            None,
+        )
+        .with_pipeline(
             "token_shift",
             include_str!("shaders/token_shift.wgsl"),
             "token_shift",

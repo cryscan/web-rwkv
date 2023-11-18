@@ -6,7 +6,7 @@ struct View {
 
 @group(0) @binding(1) var<uniform> source: View;                            // [R, T, B]
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
-@group(0) @binding(3) var<uniform> quant: array<vec4<f32>, 4>;
+@group(0) @binding(3) var<uniform> quant: array<vec4<f32>, 4u>;
 
 @group(0) @binding(4) var<storage, read> matrix: array<u32>;                // (R, C)
 @group(0) @binding(5) var<storage, read> absmax: array<u32>;
@@ -18,7 +18,7 @@ const BLOCK_SIZE: u32 = 128u;
 const NF4_BLOCK_SIZE: u32 = 64u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
-var<workgroup> q: array<vec4<f32>, 4>;
+var<workgroup> q: array<vec4<f32>, 4u>;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32, step: u32) -> u32 {
     let stride = view.stride.x / step;
@@ -40,14 +40,6 @@ fn unpack_absmax(index: u32) -> f32 {
 }
 
 fn unpack_matrix_0(v: u32) -> vec4<f32> {
-    // x[0] = quant[(v >> 0u) & 0xfu];
-    // x[1] = quant[(v >> 4u) & 0xfu];
-    // x[2] = quant[(v >> 8u) & 0xfu];
-    // x[3] = quant[(v >> 12u) & 0xfu];
-    // x[0] = quant[(v >> 2u) & 3u][(v >> 0u) & 3u];
-    // x[1] = quant[(v >> 6u) & 3u][(v >> 4u) & 3u];
-    // x[2] = quant[(v >> 10u) & 3u][(v >> 8u) & 3u];
-    // x[3] = quant[(v >> 14u) & 3u][(v >> 12u) & 3u];
     let i = vec4<u32>(
         (v & 0x0000000fu),
         (v & 0x000000f0u) >> 4u,
@@ -63,14 +55,6 @@ fn unpack_matrix_0(v: u32) -> vec4<f32> {
 }
 
 fn unpack_matrix_1(v: u32) -> vec4<f32> {
-    // x[0] = quant[(v >> 16u) & 0xfu];
-    // x[1] = quant[(v >> 20u) & 0xfu];
-    // x[2] = quant[(v >> 24u) & 0xfu];
-    // x[3] = quant[(v >> 28u) & 0xfu];
-    // x[0] = quant[(v >> 18u) & 3u][(v >> 16u) & 3u];
-    // x[1] = quant[(v >> 22u) & 3u][(v >> 20u) & 3u];
-    // x[2] = quant[(v >> 26u) & 3u][(v >> 24u) & 3u];
-    // x[3] = quant[(v >> 30u) & 3u][(v >> 28u) & 3u];
     let i = vec4<u32>(
         (v & 0x000f0000u) >> 16u,
         (v & 0x00f00000u) >> 20u,

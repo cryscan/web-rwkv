@@ -424,6 +424,8 @@ impl<'a> TensorOp<'a> {
     /// - `matrix` shape: `[K, M, B]`.
     /// - `input` shape: `[K, N, B]`.
     /// - `output` shape: `[M, N, B]`.
+    ///
+    /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
     pub fn matmul_mat_fp16(
         matrix: TensorView<'a, f16>,
         input: TensorView<'a, f16>,
@@ -481,6 +483,8 @@ impl<'a> TensorOp<'a> {
     /// - `matrix` shape: `[K, M, B]`.
     /// - `input` shape: `[K, N, B]`.
     /// - `output` shape: `[M, N, B]`.
+    ///
+    /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
     pub fn matmul_mat_int8(
         matrix: TensorView<'a, u8>,
         mx: &'a TensorGpu<f32, ReadWrite>,
@@ -542,6 +546,75 @@ impl<'a> TensorOp<'a> {
                 },
                 BindGroupEntry {
                     binding: 9,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::round(Self::round(shape[0] as u32, 4), 8),
+                Self::round(Self::round(shape[1] as u32, 4), 8),
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    /// NFloat4 matrix-matrix multiplication.
+    /// - `matrix` shape: `[K, M, B]`.
+    /// - `input` shape: `[K, N, B]`.
+    /// - `output` shape: `[M, N, B]`.
+    ///
+    /// Note: `K` must be multiples of 256; `M` and `N` must be multiples of 8.
+    pub fn matmul_mat_nf4(
+        matrix: TensorView<'a, u8>,
+        quant: &'a TensorGpu<f32, Uniform>,
+        absmax: &'a TensorGpu<f16, ReadWrite>,
+        input: TensorView<'a, f16>,
+        output: TensorView<'a, f32>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
+        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
+
+        let context = &output.tensor.context;
+        let pipeline = context.pipeline("matmul_mat_nf4")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: matrix.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: input.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: quant.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: absmax.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: matrix.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
                     resource: output.binding(),
                 },
             ],
@@ -1673,7 +1746,7 @@ mod tests {
 
         const C: usize = 2560;
         const R: usize = 2048;
-        const T: usize = 31;
+        const T: usize = 64;
 
         fn normal() -> f32 {
             let u = fastrand::f32();
@@ -1782,6 +1855,31 @@ mod tests {
 
         let output_host = TensorCpu::from(output_map);
         let output_host = Vec::from(output_host);
+
+        // let ops = TensorOp::List(vec![
+        //     TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
+        //     TensorOp::matmul_mat_nf4(
+        //         matrix_u4_dev.view(.., .., .., ..)?,
+        //         &quant_dev,
+        //         &absmax_dev,
+        //         input_dev.view(.., .., .., ..)?,
+        //         output_dev.view(.., .., .., ..)?,
+        //     )?,
+        // ]);
+
+        // let mut encoder = context
+        //     .device
+        //     .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        // let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        // pass.execute_tensor_op(&ops);
+        // drop(pass);
+
+        // encoder.copy_tensor(&output_dev, &output_map)?;
+        // context.queue.submit(Some(encoder.finish()));
+
+        // let output_host = TensorCpu::from(output_map);
+        // let output_host = Vec::from(output_host);
 
         context.device.poll(wgpu::MaintainBase::Wait);
 
