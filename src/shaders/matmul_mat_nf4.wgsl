@@ -111,7 +111,7 @@ fn matmul(in: Input) {
         }
         if in.index < 32u {
             let y = b.x + i;
-            a[y] = unpack4x16float(absmax[compute_index(va, in.uid.z, y, x, 4u) / (NF4_BLOCK_SIZE / 8u) / 2u]);
+            a[y] = unpack4x16float(absmax[compute_index(va, in.uid.z, y, k, 4u) / (NF4_BLOCK_SIZE / 4u)]);
         }
         workgroupBarrier();
 
