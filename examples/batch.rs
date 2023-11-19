@@ -293,7 +293,8 @@ where
         {
             if num_tokens[index] > 0 {
                 let token = sample(probs.to_vec(), 0.5);
-                let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+                let decoded = tokenizer.decode(&[token])?;
+                let word = String::from_utf8_lossy(&decoded);
                 tokens[index] = vec![token];
                 prompts[index].push_str(&word);
                 num_tokens[index] -= 1;

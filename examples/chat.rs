@@ -301,7 +301,8 @@ where
             let probs = model.softmax(logits)?;
             if let Some(probs) = &probs[0] {
                 let token = sampler.sample(probs);
-                let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+                let decoded = tokenizer.decode(&[token])?;
+                let word = String::from_utf8_lossy(&decoded);
 
                 model_text += &word;
                 print!("{}", word);

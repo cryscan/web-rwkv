@@ -189,7 +189,8 @@ where
 
         if let Some(probs) = &probs[0] {
             let token = sample(probs, 0.5);
-            let word = String::from_utf8(tokenizer.decode(&[token])?)?;
+            let decoded = tokenizer.decode(&[token])?;
+            let word = String::from_utf8_lossy(&decoded);
             print!("{}", word);
             tokens[0] = vec![token];
         }
