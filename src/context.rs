@@ -286,7 +286,12 @@ impl<'a> ContextBuilder<'a> {
                 "blend_lora",
                 None,
             )
-            .with_pipeline("half", include_str!("shaders/discount.wgsl"), "half", None)
+            .with_pipeline(
+                "half",
+                include_str!("shaders/discount.wgsl"),
+                "discount_half",
+                None,
+            )
     }
 
     fn with_quant_pipelines(self) -> Self {

@@ -18,7 +18,7 @@ fn discount(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 }
 
 @compute @workgroup_size(128, 1, 1)
-fn half(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+fn discount_half(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
     let token = invocation_id.y;
