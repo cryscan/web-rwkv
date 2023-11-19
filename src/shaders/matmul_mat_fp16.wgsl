@@ -45,9 +45,9 @@ fn matmul(in: Input) {
     var local_sum: mat4x4<f32>;
     for (var k = 0u; k < stride; k += 32u) {
         // load 8x4 rows from each of the matrix, each with 32x4 columns
-        var x = k + i;
         for (var j = 0u; j < 32u; j += 1u) {
             if in.index < 32u {
+                let x = k + i;
                 let y = b.x + j;
                 if all(vec2<u32>(x, y) < ra) {
                     sa[j][i] = xa[compute_index(va, in.uid.z, y, x)];
@@ -55,6 +55,7 @@ fn matmul(in: Input) {
                     sa[j][i] = vec2<u32>(0u);
                 }
             } else {
+                let x = k + i;
                 let y = b.y + j;
                 if all(vec2<u32>(x, y) < rb) {
                     sb[j][i] = xb[compute_index(vb, in.uid.z, y, x)];
@@ -67,7 +68,7 @@ fn matmul(in: Input) {
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
-            for (x = 0u; x < 32u; x += 1u) {
+            for (var x = 0u; x < 32u; x += 1u) {
                 let aa = mat4x4<f32>(
                     unpack4x16float(sa[t.x][x]),
                     unpack4x16float(sa[t.x + 1u][x]),

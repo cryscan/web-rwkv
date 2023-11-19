@@ -26,7 +26,6 @@ const NF4_BLOCK_SIZE: u32 = 64u;
 var<workgroup> sa: array<array<u32, 32u>, 32u>;
 var<workgroup> sb: array<array<vec4<u32>, 32u>, 32u>;
 var<workgroup> q: array<vec4<f32>, 4u>;
-var<workgroup> a: array<vec4<f32>, 32u>;
 
 fn compute_index(view: View, z: u32, y: u32, x: u32, step: u32) -> u32 {
     let stride = view.stride.x / step;
@@ -41,6 +40,11 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
     return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
 }
+
+// fn unpack_absmax(index: u32) -> f32 {
+//     let i = index / (NF4_BLOCK_SIZE / 8u);              // 1 block of absmax: NF4_BLOCK_SIZE / 8u entries in matrix
+//     return unpack2x16float(absmax[i >> 1u])[i & 1u];
+// }
 
 fn unpack_matrix_0(v: u32) -> vec4<f32> {
     let i = vec4<u32>(
@@ -91,16 +95,17 @@ fn matmul(in: Input) {
     for (var k = 0u; k < stride; k += 32u) {
         // load 8x4 rows from each of the matrix, each with 32x8 columns
         // also, load 32 rows / 4 columes of absmax
-        var x = k + i;
         for (var j = 0u; j < 32u; j += 1u) {
             if in.index < 32u {
+                let x = k + i;
                 let y = b.x + j;
                 if all(vec2<u32>(x, y) < ra) {
                     sa[j][i] = xa[compute_index(va, in.uid.z, y, x, 4u)];
                 } else {
-                    sa[j][i] = 0u;
+                    sa[j][i] = 0x77777777u;
                 }
             } else {
+                let x = k + i;
                 let y = b.y + j;
                 if all(vec2<u32>(x, y) < rb) {
                     sb[j][i] = xb[compute_index(vb, in.uid.z, y, x, 8u)];
@@ -109,21 +114,19 @@ fn matmul(in: Input) {
                 }
             }
         }
-        if in.index < 32u {
-            let y = b.x + i;
-            a[y] = unpack4x16float(absmax[compute_index(va, in.uid.z, y, k, 4u) / (NF4_BLOCK_SIZE / 4u)]);
-        }
         workgroupBarrier();
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
-            for (x = 0u; x < 32u; x += 1u) {
-                let vva = vec4<f32>(
-                    a[t.x][x / (NF4_BLOCK_SIZE / 8u)],
-                    a[t.x + 1u][x / (NF4_BLOCK_SIZE / 8u)],
-                    a[t.x + 2u][x / (NF4_BLOCK_SIZE / 8u)],
-                    a[t.x + 3u][x / (NF4_BLOCK_SIZE / 8u)],
-                );
+            let ai = compute_index(va, in.uid.z, u.x, k, 4u);
+            let a = array<vec4<f32>, 4>(
+                unpack4x16float(absmax[ai / (NF4_BLOCK_SIZE / 2u)]),
+                unpack4x16float(absmax[(ai + stride) / (NF4_BLOCK_SIZE / 2u)]),
+                unpack4x16float(absmax[(ai + stride * 2u) / (NF4_BLOCK_SIZE / 2u)]),
+                unpack4x16float(absmax[(ai + stride * 3u) / (NF4_BLOCK_SIZE / 2u)]),
+            );
+
+            for (var x = 0u; x < 32u; x += 1u) {
                 let ssa = vec4<u32>(
                     sa[t.x][x],
                     sa[t.x + 1u][x],
@@ -132,10 +135,10 @@ fn matmul(in: Input) {
                 );
 
                 var aa = mat4x4<f32>(
-                    vva[0] * unpack_matrix_0(ssa[0]),
-                    vva[1] * unpack_matrix_0(ssa[1]),
-                    vva[2] * unpack_matrix_0(ssa[2]),
-                    vva[3] * unpack_matrix_0(ssa[3]),
+                    a[0][x / (NF4_BLOCK_SIZE / 8u)] * unpack_matrix_0(ssa[0]),
+                    a[1][x / (NF4_BLOCK_SIZE / 8u)] * unpack_matrix_0(ssa[1]),
+                    a[2][x / (NF4_BLOCK_SIZE / 8u)] * unpack_matrix_0(ssa[2]),
+                    a[3][x / (NF4_BLOCK_SIZE / 8u)] * unpack_matrix_0(ssa[3]),
                 );
                 var bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x].xy),
@@ -146,10 +149,10 @@ fn matmul(in: Input) {
                 local_sum += transpose(aa) * bb;
 
                 aa = mat4x4<f32>(
-                    vva[0] * unpack_matrix_1(ssa[0]),
-                    vva[1] * unpack_matrix_1(ssa[1]),
-                    vva[2] * unpack_matrix_1(ssa[2]),
-                    vva[3] * unpack_matrix_1(ssa[3]),
+                    a[0][x / (NF4_BLOCK_SIZE / 8u)] * unpack_matrix_1(ssa[0]),
+                    a[1][x / (NF4_BLOCK_SIZE / 8u)] * unpack_matrix_1(ssa[1]),
+                    a[2][x / (NF4_BLOCK_SIZE / 8u)] * unpack_matrix_1(ssa[2]),
+                    a[3][x / (NF4_BLOCK_SIZE / 8u)] * unpack_matrix_1(ssa[3]),
                 );
                 bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x].zw),

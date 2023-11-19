@@ -19,8 +19,8 @@ pub enum Matrix {
     },
     NF4 {
         w: Box<TensorGpu<u8, ReadWrite>>,
-        m: Box<TensorGpu<f16, ReadWrite>>,
         q: Box<TensorGpu<f32, Uniform>>,
+        m: Box<TensorGpu<f16, ReadWrite>>,
     },
 }
 
@@ -36,9 +36,9 @@ impl Matrix {
             Matrix::Int8 { w, mx, rx, my, ry } => {
                 TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
             }
-            Matrix::NF4 { w, m, q } => Ok(TensorOp::List(vec![
+            Matrix::NF4 { w, q, m } => Ok(TensorOp::List(vec![
                 TensorOp::quantize_fp16(input.tensor, half.tensor)?,
-                TensorOp::matmul_vec_nf4(w, m, q, half, output)?,
+                TensorOp::matmul_vec_nf4(w, q, m, half, output)?,
             ])),
         }
     }
@@ -58,9 +58,9 @@ impl Matrix {
                 TensorOp::quantize_fp16(input.tensor, half.tensor)?,
                 TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, half, output)?,
             ])),
-            Matrix::NF4 { w, m, q } => Ok(TensorOp::List(vec![
+            Matrix::NF4 { w, q, m } => Ok(TensorOp::List(vec![
                 TensorOp::quantize_fp16(input.tensor, half.tensor)?,
-                TensorOp::matmul_vec_nf4(w, m, q, half, output)?,
+                TensorOp::matmul_mat_nf4(w.view(.., .., .., ..)?, q, m, half, output)?,
             ])),
         }
     }
@@ -150,6 +150,6 @@ impl Matrix {
         context.queue.submit(Some(encoder.finish()));
         matrix.destroy();
 
-        Ok(Matrix::NF4 { w, m, q })
+        Ok(Matrix::NF4 { w, q, m })
     }
 }

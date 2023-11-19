@@ -92,13 +92,13 @@ impl<'a> TensorOp<'a> {
     pub const NF4_BLOCK_SIZE: usize = 64;
 
     #[inline]
-    fn round(x: u32, div: u32) -> u32 {
+    fn ceil(x: u32, div: u32) -> u32 {
         (x + div - 1) / div
     }
 
     #[inline]
     fn block_count(x: u32) -> u32 {
-        Self::round(x, Self::BLOCK_SIZE)
+        Self::ceil(x, Self::BLOCK_SIZE)
     }
 
     /// Softmax operator applied on `x`.
@@ -357,8 +357,8 @@ impl<'a> TensorOp<'a> {
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_vec_nf4(
         matrix: &'a TensorGpu<u8, ReadWrite>,
-        absmax: &'a TensorGpu<f16, ReadWrite>,
         quant: &'a TensorGpu<f32, Uniform>,
+        absmax: &'a TensorGpu<f16, ReadWrite>,
         input: TensorView<'a, f16>,
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
@@ -472,8 +472,8 @@ impl<'a> TensorOp<'a> {
             pipeline,
             bindings,
             dispatch: [
-                Self::round(Self::round(shape[0] as u32, 4), 8),
-                Self::round(Self::round(shape[1] as u32, 4), 8),
+                Self::ceil(Self::ceil(shape[0] as u32, 4), 8),
+                Self::ceil(Self::ceil(shape[1] as u32, 4), 8),
                 shape[2] as u32,
             ],
         })
@@ -555,8 +555,8 @@ impl<'a> TensorOp<'a> {
             pipeline,
             bindings,
             dispatch: [
-                Self::round(Self::round(shape[0] as u32, 4), 8),
-                Self::round(Self::round(shape[1] as u32, 4), 8),
+                Self::ceil(Self::ceil(shape[0] as u32, 4), 8),
+                Self::ceil(Self::ceil(shape[1] as u32, 4), 8),
                 shape[2] as u32,
             ],
         })
@@ -624,8 +624,8 @@ impl<'a> TensorOp<'a> {
             pipeline,
             bindings,
             dispatch: [
-                Self::round(Self::round(shape[0] as u32, 4), 8),
-                Self::round(Self::round(shape[1] as u32, 4), 8),
+                Self::ceil(Self::ceil(shape[0] as u32, 4), 8),
+                Self::ceil(Self::ceil(shape[1] as u32, 4), 8),
                 shape[2] as u32,
             ],
         })
@@ -880,7 +880,7 @@ impl<'a> TensorOp<'a> {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::round(dim as u32 / 4, 32), 1, 1],
+            dispatch: [Self::ceil(dim as u32 / 4, 32), 1, 1],
         })
     }
 
@@ -1152,8 +1152,8 @@ impl<'a> TensorOp<'a> {
             pipeline,
             bindings,
             dispatch: [
-                Self::round(Self::round(shape[0] as u32, 4), 8),
-                Self::round(Self::round(shape[1] as u32, 4), 8),
+                Self::ceil(Self::ceil(shape[0] as u32, 4), 8),
+                Self::ceil(Self::ceil(shape[1] as u32, 4), 8),
                 shape[2] as u32,
             ],
         })
@@ -1831,35 +1831,10 @@ mod tests {
         let output_dev: TensorGpu<f32, _> = TensorGpu::init(&context, output_shape);
         let output_map = TensorGpu::init(&context, output_shape);
 
-        let ops = TensorOp::List(vec![
-            TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
-            TensorOp::matmul_vec_nf4(
-                &matrix_u4_dev,
-                &absmax_dev,
-                &quant_dev,
-                input_dev.view(.., .., .., ..)?,
-                output_dev.view(.., .., .., ..)?,
-            )?,
-        ]);
-
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
-
-        encoder.copy_tensor(&output_dev, &output_map)?;
-        context.queue.submit(Some(encoder.finish()));
-
-        let output_host = TensorCpu::from(output_map);
-        let output_host = Vec::from(output_host);
-
         // let ops = TensorOp::List(vec![
         //     TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
-        //     TensorOp::matmul_mat_nf4(
-        //         matrix_u4_dev.view(.., .., .., ..)?,
+        //     TensorOp::matmul_vec_nf4(
+        //         &matrix_u4_dev,
         //         &quant_dev,
         //         &absmax_dev,
         //         input_dev.view(.., .., .., ..)?,
@@ -1880,6 +1855,31 @@ mod tests {
 
         // let output_host = TensorCpu::from(output_map);
         // let output_host = Vec::from(output_host);
+
+        let ops = TensorOp::List(vec![
+            TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
+            TensorOp::matmul_mat_nf4(
+                matrix_u4_dev.view(.., .., .., ..)?,
+                &quant_dev,
+                &absmax_dev,
+                input_dev.view(.., .., .., ..)?,
+                output_dev.view(.., .., .., ..)?,
+            )?,
+        ]);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&ops);
+        drop(pass);
+
+        encoder.copy_tensor(&output_dev, &output_map)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let output_host = TensorCpu::from(output_map);
+        let output_host = Vec::from(output_host);
 
         context.device.poll(wgpu::MaintainBase::Wait);
 
