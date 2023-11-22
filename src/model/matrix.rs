@@ -65,7 +65,7 @@ impl Matrix {
         }
     }
 
-    pub fn quant_u8(matrix: TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn quant_u8(matrix: &TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
         let context = &matrix.context;
         let shape = matrix.shape();
 
@@ -81,7 +81,7 @@ impl Matrix {
         let my = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
         let ry = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
 
-        let op = TensorOp::quantize_mat_int8(&matrix, &mx, &rx, &my, &ry, &w)?;
+        let op = TensorOp::quantize_mat_int8(matrix, &mx, &rx, &my, &ry, &w)?;
 
         // ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
         // ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
@@ -97,12 +97,11 @@ impl Matrix {
         drop(pass);
 
         context.queue.submit(Some(encoder.finish()));
-        matrix.destroy();
 
         Ok(Matrix::Int8 { w, mx, rx, my, ry })
     }
 
-    pub fn quant_nf4(matrix: TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn quant_nf4(matrix: &TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
         let context = &matrix.context;
         let shape = matrix.shape();
 
@@ -137,7 +136,7 @@ impl Matrix {
         let w = Box::new(context.tensor_init(matrix_shape));
         let m = Box::new(context.tensor_init(absmax_shape));
 
-        let op = TensorOp::quantize_mat_nf4(&matrix, &q, &m, &w)?;
+        let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
 
         let mut encoder = context
             .device
@@ -148,7 +147,6 @@ impl Matrix {
         drop(pass);
 
         context.queue.submit(Some(encoder.finish()));
-        matrix.destroy();
 
         Ok(Matrix::NF4 { w, q, m })
     }

@@ -948,6 +948,44 @@ impl<'a> FromBuilder for Model<'a> {
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
 
+        let matrix_f16_cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(0);
+        let load_matrix = |name: String, quant: Quant| -> Result<Matrix> {
+            match quant {
+                Quant::None => Ok(Matrix::Fp16(loader.load_matrix_f16(name)?)),
+                Quant::Int8 => {
+                    let shape = loader.tensor_shape(&name)?;
+                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    loader.load_in_place_matrix_f16(&buffer, &name)?;
+                    Ok(Matrix::quant_u8(&buffer)?)
+                }
+                Quant::NF4 => {
+                    let shape = loader.tensor_shape(&name)?;
+                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    loader.load_in_place_matrix_f16(&buffer, &name)?;
+                    Ok(Matrix::quant_nf4(&buffer)?)
+                }
+            }
+        };
+        let load_matrix_discount = |name: String, quant: Quant, discount: f32| -> Result<Matrix> {
+            match quant {
+                Quant::None => Ok(Matrix::Fp16(
+                    loader.load_matrix_f16_discount(name, discount)?,
+                )),
+                Quant::Int8 => {
+                    let shape = loader.tensor_shape(&name)?;
+                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
+                    Ok(Matrix::quant_u8(&buffer)?)
+                }
+                Quant::NF4 => {
+                    let shape = loader.tensor_shape(&name)?;
+                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
+                    Ok(Matrix::quant_nf4(&buffer)?)
+                }
+            }
+        };
+
         let layers = (0..info.num_layer)
             .map(|layer| {
                 let quant = quant.get(&layer).copied().unwrap_or_default();
@@ -969,13 +1007,6 @@ impl<'a> FromBuilder for Model<'a> {
                 let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r"))?;
                 let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g"))?;
 
-                let w_k = loader.load_matrix_f16(format!("{att}.key.weight"))?;
-                let w_v = loader.load_matrix_f16(format!("{att}.value.weight"))?;
-                let w_r = loader.load_matrix_f16(format!("{att}.receptance.weight"))?;
-                let w_g = loader.load_matrix_f16(format!("{att}.gate.weight"))?;
-                let w_o =
-                    loader.load_matrix_f16_discount(format!("{att}.output.weight"), discount)?;
-
                 let group_norm = LayerNorm {
                     w: loader
                         .load_vector_f16(format!("{att}.ln_x.weight"))?
@@ -995,49 +1026,19 @@ impl<'a> FromBuilder for Model<'a> {
                         )?,
                 };
 
-                let att = match quant {
-                    Quant::None => Att {
-                        time_decay,
-                        time_first,
-                        time_mix_k,
-                        time_mix_v,
-                        time_mix_r,
-                        time_mix_g,
-                        w_k: Matrix::Fp16(w_k),
-                        w_v: Matrix::Fp16(w_v),
-                        w_r: Matrix::Fp16(w_r),
-                        w_g: Matrix::Fp16(w_g),
-                        w_o: Matrix::Fp16(w_o),
-                        group_norm,
-                    },
-                    Quant::Int8 => Att {
-                        time_decay,
-                        time_first,
-                        time_mix_k,
-                        time_mix_v,
-                        time_mix_r,
-                        time_mix_g,
-                        w_k: Matrix::quant_u8(w_k)?,
-                        w_v: Matrix::quant_u8(w_v)?,
-                        w_r: Matrix::quant_u8(w_r)?,
-                        w_g: Matrix::quant_u8(w_g)?,
-                        w_o: Matrix::quant_u8(w_o)?,
-                        group_norm,
-                    },
-                    Quant::NF4 => Att {
-                        time_decay,
-                        time_first,
-                        time_mix_k,
-                        time_mix_v,
-                        time_mix_r,
-                        time_mix_g,
-                        w_k: Matrix::quant_nf4(w_k)?,
-                        w_v: Matrix::quant_nf4(w_v)?,
-                        w_r: Matrix::quant_nf4(w_r)?,
-                        w_g: Matrix::quant_nf4(w_g)?,
-                        w_o: Matrix::quant_nf4(w_o)?,
-                        group_norm,
-                    },
+                let att = Att {
+                    time_decay,
+                    time_first,
+                    time_mix_k,
+                    time_mix_v,
+                    time_mix_r,
+                    time_mix_g,
+                    w_k: load_matrix(format!("{att}.key.weight"), quant)?,
+                    w_v: load_matrix(format!("{att}.value.weight"), quant)?,
+                    w_r: load_matrix(format!("{att}.receptance.weight"), quant)?,
+                    w_g: load_matrix(format!("{att}.gate.weight"), quant)?,
+                    w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount)?,
+                    group_norm,
                 };
 
                 let ffn_layer_norm = LayerNorm {
@@ -1049,33 +1050,12 @@ impl<'a> FromBuilder for Model<'a> {
                 let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
                 let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
 
-                let w_r = loader.load_matrix_f16(format!("{ffn}.receptance.weight"))?;
-                let w_k = loader.load_matrix_f16(format!("{ffn}.key.weight"))?;
-                let w_v =
-                    loader.load_matrix_f16_discount(format!("{ffn}.value.weight"), discount)?;
-
-                let ffn = match quant {
-                    Quant::None => Ffn {
-                        time_mix_k,
-                        time_mix_r,
-                        w_k: Matrix::Fp16(w_k),
-                        w_v: Matrix::Fp16(w_v),
-                        w_r: Matrix::Fp16(w_r),
-                    },
-                    Quant::Int8 => Ffn {
-                        time_mix_k,
-                        time_mix_r,
-                        w_k: Matrix::quant_u8(w_k)?,
-                        w_v: Matrix::quant_u8(w_v)?,
-                        w_r: Matrix::quant_u8(w_r)?,
-                    },
-                    Quant::NF4 => Ffn {
-                        time_mix_k,
-                        time_mix_r,
-                        w_k: Matrix::quant_nf4(w_k)?,
-                        w_v: Matrix::quant_nf4(w_v)?,
-                        w_r: Matrix::quant_nf4(w_r)?,
-                    },
+                let ffn = Ffn {
+                    time_mix_k,
+                    time_mix_r,
+                    w_r: load_matrix(format!("{ffn}.receptance.weight"), quant)?,
+                    w_k: load_matrix(format!("{ffn}.key.weight"), quant)?,
+                    w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount)?,
                 };
 
                 context.queue.submit(None);
