@@ -43,13 +43,7 @@ impl Instance {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let _backends = backends;
-            let _selection = selection;
-            self.request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            })
+            unimplemented!()
         }
     }
 
