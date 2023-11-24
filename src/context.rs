@@ -35,9 +35,22 @@ impl Instance {
         backends: Backends,
         selection: usize,
     ) -> Result<Adapter, CreateEnvironmentError> {
-        self.enumerate_adapters(backends)
-            .nth(selection)
-            .ok_or(CreateEnvironmentError::RequestAdapterFailed)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.enumerate_adapters(backends)
+                .nth(selection)
+                .ok_or(CreateEnvironmentError::RequestAdapterFailed)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _backends = backends;
+            let _selection = selection;
+            self.request_adapter(&RequestAdapterOptions {
+                power_preference: PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+        }
     }
 
     pub async fn adapter(
