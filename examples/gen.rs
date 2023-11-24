@@ -149,7 +149,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.turbo,
             )?;
             let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
-            run_internal(model, state, tokenizer)
+            run_internal(model, state, tokenizer).await
         }
         ModelVersion::V5 => {
             let model: v5::Model = load_model(
@@ -161,12 +161,12 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.turbo,
             )?;
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
-            run_internal(model, state, tokenizer)
+            run_internal(model, state, tokenizer).await
         }
     }
 }
 
-fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer) -> Result<()>
+async fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer) -> Result<()>
 where
     S: ModelState,
     M: Model<ModelState = S>,
@@ -180,8 +180,8 @@ where
     let num_tokens = 100;
     for index in 0..=num_tokens {
         instant = Instant::now();
-        let logits = model.run(&mut tokens, &state)?;
-        let probs = model.softmax(logits)?;
+        let logits = model.run(&mut tokens, &state).await?;
+        let probs = model.softmax(logits).await?;
         duration = match index {
             0 => Duration::default(),
             _ => duration + instant.elapsed(),

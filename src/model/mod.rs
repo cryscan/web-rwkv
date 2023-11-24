@@ -1,6 +1,7 @@
 use std::{collections::HashMap, convert::Infallible};
 
 use anyhow::Result;
+use async_trait::async_trait;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
@@ -66,6 +67,7 @@ pub trait BackedState {
     fn embed(&self, batch: usize, layer: usize) -> Vec<f32>;
 }
 
+#[async_trait]
 pub trait ModelState {
     type BackedState: BackedState;
 
@@ -77,9 +79,9 @@ pub trait ModelState {
     /// Load one batch from host. The batch size the backed state should be 1.
     fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<()>;
     /// Back the entire device state to host.
-    fn back(&self) -> Self::BackedState;
+    async fn back(&self) -> Self::BackedState;
     /// Back one batch of the device state to host.
-    fn back_batch(&self, batch: usize) -> Result<Self::BackedState>;
+    async fn back_batch(&self, batch: usize) -> Result<Self::BackedState>;
     /// Copy one device state to another. Their shapes must match.
     fn blit(&self, other: &Self) -> Result<(), TensorError>;
     /// Copy one batch from the source state to another.
@@ -91,6 +93,7 @@ pub trait ModelState {
     ) -> Result<(), TensorError>;
 }
 
+#[async_trait]
 pub trait Model {
     type ModelState: ModelState;
 
@@ -98,12 +101,12 @@ pub trait Model {
     fn info(&self) -> &ModelInfo;
 
     /// Softmax of the input tensors.
-    fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>>;
+    async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>>;
 
     /// Run the model for a batch of tokens as input.
     /// The length of `tokens` must match the number of batches in `state`.
     /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
-    fn run(
+    async fn run(
         &self,
         tokens: &mut Vec<Vec<u16>>,
         state: &Self::ModelState,

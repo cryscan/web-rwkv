@@ -18,6 +18,7 @@ wgpu = "0.18"
 bytemuck = { version = "1.13", features = ["extern_crate_alloc"] }
 half = { version = "2.2", features = ["bytemuck"] }
 safetensors = "0.3.1"
+async-trait = "0.1"
 flume = "0.10"
 regex = "1.8.4"
 uid = "0.1"

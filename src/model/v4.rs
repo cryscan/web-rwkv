@@ -1,6 +1,7 @@
 use std::{convert::Infallible, sync::Arc};
 
 use anyhow::Result;
+use async_trait::async_trait;
 use half::f16;
 use itertools::Itertools;
 use web_rwkv_derive::{Deref, DerefMut};
@@ -252,6 +253,7 @@ impl FromBuilder for ModelState {
     }
 }
 
+#[async_trait]
 impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
@@ -285,7 +287,7 @@ impl super::ModelState for ModelState {
         self.0.load_batch(&host, batch).map_err(|err| err.into())
     }
 
-    fn back(&self) -> Self::BackedState {
+    async fn back(&self) -> Self::BackedState {
         let shape = self.shape();
         let map = self.context.tensor_init(shape);
 
@@ -296,14 +298,14 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor(self, &map).expect("back entire state");
         self.context.queue.submit(Some(encoder.finish()));
 
-        let host = TensorCpu::from(map);
+        let host = map.back_async().await;
         BackedState {
             shape,
             data: host.to_vec(),
         }
     }
 
-    fn back_batch(&self, batch: usize) -> Result<Self::BackedState> {
+    async fn back_batch(&self, batch: usize) -> Result<Self::BackedState> {
         if batch >= self.max_batch() {
             return Err(ModelError::BatchOutOfRange {
                 batch,
@@ -323,7 +325,7 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor_batch(self, &map, batch)?;
         self.context.queue.submit(Some(encoder.finish()));
 
-        let host = TensorCpu::from(map);
+        let host = map.back_async().await;
         Ok(BackedState {
             shape,
             data: host.to_vec(),
@@ -937,6 +939,7 @@ impl<'a> FromBuilder for Model<'a> {
     }
 }
 
+#[async_trait]
 impl super::Model for Model<'_> {
     type ModelState = ModelState;
 
@@ -950,7 +953,7 @@ impl super::Model for Model<'_> {
         &self.info
     }
 
-    fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
+    async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
         let max_batch = input.len();
 
         let mut redirect = vec![None; max_batch];
@@ -992,7 +995,11 @@ impl super::Model for Model<'_> {
         encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
         self.context.queue.submit(Some(encoder.finish()));
 
-        let mut output = TensorCpu::from(softmax.map.clone())
+        let mut output = softmax
+            .map
+            .clone()
+            .back_async()
+            .await
             .split(2)
             .expect("split buffer map")
             .into_iter()
@@ -1009,7 +1016,7 @@ impl super::Model for Model<'_> {
         Ok(probs)
     }
 
-    fn run(
+    async fn run(
         &self,
         tokens: &mut Vec<Vec<u16>>,
         state: &Self::ModelState,
@@ -1047,7 +1054,7 @@ impl super::Model for Model<'_> {
         }
 
         let (output, redirect) = self.run_internal(inputs, state, last)?;
-        let output = TensorCpu::from(output.map.clone());
+        let output = output.map.clone().back_async().await;
 
         Ok(redirect
             .into_iter()

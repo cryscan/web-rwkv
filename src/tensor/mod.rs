@@ -1,8 +1,4 @@
-use std::{
-    borrow::Cow,
-    marker::PhantomData,
-    sync::{Arc, Mutex},
-};
+use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
 use web_rwkv_derive::Kind;
@@ -443,21 +439,19 @@ impl<T: Scalar, K: Kind> From<TensorCpu<'_, T>> for TensorGpu<T, K> {
     }
 }
 
-impl<T: Scalar> From<TensorGpu<T, ReadBack>> for TensorCpu<'_, T> {
-    fn from(value: TensorGpu<T, ReadBack>) -> Self {
+impl<T: Scalar> TensorGpu<T, ReadBack> {
+    pub fn back<'a>(self) -> TensorCpu<'a, T> {
         let Tensor {
             context,
             shape,
             data: TensorBuffer { buffer, .. },
             ..
-        } = value;
+        } = self;
 
         let (sender, receiver) = flume::unbounded();
 
         let slice = buffer.slice(..);
-        slice.map_async(MapMode::Read, move |v| {
-            let _ = sender.send(v);
-        });
+        slice.map_async(MapMode::Read, move |v| sender.send(v).unwrap());
 
         context.device.poll(wgpu::MaintainBase::Wait);
         receiver.recv().unwrap().unwrap();
@@ -468,7 +462,37 @@ impl<T: Scalar> From<TensorGpu<T, ReadBack>> for TensorCpu<'_, T> {
         };
         buffer.unmap();
 
-        Self {
+        TensorCpu {
+            context,
+            shape,
+            data: Cow::from(data),
+            phantom: PhantomData,
+        }
+    }
+
+    pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
+        let Tensor {
+            context,
+            shape,
+            data: TensorBuffer { buffer, .. },
+            ..
+        } = self;
+
+        let (sender, receiver) = flume::unbounded();
+
+        let slice = buffer.slice(..);
+        slice.map_async(MapMode::Read, move |v| sender.send(v).unwrap());
+
+        context.device.poll(wgpu::MaintainBase::Wait);
+        receiver.recv_async().await.unwrap().unwrap();
+
+        let data = {
+            let map = slice.get_mapped_range();
+            Vec::from(bytemuck::cast_slice(&map))
+        };
+        buffer.unmap();
+
+        TensorCpu {
             context,
             shape,
             data: Cow::from(data),
@@ -820,60 +844,6 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
             cursors,
             // redirect,
         })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TensorBack<'a, T: Scalar> {
-    map: TensorGpu<T, ReadBack>,
-    mapped: Arc<Mutex<bool>>,
-    phantom: PhantomData<&'a T>,
-}
-
-impl<'a, T: Scalar> TensorBack<'a, T> {
-    pub fn new(map: TensorGpu<T, ReadBack>) -> Self {
-        Self {
-            map,
-            mapped: Arc::new(Mutex::new(false)),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, T: Scalar> std::future::Future for TensorBack<'a, T> {
-    type Output = TensorCpu<'a, T>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let TensorGpu {
-            context,
-            shape,
-            data: TensorBuffer { buffer, .. },
-            ..
-        } = self.map.clone();
-        let mut mapped = self.mapped.lock().unwrap();
-        let slice = buffer.slice(..);
-
-        if *mapped {
-            let data = {
-                let map = slice.get_mapped_range();
-                Vec::from(bytemuck::cast_slice(&map))
-            };
-            buffer.unmap();
-            std::task::Poll::Ready(TensorCpu {
-                context,
-                shape,
-                data: Cow::from(data),
-                phantom: PhantomData,
-            })
-        } else {
-            let waker = cx.waker().clone();
-            slice.map_async(MapMode::Read, move |_| waker.wake());
-            *mapped = true;
-            std::task::Poll::Pending
-        }
     }
 }
 

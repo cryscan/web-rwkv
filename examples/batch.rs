@@ -180,7 +180,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .with_max_batch(cli.batch)
                 .with_chunk_size(4)
                 .build();
-            run_internal(model, state, tokenizer, cli.batch)
+            run_internal(model, state, tokenizer, cli.batch).await
         }
         ModelVersion::V5 => {
             let model: v5::Model = load_model(
@@ -197,12 +197,12 @@ async fn run(cli: Cli) -> Result<()> {
                 .with_max_batch(cli.batch)
                 .with_chunk_size(4)
                 .build();
-            run_internal(model, state, tokenizer, cli.batch)
+            run_internal(model, state, tokenizer, cli.batch).await
         }
     }
 }
 
-fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer, batch: usize) -> Result<()>
+async fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer, batch: usize) -> Result<()>
 where
     S: ModelState,
     M: Model<ModelState = S>,
@@ -284,8 +284,8 @@ where
             println!("{index}: {prompt}");
         }
 
-        let logits = model.run(&mut tokens, &state)?;
-        let probs = model.softmax(logits)?;
+        let logits = model.run(&mut tokens, &state).await?;
+        let probs = model.softmax(logits).await?;
         for (index, probs) in probs
             .into_iter()
             .enumerate()

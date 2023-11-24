@@ -198,7 +198,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.turbo,
             )?;
             let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
-            run_internal(model, state, tokenizer, prompt, sampler)
+            run_internal(model, state, tokenizer, prompt, sampler).await
         }
         ModelVersion::V5 => {
             let model: v5::Model = load_model(
@@ -210,12 +210,12 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.turbo,
             )?;
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
-            run_internal(model, state, tokenizer, prompt, sampler)
+            run_internal(model, state, tokenizer, prompt, sampler).await
         }
     }
 }
 
-fn run_internal<M, S>(
+async fn run_internal<M, S>(
     model: M,
     state: S,
     tokenizer: Tokenizer,
@@ -238,14 +238,14 @@ where
 
     // run initial prompt
     loop {
-        let logits = model.run(&mut tokens, &state)?;
+        let logits = model.run(&mut tokens, &state).await?;
         if logits.iter().any(Option::is_some) {
             break;
         }
     }
     tokens[0].clear();
 
-    let mut backed = state.back();
+    let mut backed = state.back().await;
     let mut last_user_text = String::from("Hi!");
     let mut last_tokens = vec![];
 
@@ -269,7 +269,7 @@ where
             user_text = last_user_text.clone();
             tokens = last_tokens.clone();
         } else {
-            backed = state.back();
+            backed = state.back().await;
             last_user_text = user_text.clone();
             last_tokens = tokens.clone();
         }
@@ -282,7 +282,7 @@ where
 
         loop {
             let mut logits = loop {
-                let logits = model.run(&mut tokens, &state)?;
+                let logits = model.run(&mut tokens, &state).await?;
                 if logits.iter().any(Option::is_some) {
                     break logits;
                 }
@@ -298,7 +298,7 @@ where
                 }
             });
 
-            let probs = model.softmax(logits)?;
+            let probs = model.softmax(logits).await?;
             if let Some(probs) = &probs[0] {
                 let token = sampler.sample(probs);
                 let decoded = tokenizer.decode(&[token])?;
