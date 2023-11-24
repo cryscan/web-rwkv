@@ -282,7 +282,7 @@ impl FromBuilder for ModelState {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
@@ -1089,7 +1089,7 @@ impl<'a> FromBuilder for Model<'a> {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl super::Model for Model<'_> {
     type ModelState = ModelState;
 

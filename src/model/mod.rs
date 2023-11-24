@@ -67,8 +67,8 @@ pub trait BackedState {
     fn embed(&self, batch: usize, layer: usize) -> Vec<f32>;
 }
 
-#[async_trait]
-pub trait ModelState: Send + Sync {
+#[async_trait(?Send)]
+pub trait ModelState {
     type BackedState: BackedState;
 
     fn context(&self) -> &Context;
@@ -93,8 +93,8 @@ pub trait ModelState: Send + Sync {
     ) -> Result<(), TensorError>;
 }
 
-#[async_trait]
-pub trait Model: Send + Sync {
+#[async_trait(?Send)]
+pub trait Model {
     type ModelState: ModelState;
 
     fn context(&self) -> &Context;
