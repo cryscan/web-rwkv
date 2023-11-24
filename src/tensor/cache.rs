@@ -5,10 +5,10 @@ use std::{
 };
 
 #[allow(clippy::type_complexity)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResourceCache<K, V> {
     max_count: usize,
-    map: Mutex<HashMap<K, (Arc<V>, usize)>>,
+    map: Arc<Mutex<HashMap<K, (Arc<V>, usize)>>>,
 }
 
 impl<K, V> Default for ResourceCache<K, V> {

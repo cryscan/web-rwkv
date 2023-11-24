@@ -68,7 +68,7 @@ pub trait BackedState {
 }
 
 #[async_trait]
-pub trait ModelState {
+pub trait ModelState: Send + Sync {
     type BackedState: BackedState;
 
     fn context(&self) -> &Context;
@@ -94,7 +94,7 @@ pub trait ModelState {
 }
 
 #[async_trait]
-pub trait Model {
+pub trait Model: Send + Sync {
     type ModelState: ModelState;
 
     fn context(&self) -> &Context;
