@@ -452,10 +452,15 @@ impl<T: Scalar> From<TensorGpu<T, ReadBack>> for TensorCpu<'_, T> {
             ..
         } = value;
 
+        let (sender, receiver) = flume::unbounded();
+
         let slice = buffer.slice(..);
-        slice.map_async(MapMode::Read, |_| ());
+        slice.map_async(MapMode::Read, move |v| {
+            let _ = sender.send(v);
+        });
 
         context.device.poll(wgpu::MaintainBase::Wait);
+        receiver.recv().unwrap().unwrap();
 
         let data = {
             let map = slice.get_mapped_range();
