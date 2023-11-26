@@ -773,7 +773,10 @@ impl<'a> Model<'a> {
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
-                TensorOp::add(&buffer.input, &buffer.att_o)?,
+                TensorOp::add(
+                    buffer.input.view(.., .., .., ..)?,
+                    buffer.att_o.view(.., .., .., ..)?,
+                )?,
             ]);
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
@@ -849,7 +852,10 @@ impl<'a> Model<'a> {
                     &buffer.ffn_x,
                     state.ffn(index)?,
                 )?,
-                TensorOp::add(&buffer.att_o, &buffer.ffn_x)?,
+                TensorOp::add(
+                    buffer.att_o.view(.., .., .., ..)?,
+                    buffer.ffn_x.view(.., .., .., ..)?,
+                )?,
             ]);
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());

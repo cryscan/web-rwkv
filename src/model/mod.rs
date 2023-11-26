@@ -12,6 +12,7 @@ pub mod loader;
 pub mod matrix;
 pub mod v4;
 pub mod v5;
+pub mod v6;
 
 pub const RESCALE_LAYER: usize = 6;
 
@@ -19,10 +20,12 @@ pub const RESCALE_LAYER: usize = 6;
 pub enum ModelVersion {
     V4,
     V5,
+    V6,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelError {
+    InvalidVersion,
     InvalidChunkSize(usize),
     BatchSize(usize, usize),
     BatchOutOfRange { batch: usize, max: usize },
@@ -31,6 +34,7 @@ pub enum ModelError {
 impl std::fmt::Display for ModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ModelError::InvalidVersion => write!(f, "invalid model version"),
             ModelError::InvalidChunkSize(size) => write!(f, "chunk size {size} not power of 2"),
             ModelError::BatchSize(lhs, rhs) => write!(f, "input batch size {lhs} not match {rhs}"),
             ModelError::BatchOutOfRange { batch, max } => {

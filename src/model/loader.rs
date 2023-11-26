@@ -5,7 +5,7 @@ use itertools::Itertools;
 use safetensors::SafeTensors;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
-use super::{Lora, ModelInfo, ModelVersion};
+use super::{Lora, ModelError, ModelInfo, ModelVersion};
 use crate::{
     context::Context,
     tensor::{
@@ -68,9 +68,36 @@ impl<'a> Loader<'a> {
         let embed = model.tensor("emb.weight")?;
         let ffn = model.tensor("blocks.0.ffn.key.weight")?;
         let time_decay = model.tensor("blocks.0.att.time_decay")?;
-        let version = match model.tensor("blocks.0.att.gate.weight") {
-            Ok(_) => ModelVersion::V5,
-            Err(_) => ModelVersion::V4,
+
+        let v5 = [
+            "blocks.0.att.gate.weight",
+            "blocks.0.att.ln_x.weight",
+            "blocks.0.att.ln_x.bias",
+        ]
+        .into_iter()
+        .all(|name| model.tensor(name).is_ok());
+        let v6 = [
+            "blocks.0.att.time_mix_x",
+            "blocks.0.att.time_mix_w",
+            "blocks.0.att.time_mix_k",
+            "blocks.0.att.time_mix_v",
+            "blocks.0.att.time_mix_r",
+            "blocks.0.att.time_mix_g",
+            "blocks.0.att.time_mix_w1",
+            "blocks.0.att.time_mix_w2",
+            "blocks.0.att.time_decay_w1",
+            "blocks.0.att.time_decay_w2",
+            "blocks.0.ffn.time_mix_k",
+            "blocks.0.ffn.time_mix_r",
+        ]
+        .into_iter()
+        .all(|name| model.tensor(name).is_ok());
+
+        let version = match (v5, v6) {
+            (false, false) => ModelVersion::V4,
+            (true, false) => ModelVersion::V5,
+            (true, true) => ModelVersion::V6,
+            _ => return Err(ModelError::InvalidVersion.into()),
         };
 
         let num_emb = embed.shape()[1];
@@ -277,7 +304,7 @@ impl<'a> Loader<'a> {
                 .map(|x| x.to_f32())
                 .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?;
             let tensor_f32 = TensorGpu::from(tensor_f32);
-            let tensor_f16 = context.tensor_init(tensor_f32.shape());
+            let tensor_f16: TensorGpu<f16, _> = context.tensor_init(tensor_f32.shape());
 
             let mut encoder = context
                 .device
@@ -291,7 +318,10 @@ impl<'a> Loader<'a> {
                 pass.execute_tensor_op(&op);
             }
 
-            let op = TensorOp::quantize_fp16(&tensor_f32, &tensor_f16)?;
+            let op = TensorOp::quantize_fp16(
+                tensor_f32.view(.., .., .., ..)?,
+                tensor_f16.view(.., .., .., ..)?,
+            )?;
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
             pass.execute_tensor_op(&op);
             drop(pass);
@@ -303,17 +333,11 @@ impl<'a> Loader<'a> {
     }
 
     pub fn load_matrix_f16(&self, name: impl AsRef<str>) -> Result<TensorGpu<f16, ReadWrite>> {
-        use TensorDimension::{Dimension, Full};
         let context = &self.context;
         let lora = self.lora_matrices(name.as_ref());
         let tensor = self.model.tensor(name.as_ref())?;
 
-        let tensor = TensorGpu::from_safetensors(context, tensor)?.reshape(
-            Full,
-            Full,
-            Dimension(1),
-            Dimension(1),
-        )?;
+        let tensor = TensorGpu::from_safetensors(context, tensor)?;
 
         if !lora.is_empty() {
             let mut encoder = context
@@ -341,15 +365,13 @@ impl<'a> Loader<'a> {
         name: impl AsRef<str>,
         discount: f32,
     ) -> Result<TensorGpu<f16, ReadWrite>> {
-        use TensorDimension::{Dimension, Full};
         let context = &self.context;
 
         let lora = self.lora_matrices(name.as_ref());
         let tensor = self.model.tensor(name.as_ref())?;
 
         let tensor = TensorCpu::<f16>::from_safetensors(context, tensor)?
-            .map(|x| f16::from_f32(discount * x.to_f32()))
-            .reshape(Full, Full, Dimension(1), Dimension(1))?;
+            .map(|x| f16::from_f32(discount * x.to_f32()));
         let tensor = TensorGpu::from(tensor);
 
         if !lora.is_empty() {
@@ -379,17 +401,11 @@ impl<'a> Loader<'a> {
         matrix: &TensorGpu<f16, ReadWrite>,
         name: impl AsRef<str>,
     ) -> Result<()> {
-        use TensorDimension::{Dimension, Full};
         let context = &self.context;
         let lora = self.lora_matrices(name.as_ref());
         let tensor = self.model.tensor(name.as_ref())?;
 
-        let tensor = TensorCpu::from_safetensors(context, tensor)?.reshape(
-            Full,
-            Full,
-            Dimension(1),
-            Dimension(1),
-        )?;
+        let tensor = TensorCpu::from_safetensors(context, tensor)?;
         matrix.load(&tensor)?;
 
         if !lora.is_empty() {

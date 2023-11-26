@@ -633,13 +633,13 @@ impl<'a> TensorOp<'a> {
 
     /// Add `input` onto `output`.
     pub fn add(
-        input: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
+        input: TensorView<'a, f32>,
+        output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
-        let shape = output.shape;
+        let shape = output.shape();
         input.check_shape(shape)?;
 
-        let context = &output.context;
+        let context = &output.tensor.context;
         let pipeline = context.pipeline("add")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -647,14 +647,18 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.meta_binding(),
+                    resource: input.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: input.binding(),
+                    resource: output.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
                     resource: output.binding(),
                 },
             ],
@@ -908,6 +912,68 @@ impl<'a> TensorOp<'a> {
                 BindGroupEntry {
                     binding: 2,
                     resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    pub fn tanh(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+        let shape = x.shape;
+
+        let context = &x.context;
+        let pipeline = context.pipeline("tanh")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    pub fn stable_exp(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+        let shape = x.shape;
+
+        let context = &x.context;
+        let pipeline = context.pipeline("stable_exp")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
                 },
             ],
         })];
@@ -1190,6 +1256,49 @@ impl<'a> TensorOp<'a> {
         })
     }
 
+    pub fn quantize_fp16(
+        input: TensorView<'a, f32>,
+        output: TensorView<'a, f16>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        input.check_shape(shape)?;
+
+        let context = &output.tensor.context;
+        let pipeline = context.pipeline("quant_fp16")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: input.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
     pub fn quantize_mat_int8(
         input: &'a TensorGpu<f16, ReadWrite>,
         mx: &'a TensorGpu<f32, ReadWrite>,
@@ -1261,45 +1370,6 @@ impl<'a> TensorOp<'a> {
         } else {
             Ok(Self::List(vec![mx, my, rx, ry, quantize]))
         }
-    }
-
-    pub fn quantize_fp16(
-        input: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f16, ReadWrite>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape;
-        input.check_shape(shape)?;
-
-        let context = &output.context;
-        let pipeline = context.pipeline("quant_fp16")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
     }
 
     pub fn quantize_mat_nf4(
@@ -1661,12 +1731,15 @@ mod tests {
 
         let matrix_dev = context.tensor_from_data(matrix_shape, matrix.clone())?;
         let input_f32_dev = TensorGpu::from_data(&context, input_shape, input_f32.clone())?;
-        let input_f16_dev = context.tensor_init(input_shape);
+        let input_f16_dev: TensorGpu<f16, _> = context.tensor_init(input_shape);
         let output_dev = TensorGpu::init(&context, output_shape);
         let output_map = TensorGpu::init(&context, output_shape);
 
         let ops = TensorOp::List(vec![
-            TensorOp::quantize_fp16(&input_f32_dev, &input_f16_dev)?,
+            TensorOp::quantize_fp16(
+                input_f32_dev.view(.., .., .., ..)?,
+                input_f16_dev.view(.., .., .., ..)?,
+            )?,
             TensorOp::matmul_vec_fp16(
                 &matrix_dev,
                 input_f32_dev.view(.., .., .., ..)?,

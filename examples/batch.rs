@@ -199,6 +199,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .build();
             run_internal(model, state, tokenizer, cli.batch).await
         }
+        ModelVersion::V6 => todo!(),
     }
 }
 

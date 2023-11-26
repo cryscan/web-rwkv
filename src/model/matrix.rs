@@ -37,7 +37,7 @@ impl Matrix {
                 TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
             }
             Matrix::NF4 { w, q, m } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::quantize_fp16(input, half.clone())?,
                 TensorOp::matmul_vec_nf4(w, q, m, half, output)?,
             ])),
         }
@@ -51,15 +51,15 @@ impl Matrix {
     ) -> Result<TensorOp<'a>, TensorError> {
         match self {
             Matrix::Fp16(matrix) => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::quantize_fp16(input, half.clone())?,
                 TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, half, output)?,
             ])),
             Matrix::Int8 { w, mx, rx, my, ry } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::quantize_fp16(input, half.clone())?,
                 TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, half, output)?,
             ])),
             Matrix::NF4 { w, q, m } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input.tensor, half.tensor)?,
+                TensorOp::quantize_fp16(input, half.clone())?,
                 TensorOp::matmul_mat_nf4(w.view(.., .., .., ..)?, q, m, half, output)?,
             ])),
         }

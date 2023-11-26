@@ -58,5 +58,5 @@ def convert_file(pt_filename: str, sf_filename: str, transpose_names=[], rename=
 
 if __name__ == "__main__":
     convert_file(args.input, args.output, ["lora_A"], {
-                 "time_faaaa": "time_first", "lora_A": "lora.0", "lora_B": "lora.1"})
+                 "time_faaaa": "time_first", "time_maa": "time_mix", "lora_A": "lora.0", "lora_B": "lora.1"})
     print(f"Saved to {args.output}")

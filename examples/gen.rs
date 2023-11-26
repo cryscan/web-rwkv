@@ -163,6 +163,7 @@ async fn run(cli: Cli) -> Result<()> {
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer).await
         }
+        ModelVersion::V6 => todo!(),
     }
 }
 
