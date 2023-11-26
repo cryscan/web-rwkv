@@ -8,7 +8,7 @@ struct View {
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
 @group(0) @binding(3) var<uniform> quant: array<vec4<f32>, 4u>;
 
-@group(0) @binding(4) var<storage, read> matrix: array<u32>;                // (R, C)
+@group(0) @binding(4) var<storage, read> matrix: array<u32>;                // (B, R, C)
 @group(0) @binding(5) var<storage, read> absmax: array<u32>;
 
 @group(0) @binding(6) var<storage, read> input: array<vec4<u32>>;           // (B, T, C)
