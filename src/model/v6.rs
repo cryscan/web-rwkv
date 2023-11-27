@@ -118,18 +118,26 @@ struct Runtime {
     input: TensorGpu<f32, ReadWrite>,
 
     att_x: TensorGpu<f32, ReadWrite>,
+    /// Token shift LoRA intermediate, `[32, 5, T]`.
     att_xx: TensorGpu<f32, ReadWrite>,
+    /// Token shift LoRA intermediate transposed, `[32, T, 5]`.
+    att_xt: TensorGpu<f32, ReadWrite>,
+    /// Token shifted time decay input, `[C, T]`.
     att_wx: TensorGpu<f32, ReadWrite>,
     att_kx: TensorGpu<f32, ReadWrite>,
     att_vx: TensorGpu<f32, ReadWrite>,
     att_rx: TensorGpu<f32, ReadWrite>,
     att_gx: TensorGpu<f32, ReadWrite>,
+    /// Time decay LoRA intermediate, `[64, T]`.
     att_w: TensorGpu<f32, ReadWrite>,
     att_k: TensorGpu<f32, ReadWrite>,
     att_v: TensorGpu<f32, ReadWrite>,
     att_r: TensorGpu<f32, ReadWrite>,
     att_g: TensorGpu<f32, ReadWrite>,
     att_o: TensorGpu<f32, ReadWrite>,
+
+    att_time_mix: TensorGpu<f32, ReadWrite>,
+    att_time_decay: TensorGpu<f32, ReadWrite>,
 
     ffn_x: TensorGpu<f32, ReadWrite>,
     ffn_kx: TensorGpu<f32, ReadWrite>,
@@ -147,25 +155,31 @@ impl Runtime {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let cursors_shape = Shape::new(max_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
-        let time_mix_adapter_shape = Shape::new(5 * Model::TIME_MIX_ADAPTER_SIZE, num_token, 1, 1);
-        let time_decay_adapter_shape = Shape::new(Model::TIME_DECAY_ADAPTER_SIZE, num_token, 1, 1);
+        let time_mix_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, 5, num_token, 1);
+        let time_mix_trans_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, num_token, 5, 1);
+        let time_decay_shape = Shape::new(Model::TIME_DECAY_ADAPTER_SIZE, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
             input: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
-            att_xx: context.tensor_init(time_mix_adapter_shape),
+            att_xx: context.tensor_init(time_mix_shape),
+            att_xt: context.tensor_init(time_mix_trans_shape),
             att_wx: context.tensor_init(shape),
             att_kx: context.tensor_init(shape),
             att_vx: context.tensor_init(shape),
             att_rx: context.tensor_init(shape),
             att_gx: context.tensor_init(shape),
-            att_w: context.tensor_init(time_decay_adapter_shape),
+            att_w: context.tensor_init(time_decay_shape),
             att_k: context.tensor_init(shape),
             att_v: context.tensor_init(shape),
             att_r: context.tensor_init(shape),
             att_g: context.tensor_init(shape),
             att_o: context.tensor_init(shape),
+
+            att_time_mix: context.tensor_init(shape),
+            att_time_decay: context.tensor_init(shape),
+
             ffn_x: context.tensor_init(shape),
             ffn_kx: context.tensor_init(shape),
             ffn_rx: context.tensor_init(shape),
@@ -776,7 +790,7 @@ impl<'a> Model<'a> {
                 matmul_ops,
                 TensorOp::time_mix_v5(
                     &buffer.cursors,
-                    &time_decay,
+                    &buffer.att_time_decay,
                     &time_first,
                     &att_k,
                     &att_v,
@@ -1020,7 +1034,7 @@ impl<'a> FromBuilder for Model<'a> {
                 };
 
                 let att = format!("blocks.{layer}.att");
-                let time_decay = loader.load_vector_exp_exp_f32(format!("{att}.time_decay"))?;
+                let time_decay = loader.load_vector_f32(format!("{att}.time_decay"))?;
                 let time_first = loader.load_vector_f32(format!("{att}.time_first"))?;
                 let time_mix_x = loader.load_vector_f16(format!("{att}.time_mix_x"))?;
                 let time_mix_w = loader.load_vector_f16(format!("{att}.time_mix_w"))?;
@@ -1216,7 +1230,7 @@ impl super::Model for Model<'_> {
             return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
         }
         if num_token == 0 {
-            return Ok(vec![None; max_batch]);
+            return Err(ModelError::EmptyInput.into());
         }
 
         // we only infer at most `token_chunk_size` tokens at a time

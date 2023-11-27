@@ -1184,7 +1184,7 @@ impl super::Model for Model<'_> {
             return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
         }
         if num_token == 0 {
-            return Ok(vec![None; max_batch]);
+            return Err(ModelError::EmptyInput.into());
         }
 
         // we only infer at most `token_chunk_size` tokens at a time
