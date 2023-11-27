@@ -43,7 +43,7 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     // let bb = (batch * destination.shape[1] + token) * stride.x;
     let bb = compute_index(source, batch, token, 0u);
-    let cb = channel * 4u * stride;
+    let cb = batch * shape.y * stride + channel * 4u * stride;
 
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {

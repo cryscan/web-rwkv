@@ -65,6 +65,19 @@ impl Matrix {
         }
     }
 
+    pub fn matmul_op<'a>(
+        &'a self,
+        half: TensorView<'a, f16>,
+        input: TensorView<'a, f32>,
+        output: TensorView<'a, f32>,
+        turbo: bool,
+    ) -> Result<TensorOp<'a>, TensorError> {
+        match turbo {
+            true => self.matmul_mat_op(half, input, output),
+            false => self.matmul_vec_op(half, input, output),
+        }
+    }
+
     pub fn quant_u8(matrix: &TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
         let context = &matrix.context;
         let shape = matrix.shape();

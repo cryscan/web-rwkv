@@ -219,7 +219,7 @@ impl<'a> TensorOp<'a> {
     }
 
     /// Fp32 matrix-vector multiplication.
-    /// - `matrix` shape: `[C, R, 1]`.
+    /// - `matrix` shape: `[C, R, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_vec_fp16(
@@ -228,7 +228,7 @@ impl<'a> TensorOp<'a> {
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1, 1))?;
+        matrix.check_shape(Shape::new(input.shape()[0], shape[0], shape[2], 1))?;
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
 
         let context = &output.tensor.context;
@@ -721,7 +721,7 @@ impl<'a> TensorOp<'a> {
 
     pub fn token_shift(
         cursors: &'a TensorGpu<u32, ReadWrite>,
-        time_mix: &'a TensorGpu<f16, ReadWrite>,
+        time_mix: TensorView<'a, f16>,
         x: &'a TensorGpu<f32, ReadWrite>,
         sx: TensorView<f32>,
         output: &'a TensorGpu<f32, ReadWrite>,
@@ -740,7 +740,7 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.meta_binding(),
+                    resource: time_mix.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
@@ -778,7 +778,7 @@ impl<'a> TensorOp<'a> {
 
     pub fn token_shift_fp32(
         cursors: &'a TensorGpu<u32, ReadWrite>,
-        time_mix: &'a TensorGpu<f32, ReadWrite>,
+        time_mix: TensorView<'a, f32>,
         x: &'a TensorGpu<f32, ReadWrite>,
         sx: TensorView<f32>,
         output: &'a TensorGpu<f32, ReadWrite>,
@@ -797,7 +797,7 @@ impl<'a> TensorOp<'a> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.meta_binding(),
+                    resource: time_mix.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,

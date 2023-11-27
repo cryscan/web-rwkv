@@ -118,10 +118,7 @@ struct Runtime {
     input: TensorGpu<f32, ReadWrite>,
 
     att_x: TensorGpu<f32, ReadWrite>,
-    /// Token shift LoRA intermediate, `[32, 5, T]`.
     att_xx: TensorGpu<f32, ReadWrite>,
-    /// Token shift LoRA intermediate transposed, `[32, T, 5]`.
-    att_xt: TensorGpu<f32, ReadWrite>,
     /// Token shifted time decay input, `[C, T]`.
     att_wx: TensorGpu<f32, ReadWrite>,
     att_kx: TensorGpu<f32, ReadWrite>,
@@ -136,8 +133,12 @@ struct Runtime {
     att_g: TensorGpu<f32, ReadWrite>,
     att_o: TensorGpu<f32, ReadWrite>,
 
-    att_time_mix: TensorGpu<f32, ReadWrite>,
-    att_time_decay: TensorGpu<f32, ReadWrite>,
+    /// Token shift LoRA intermediate, `[32, 5, T]`.
+    time_mix_x: TensorGpu<f32, ReadWrite>,
+    /// Token shift LoRA intermediate transposed, `[32, T, 5]`.
+    time_mix_t: TensorGpu<f32, ReadWrite>,
+    time_mix: TensorGpu<f32, ReadWrite>,
+    time_decay: TensorGpu<f32, ReadWrite>,
 
     ffn_x: TensorGpu<f32, ReadWrite>,
     ffn_kx: TensorGpu<f32, ReadWrite>,
@@ -147,6 +148,8 @@ struct Runtime {
     ffn_r: TensorGpu<f32, ReadWrite>,
 
     half_x: TensorGpu<f16, ReadWrite>,
+    half_t: TensorGpu<f16, ReadWrite>,
+    half_w: TensorGpu<f16, ReadWrite>,
     half_k: TensorGpu<f16, ReadWrite>,
 }
 
@@ -155,16 +158,16 @@ impl Runtime {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let cursors_shape = Shape::new(max_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
-        let time_mix_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, 5, num_token, 1);
-        let time_mix_trans_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, num_token, 5, 1);
+        let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
+        let time_mix_x_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, 5, num_token, 1);
+        let time_mix_t_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, num_token, 5, 1);
         let time_decay_shape = Shape::new(Model::TIME_DECAY_ADAPTER_SIZE, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
             input: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
-            att_xx: context.tensor_init(time_mix_shape),
-            att_xt: context.tensor_init(time_mix_trans_shape),
+            att_xx: context.tensor_init(shape),
             att_wx: context.tensor_init(shape),
             att_kx: context.tensor_init(shape),
             att_vx: context.tensor_init(shape),
@@ -176,10 +179,10 @@ impl Runtime {
             att_r: context.tensor_init(shape),
             att_g: context.tensor_init(shape),
             att_o: context.tensor_init(shape),
-
-            att_time_mix: context.tensor_init(shape),
-            att_time_decay: context.tensor_init(shape),
-
+            time_mix_x: context.tensor_init(time_mix_x_shape),
+            time_mix_t: context.tensor_init(time_mix_t_shape),
+            time_mix: context.tensor_init(time_mix_shape),
+            time_decay: context.tensor_init(shape),
             ffn_x: context.tensor_init(shape),
             ffn_kx: context.tensor_init(shape),
             ffn_rx: context.tensor_init(shape),
@@ -187,6 +190,8 @@ impl Runtime {
             ffn_v: context.tensor_init(shape),
             ffn_r: context.tensor_init(shape),
             half_x: context.tensor_init(shape),
+            half_t: context.tensor_init(time_mix_t_shape),
+            half_w: context.tensor_init(time_decay_shape),
             half_k: context.tensor_init(hidden_shape),
         }
     }
@@ -581,11 +586,11 @@ impl<'a> Model<'a> {
 
         let input = TensorStack::try_from(input)?;
         let num_batch = input.num_batch();
-        let num_active_batch = input.num_active_batch();
         let num_token = input.num_token();
         let head_size = self.info.num_emb / self.info.num_head;
         assert_ne!(num_token, 0);
-        assert_ne!(num_active_batch, 0);
+
+        let turbo = self.turbo && num_token == self.token_chunk_size;
 
         // collect batch output copy commands for later
         let mut redirect = vec![None; num_batch];
@@ -604,7 +609,6 @@ impl<'a> Model<'a> {
 
         let buffer = self.request_runtime(num_token);
         let output = self.request_output(num_header.max(1));
-        // let stack = self.request_stack(num_active_batch);
 
         // gather and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
@@ -673,9 +677,15 @@ impl<'a> Model<'a> {
                 Dimension(1),
                 Dimension(1),
             )?;
-            let time_decay = layer.att.time_decay.reshape(
+            let time_decay = buffer.time_decay.reshape(
                 Dimension(head_size),
                 Auto,
+                Dimension(1),
+                Dimension(1),
+            )?;
+            let time_mix_x = buffer.time_mix_x.reshape(
+                Auto,
+                Dimension(num_token),
                 Dimension(1),
                 Dimension(1),
             )?;
@@ -706,53 +716,6 @@ impl<'a> Model<'a> {
 
             encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
 
-            let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
-                TensorOp::List(vec![
-                    layer.att.w_k.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_kx.view(.., .., .., ..)?,
-                        buffer.att_k.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_v.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_vx.view(.., .., .., ..)?,
-                        buffer.att_v.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_r.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_rx.view(.., .., .., ..)?,
-                        buffer.att_r.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_g.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_gx.view(.., .., .., ..)?,
-                        buffer.att_g.view(.., .., .., ..)?,
-                    )?,
-                ])
-            } else {
-                TensorOp::List(vec![
-                    layer.att.w_k.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_kx.view(.., .., .., ..)?,
-                        buffer.att_k.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_v.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_vx.view(.., .., .., ..)?,
-                        buffer.att_v.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_r.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_rx.view(.., .., .., ..)?,
-                        buffer.att_r.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_g.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_gx.view(.., .., .., ..)?,
-                        buffer.att_g.view(.., .., .., ..)?,
-                    )?,
-                ])
-            };
             let ops = TensorOp::List(vec![
                 TensorOp::layer_norm(
                     &layer.att_layer_norm.w,
@@ -761,36 +724,124 @@ impl<'a> Model<'a> {
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.att.time_mix_k,
+                    layer.att.time_mix_x.view(.., .., .., ..)?,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_xx,
+                )?,
+                layer.att.time_mix_w1.matmul_mat_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_xx.view(.., .., .., ..)?,
+                    time_mix_x.view(.., .., .., ..)?,
+                )?,
+                TensorOp::tanh(&time_mix_x)?,
+                TensorOp::transpose(
+                    buffer.time_mix_x.view(.., .., .., ..)?,
+                    buffer.time_mix_t.view(.., .., .., ..)?,
+                )?,
+                layer.att.time_mix_w2.matmul_mat_op(
+                    buffer.half_t.view(.., .., .., ..)?,
+                    buffer.time_mix_t.view(.., .., .., ..)?,
+                    buffer.time_mix.view(.., .., .., ..)?,
+                )?,
+                TensorOp::add_fp16(
+                    layer.att.time_mix_w.view(.., .., .., ..)?,
+                    buffer.time_mix.view(.., .., 0, ..)?,
+                )?,
+                TensorOp::add_fp16(
+                    layer.att.time_mix_k.view(.., .., .., ..)?,
+                    buffer.time_mix.view(.., .., 1, ..)?,
+                )?,
+                TensorOp::add_fp16(
+                    layer.att.time_mix_v.view(.., .., .., ..)?,
+                    buffer.time_mix.view(.., .., 2, ..)?,
+                )?,
+                TensorOp::add_fp16(
+                    layer.att.time_mix_r.view(.., .., .., ..)?,
+                    buffer.time_mix.view(.., .., 3, ..)?,
+                )?,
+                TensorOp::add_fp16(
+                    layer.att.time_mix_g.view(.., .., .., ..)?,
+                    buffer.time_mix.view(.., .., 4, ..)?,
+                )?,
+                TensorOp::token_shift_fp32(
+                    &buffer.cursors,
+                    buffer.time_mix.view(.., .., 0, ..)?,
+                    &buffer.att_x,
+                    state.att(index)?,
+                    &buffer.att_wx,
+                )?,
+                TensorOp::token_shift_fp32(
+                    &buffer.cursors,
+                    buffer.time_mix.view(.., .., 1, ..)?,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_kx,
                 )?,
-                TensorOp::token_shift(
+                TensorOp::token_shift_fp32(
                     &buffer.cursors,
-                    &layer.att.time_mix_v,
+                    buffer.time_mix.view(.., .., 2, ..)?,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_vx,
                 )?,
-                TensorOp::token_shift(
+                TensorOp::token_shift_fp32(
                     &buffer.cursors,
-                    &layer.att.time_mix_r,
+                    buffer.time_mix.view(.., .., 3, ..)?,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_rx,
                 )?,
-                TensorOp::token_shift(
+                TensorOp::token_shift_fp32(
                     &buffer.cursors,
-                    &layer.att.time_mix_g,
+                    buffer.time_mix.view(.., .., 4, ..)?,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_gx,
                 )?,
-                matmul_ops,
+                layer.att.w_k.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_kx.view(.., .., .., ..)?,
+                    buffer.att_k.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                layer.att.w_v.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_vx.view(.., .., .., ..)?,
+                    buffer.att_v.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                layer.att.w_r.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_rx.view(.., .., .., ..)?,
+                    buffer.att_r.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                layer.att.w_g.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_gx.view(.., .., .., ..)?,
+                    buffer.att_g.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                layer.att.time_decay_w1.matmul_mat_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_wx.view(.., .., .., ..)?,
+                    buffer.att_w.view(.., .., .., ..)?,
+                )?,
+                TensorOp::tanh(&buffer.att_w)?,
+                layer.att.time_decay_w2.matmul_mat_op(
+                    buffer.half_w.view(.., .., .., ..)?,
+                    buffer.att_w.view(.., .., .., ..)?,
+                    buffer.time_decay.view(.., .., .., ..)?,
+                )?,
+                TensorOp::add(
+                    layer.att.time_decay.view(.., .., .., ..)?,
+                    buffer.time_decay.view(.., .., .., ..)?,
+                )?,
+                TensorOp::stable_exp(&buffer.time_decay)?,
                 TensorOp::time_mix_v5(
                     &buffer.cursors,
-                    &buffer.att_time_decay,
+                    &time_decay,
                     &time_first,
                     &att_k,
                     &att_v,
@@ -864,14 +915,14 @@ impl<'a> Model<'a> {
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.ffn.time_mix_k,
+                    layer.ffn.time_mix_k.view(.., .., .., ..)?,
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_kx,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.ffn.time_mix_r,
+                    layer.ffn.time_mix_r.view(.., .., .., ..)?,
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_rx,
