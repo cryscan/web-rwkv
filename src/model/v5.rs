@@ -1004,7 +1004,7 @@ impl<'a> FromBuilder for Model<'a> {
 
                 let ffn = format!("blocks.{layer}.ffn");
                 let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
-                let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
+                let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r"))?;
 
                 let ffn = Ffn {
                     time_mix_k,

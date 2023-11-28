@@ -1698,20 +1698,26 @@ impl<'a> TensorOp<'a> {
         };
 
         let pipeline = context.pipeline("quant_fp16")?;
+        let absmax = absmax.view(.., .., .., ..)?;
+        let absmax_f32 = absmax_f32.view(.., .., .., ..)?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: absmax.meta_binding(),
+                    resource: absmax_f32.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: absmax_f32.binding(),
+                    resource: absmax.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
+                    resource: absmax_f32.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
                     resource: absmax.binding(),
                 },
             ],
