@@ -729,6 +729,7 @@ impl<'a> TensorOp<'a> {
         x: &'a TensorGpu<f32, ReadWrite>,
         sx: TensorView<f32>,
         output: &'a TensorGpu<f32, ReadWrite>,
+        reversed: bool,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
         let num_batch = sx.shape()[2];
@@ -739,7 +740,10 @@ impl<'a> TensorOp<'a> {
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
         let context = &output.context;
-        let pipeline = context.pipeline("token_shift")?;
+        let pipeline = match reversed {
+            true => context.pipeline("token_shift_rev")?,
+            false => context.pipeline("token_shift")?,
+        };
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -788,6 +792,7 @@ impl<'a> TensorOp<'a> {
         x: &'a TensorGpu<f32, ReadWrite>,
         sx: TensorView<f32>,
         output: &'a TensorGpu<f32, ReadWrite>,
+        reversed: bool,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
         let num_batch = sx.shape()[2];
@@ -798,7 +803,10 @@ impl<'a> TensorOp<'a> {
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
         let context = &output.context;
-        let pipeline = context.pipeline("token_shift_fp32")?;
+        let pipeline = match reversed {
+            true => context.pipeline("token_shift_rev_fp32")?,
+            false => context.pipeline("token_shift_fp32")?,
+        };
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),

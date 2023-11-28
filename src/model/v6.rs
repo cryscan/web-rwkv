@@ -729,6 +729,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_xx,
+                    true,
                 )?,
                 layer.att.time_mix_w1.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,
@@ -773,6 +774,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_wx,
+                    true,
                 )?,
                 TensorOp::token_shift_fp32(
                     &buffer.cursors,
@@ -780,6 +782,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_kx,
+                    true,
                 )?,
                 TensorOp::token_shift_fp32(
                     &buffer.cursors,
@@ -787,6 +790,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_vx,
+                    true,
                 )?,
                 TensorOp::token_shift_fp32(
                     &buffer.cursors,
@@ -794,6 +798,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_rx,
+                    true,
                 )?,
                 TensorOp::token_shift_fp32(
                     &buffer.cursors,
@@ -801,6 +806,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_gx,
+                    true,
                 )?,
                 layer.att.w_k.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,
@@ -885,6 +891,7 @@ impl<'a> Model<'a> {
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_kx,
+                    true,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
@@ -892,6 +899,7 @@ impl<'a> Model<'a> {
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_rx,
+                    true,
                 )?,
                 layer.ffn.w_k.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,

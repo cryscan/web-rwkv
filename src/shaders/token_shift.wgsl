@@ -68,6 +68,27 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     }
 }
 
+@compute @workgroup_size(128, 1, 1)
+fn token_shift_rev(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
+    let stride = vx.shape.x / 4u;
+    let index = invocation_id.x;
+    let stack = invocation_id.y;
+    let cursor = compute_cursor(cursors[stack]);
+    let token = stack - cursor.token;
+
+    if index >= stride {
+        return;
+    }
+
+    let bti = stack * stride + index;
+    let factor = fetch_time_mix(stack, index);
+    if token == 0u {
+        output[bti] = mix(x[bti], sx[compute_index(vx, cursor.batch, 0u, index)], factor);
+    } else {
+        output[bti] = mix(x[bti], x[bti - stride], factor);
+    }
+}
+
 fn fetch_time_mix_fp32(stack: u32, index: u32) -> vec4<f32> {
     let token = select(stack, 0u, vt.shape.y == 1u);
     return time_mix_fp32[compute_index(vt, 0u, token, index)];
@@ -91,5 +112,26 @@ fn token_shift_fp32(@builtin(global_invocation_id) invocation_id: vec3<u32>, @bu
         output[bti] = mix(sx[compute_index(vx, cursor.batch, 0u, index)], x[bti], factor);
     } else {
         output[bti] = mix(x[bti - stride], x[bti], factor);
+    }
+}
+
+@compute @workgroup_size(128, 1, 1)
+fn token_shift_rev_fp32(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
+    let stride = vx.shape.x / 4u;
+    let index = invocation_id.x;
+    let stack = invocation_id.y;
+    let cursor = compute_cursor(cursors[stack]);
+    let token = stack - cursor.token;
+
+    if index >= stride {
+        return;
+    }
+
+    let bti = stack * stride + index;
+    let factor = fetch_time_mix_fp32(stack, index);
+    if token == 0u {
+        output[bti] = mix(x[bti], sx[compute_index(vx, cursor.batch, 0u, index)], factor);
+    } else {
+        output[bti] = mix(x[bti], x[bti - stride], factor);
     }
 }

@@ -245,15 +245,21 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
-            "token_shift",
+            "token_shift_rev",
             include_str!("shaders/token_shift.wgsl"),
-            "token_shift",
+            "token_shift_rev",
             None,
         )
         .with_pipeline(
             "token_shift_fp32",
             include_str!("shaders/token_shift.wgsl"),
             "token_shift_fp32",
+            None,
+        )
+        .with_pipeline(
+            "token_shift_rev_fp32",
+            include_str!("shaders/token_shift.wgsl"),
+            "token_shift_rev_fp32",
             None,
         )
         .with_pipeline(

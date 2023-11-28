@@ -579,6 +579,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_kx,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
@@ -586,6 +587,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_vx,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
@@ -593,6 +595,7 @@ impl<'a> Model<'a> {
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_rx,
+                    false,
                 )?,
                 layer.att.w_k.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,
@@ -651,6 +654,7 @@ impl<'a> Model<'a> {
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_kx,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
@@ -658,6 +662,7 @@ impl<'a> Model<'a> {
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_rx,
+                    false,
                 )?,
                 layer.ffn.w_k.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,
