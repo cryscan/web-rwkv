@@ -245,6 +245,12 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
+            "token_shift",
+            include_str!("shaders/token_shift.wgsl"),
+            "token_shift",
+            None,
+        )
+        .with_pipeline(
             "token_shift_rev",
             include_str!("shaders/token_shift.wgsl"),
             "token_shift_rev",
