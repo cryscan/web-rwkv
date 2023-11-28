@@ -67,7 +67,7 @@ impl<'a> Loader<'a> {
 
         let embed = model.tensor("emb.weight")?;
         let ffn = model.tensor("blocks.0.ffn.key.weight")?;
-        let time_decay = model.tensor("blocks.0.att.time_decay")?;
+        let time_first = model.tensor("blocks.0.att.time_first")?;
 
         let v5 = [
             "blocks.0.att.gate.weight",
@@ -103,7 +103,7 @@ impl<'a> Loader<'a> {
         let num_emb = embed.shape()[1];
         let num_hidden = ffn.shape()[0];
         let num_vocab = embed.shape()[0];
-        let num_head = time_decay.shape()[0];
+        let num_head = time_first.shape()[0];
 
         Ok(ModelInfo {
             version,

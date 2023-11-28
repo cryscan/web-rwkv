@@ -637,7 +637,9 @@ impl<'a> TensorOp<'a> {
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        input.check_shape(shape)?;
+        input
+            .check_shape(shape)
+            .or(input.check_shape(Shape::new(shape[0], 1, shape[2], shape[3])))?;
 
         let context = &output.tensor.context;
         let pipeline = context.pipeline("add")?;
@@ -681,7 +683,9 @@ impl<'a> TensorOp<'a> {
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        input.check_shape(shape)?;
+        input
+            .check_shape(shape)
+            .or(input.check_shape(Shape::new(shape[0], 1, shape[2], shape[3])))?;
 
         let context = &output.tensor.context;
         let pipeline = context.pipeline("add_fp16")?;
@@ -728,7 +732,9 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
         let num_batch = sx.shape()[2];
-        time_mix.check_shape(Shape::new(shape[0], 1, 1, 1))?;
+        time_mix
+            .check_shape(shape)
+            .or(time_mix.check_shape(Shape::new(shape[0], 1, 1, 1)))?;
         x.check_shape(shape)?;
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
@@ -785,7 +791,9 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
         let num_batch = sx.shape()[2];
-        time_mix.check_shape(Shape::new(shape[0], 1, 1, 1))?;
+        time_mix
+            .check_shape(shape)
+            .or(time_mix.check_shape(Shape::new(shape[0], 1, 1, 1)))?;
         x.check_shape(shape)?;
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
@@ -934,6 +942,84 @@ impl<'a> TensorOp<'a> {
 
         let context = &x.context;
         let pipeline = context.pipeline("time_mix_v5")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: state.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: cursors.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: time_decay.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: time_first.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: k.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: v.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: r.binding(),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 9,
+                    resource: state.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [Self::ceil(dim as u32 / 4, 32), 1, 1],
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn time_mix_v6(
+        cursors: &'a TensorGpu<u32, ReadWrite>,
+        time_decay: &'a TensorGpu<f32, ReadWrite>,
+        time_first: &'a TensorGpu<f32, ReadWrite>,
+        k: &'a TensorGpu<f32, ReadWrite>,
+        v: &'a TensorGpu<f32, ReadWrite>,
+        r: &'a TensorGpu<f32, ReadWrite>,
+        x: &'a TensorGpu<f32, ReadWrite>,
+        state: TensorView<f32>,
+    ) -> Result<Self, TensorError> {
+        let shape = x.shape;
+        let dim = shape[0] * shape[1];
+        let num_batch = state.shape()[2];
+
+        k.check_shape(shape)?;
+        v.check_shape(shape)?;
+        r.check_shape(shape)?;
+        time_decay.check_shape(shape)?;
+        time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
+        state.check_shape(Shape::new(dim, shape[0] + 1, num_batch, 1))?;
+
+        let context = &x.context;
+        let pipeline = context.pipeline("time_mix_v6")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),

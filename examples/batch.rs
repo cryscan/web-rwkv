@@ -25,8 +25,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, FromBuilder, Lora, Model, ModelBuilder, ModelState, ModelVersion,
-        Quant, StateBuilder,
+        loader::Loader, v4, v5, v6, FromBuilder, Lora, Model, ModelBuilder, ModelState,
+        ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -199,7 +199,23 @@ async fn run(cli: Cli) -> Result<()> {
                 .build();
             run_internal(model, state, tokenizer, cli.batch).await
         }
-        ModelVersion::V6 => todo!(),
+        ModelVersion::V6 => {
+            let model: v6::Model = load_model(
+                &context,
+                &map,
+                cli.lora,
+                cli.quant,
+                cli.quant_nf4,
+                cli.turbo,
+            )?;
+            // The model state should keep the same batch as input.
+            // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
+            let state = StateBuilder::new(&context, model.info())
+                .with_max_batch(cli.batch)
+                .with_chunk_size(4)
+                .build();
+            run_internal(model, state, tokenizer, cli.batch).await
+        }
     }
 }
 

@@ -23,6 +23,14 @@ fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * stride + offset + index;
 }
 
+fn fetch_input(batch: u32, token: u32, index: u32) -> vec4<f32> {
+    if source.shape.y == 1u {
+        return input[compute_index(source, batch, 0u, index)];
+    } else {
+        return input[compute_index(source, batch, token, index)];
+    }
+}
+
 @compute @workgroup_size(128, 1, 1)
 fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = destination.shape.x / 4u;
@@ -31,9 +39,17 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let batch = invocation_id.z;
 
     if index < stride {
-        let x = input[compute_index(source, batch, token, index)];
+        let x = fetch_input(batch, token, index);
         let bti = compute_index(destination, batch, token, index);
         output[bti] = x + output[bti];
+    }
+}
+
+fn fetch_input_fp16(batch: u32, token: u32, index: u32) -> vec4<f32> {
+    if source.shape.y == 1u {
+        return unpack4x16float(input_fp16[compute_index(source, batch, 0u, index)]);
+    } else {
+        return unpack4x16float(input_fp16[compute_index(source, batch, token, index)]);
     }
 }
 
@@ -45,8 +61,8 @@ fn add_fp16(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let batch = invocation_id.z;
 
     if index < stride {
-        let x = input_fp16[compute_index(source, batch, token, index)];
+        let x = fetch_input_fp16(batch, token, index);
         let bti = compute_index(destination, batch, token, index);
-        output[bti] = unpack4x16float(x) + output[bti];
+        output[bti] = x + output[bti];
     }
 }

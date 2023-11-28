@@ -13,8 +13,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, FromBuilder, Lora, Model, ModelBuilder, ModelState, ModelVersion,
-        Quant, StateBuilder,
+        loader::Loader, v4, v5, v6, FromBuilder, Lora, Model, ModelBuilder, ModelState,
+        ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -163,7 +163,18 @@ async fn run(cli: Cli) -> Result<()> {
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer).await
         }
-        ModelVersion::V6 => todo!(),
+        ModelVersion::V6 => {
+            let model: v6::Model = load_model(
+                &context,
+                &map,
+                cli.lora,
+                cli.quant,
+                cli.quant_nf4,
+                cli.turbo,
+            )?;
+            let state: v6::ModelState = StateBuilder::new(&context, model.info()).build();
+            run_internal(model, state, tokenizer).await
+        }
     }
 }
 
