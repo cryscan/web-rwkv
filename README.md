@@ -14,7 +14,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - Int8 and NF4 quantization.
 - Very fast.
 - LoRA merging at loading time.
-- Support RWKV V4 and V5.
+- Support RWKV V4, V5 and V6.
 
 <p align='center'>
 <image src="screenshots/chat.gif">
