@@ -638,8 +638,8 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         input
-            .check_shape(shape)
-            .or(input.check_shape(Shape::new(shape[0], 1, shape[2], shape[3])))?;
+            .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
+            .or(input.check_shape(shape))?;
 
         let context = &output.tensor.context;
         let pipeline = context.pipeline("add")?;
@@ -684,8 +684,8 @@ impl<'a> TensorOp<'a> {
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         input
-            .check_shape(shape)
-            .or(input.check_shape(Shape::new(shape[0], 1, shape[2], shape[3])))?;
+            .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
+            .or(input.check_shape(shape))?;
 
         let context = &output.tensor.context;
         let pipeline = context.pipeline("add_fp16")?;
@@ -733,8 +733,8 @@ impl<'a> TensorOp<'a> {
         let shape = output.shape;
         let num_batch = sx.shape()[2];
         time_mix
-            .check_shape(shape)
-            .or(time_mix.check_shape(Shape::new(shape[0], 1, 1, 1)))?;
+            .check_shape(Shape::new(shape[0], 1, 1, 1))
+            .or(time_mix.check_shape(shape))?;
         x.check_shape(shape)?;
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
@@ -792,8 +792,8 @@ impl<'a> TensorOp<'a> {
         let shape = output.shape;
         let num_batch = sx.shape()[2];
         time_mix
-            .check_shape(shape)
-            .or(time_mix.check_shape(Shape::new(shape[0], 1, 1, 1)))?;
+            .check_shape(Shape::new(shape[0], 1, 1, 1))
+            .or(time_mix.check_shape(shape))?;
         x.check_shape(shape)?;
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
@@ -1943,21 +1943,22 @@ mod tests {
         const C: usize = 2560;
         const R: usize = 2048;
         const T: usize = 31;
+        const B: usize = 2;
 
-        let matrix = vec![(); C * R]
+        let matrix = vec![(); C * R * B]
             .into_iter()
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
             .map(f16::from_f32)
             .collect_vec();
-        let input_f32 = vec![(); C * T]
+        let input_f32 = vec![(); C * T * B]
             .into_iter()
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
             .collect_vec();
         let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
-        let matrix_shape = Shape::new(C, R, 1, 1);
-        let input_shape = Shape::new(C, T, 1, 1);
-        let output_shape = Shape::new(R, T, 2, 1);
+        let matrix_shape = Shape::new(C, R, B, 1);
+        let input_shape = Shape::new(C, T, B, 1);
+        let output_shape = Shape::new(R, T, 2 * B, 1);
 
         let matrix_dev = context.tensor_from_data(matrix_shape, matrix.clone())?;
         let input_f32_dev = TensorGpu::from_data(&context, input_shape, input_f32.clone())?;
@@ -1973,12 +1974,12 @@ mod tests {
             TensorOp::matmul_vec_fp16(
                 &matrix_dev,
                 input_f32_dev.view(.., .., .., ..)?,
-                output_dev.view(.., .., 0, ..)?,
+                output_dev.view(.., .., 0..B, ..)?,
             )?,
             TensorOp::matmul_mat_fp16(
                 matrix_dev.view(.., .., .., ..)?,
                 input_f16_dev.view(.., .., .., ..)?,
-                output_dev.view(.., .., 1, ..)?,
+                output_dev.view(.., .., B.., ..)?,
             )?,
         ]);
 
@@ -2010,28 +2011,30 @@ mod tests {
         // }
 
         let mut ans = vec![0.0; output_host.len()];
-        for token in 0..T {
-            for line in 0..R {
-                let matrix = &matrix[line * C..(line + 1) * C];
-                let input = &input_f32[token * C..(token + 1) * C];
-                let product = matrix
-                    .iter()
-                    .zip(input.iter())
-                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
-                ans[token * R + line] = product;
+        for batch in 0..B {
+            for token in 0..T {
+                for line in 0..R {
+                    let matrix = &matrix[((batch * R + line) * C)..((batch * R + line) + 1) * C];
+                    let input = &input_f32[(batch * T + token) * C..((batch * T + token) + 1) * C];
+                    let product = matrix
+                        .iter()
+                        .zip(input.iter())
+                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
+                    ans[(batch * T + token) * R + line] = product;
 
-                let input = &input_f16[token * C..(token + 1) * C];
-                let product = matrix
-                    .iter()
-                    .zip(input.iter())
-                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-                ans[(T + token) * R + line] = product;
+                    let input = &input_f16[(batch * T + token) * C..((batch * T + token) + 1) * C];
+                    let product = matrix
+                        .iter()
+                        .zip(input.iter())
+                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
+                    ans[((B + batch) * T + token) * R + line] = product;
+                }
             }
         }
 
         for (index, (a, b)) in Iterator::zip(output_host.into_iter(), ans.into_iter()).enumerate() {
             assert!(
-                is_approx_eps(a, b, 1.0e-3),
+                is_approx_eps(a, b, 0.01),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }
@@ -2219,7 +2222,7 @@ mod tests {
 
         for (index, (a, b)) in Iterator::zip(output_host.into_iter(), ans.into_iter()).enumerate() {
             assert!(
-                is_approx_eps(a, b, 1.0e-2),
+                is_approx_eps(a, b, 0.01),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }

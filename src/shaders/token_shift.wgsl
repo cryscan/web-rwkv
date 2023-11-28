@@ -42,12 +42,9 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-fn fetch_time_mix(token: u32, index: u32) -> vec4<f32> {
-    if vt.shape.y == 1u {
-        return unpack4x16float(time_mix[compute_index(vt, 0u, 0u, index)]);
-    } else {
-        return unpack4x16float(time_mix[compute_index(vt, 0u, token, index)]);
-    }
+fn fetch_time_mix(stack: u32, index: u32) -> vec4<f32> {
+    let token = select(stack, 0u, vt.shape.y == 1u);
+    return unpack4x16float(time_mix[compute_index(vt, 0u, token, index)]);
 }
 
 @compute @workgroup_size(128, 1, 1)
@@ -63,7 +60,7 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     }
 
     let bti = stack * stride + index;
-    let factor = fetch_time_mix(token, index);
+    let factor = fetch_time_mix(stack, index);
     if token == 0u {
         output[bti] = mix(sx[compute_index(vx, cursor.batch, 0u, index)], x[bti], factor);
     } else {
@@ -71,12 +68,9 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     }
 }
 
-fn fetch_time_mix_fp32(token: u32, index: u32) -> vec4<f32> {
-    if vt.shape.y == 1u {
-        return time_mix_fp32[compute_index(vt, 0u, 0u, index)];
-    } else {
-        return time_mix_fp32[compute_index(vt, 0u, token, index)];
-    }
+fn fetch_time_mix_fp32(stack: u32, index: u32) -> vec4<f32> {
+    let token = select(stack, 0u, vt.shape.y == 1u);
+    return time_mix_fp32[compute_index(vt, 0u, token, index)];
 }
 
 @compute @workgroup_size(128, 1, 1)
@@ -92,7 +86,7 @@ fn token_shift_fp32(@builtin(global_invocation_id) invocation_id: vec3<u32>, @bu
     }
 
     let bti = stack * stride + index;
-    let factor = fetch_time_mix_fp32(token, index);
+    let factor = fetch_time_mix_fp32(stack, index);
     if token == 0u {
         output[bti] = mix(sx[compute_index(vx, cursor.batch, 0u, index)], x[bti], factor);
     } else {

@@ -57,7 +57,7 @@ struct LayerNorm {
 
 #[derive(Debug)]
 struct Att {
-    time_decay: TensorGpu<f32, ReadWrite>,
+    time_decay: TensorGpu<f16, ReadWrite>,
     time_first: TensorGpu<f32, ReadWrite>,
 
     time_mix_x: TensorGpu<f16, ReadWrite>,
@@ -137,6 +137,7 @@ struct Runtime {
     time_mix_x: TensorGpu<f32, ReadWrite>,
     /// Token shift LoRA intermediate transposed, `[32, T, 5]`.
     time_mix_t: TensorGpu<f32, ReadWrite>,
+    /// Token shift LoRA output, `[C, T, 5]`.
     time_mix: TensorGpu<f32, ReadWrite>,
     time_decay: TensorGpu<f32, ReadWrite>,
 
@@ -838,7 +839,7 @@ impl<'a> Model<'a> {
                     buffer.time_decay.view(.., .., .., ..)?,
                     turbo,
                 )?,
-                TensorOp::add(
+                TensorOp::add_fp16(
                     layer.att.time_decay.view(.., .., .., ..)?,
                     buffer.time_decay.view(.., .., .., ..)?,
                 )?,
@@ -1068,7 +1069,7 @@ impl<'a> FromBuilder for Model<'a> {
                 };
 
                 let att = format!("blocks.{layer}.att");
-                let time_decay = loader.load_vector_f32(format!("{att}.time_decay"))?;
+                let time_decay = loader.load_vector_f16(format!("{att}.time_decay"))?;
                 let time_first = loader.load_vector_f32(format!("{att}.time_first"))?;
                 let time_mix_x = loader.load_vector_f16(format!("{att}.time_mix_x"))?;
                 let time_mix_w = loader.load_vector_f16(format!("{att}.time_mix_w"))?;

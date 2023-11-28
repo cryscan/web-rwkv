@@ -24,11 +24,8 @@ fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
 }
 
 fn fetch_input(batch: u32, token: u32, index: u32) -> vec4<f32> {
-    if source.shape.y == 1u {
-        return input[compute_index(source, batch, 0u, index)];
-    } else {
-        return input[compute_index(source, batch, token, index)];
-    }
+    let _token = select(token, 0u, source.shape.y == 1u);
+    return input[compute_index(source, batch, _token, index)];
 }
 
 @compute @workgroup_size(128, 1, 1)
@@ -46,11 +43,8 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 }
 
 fn fetch_input_fp16(batch: u32, token: u32, index: u32) -> vec4<f32> {
-    if source.shape.y == 1u {
-        return unpack4x16float(input_fp16[compute_index(source, batch, 0u, index)]);
-    } else {
-        return unpack4x16float(input_fp16[compute_index(source, batch, token, index)]);
-    }
+    let _token = select(token, 0u, source.shape.y == 1u);
+    return unpack4x16float(input_fp16[compute_index(source, batch, _token, index)]);
 }
 
 @compute @workgroup_size(128, 1, 1)
