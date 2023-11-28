@@ -29,3 +29,15 @@ fn blit(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         output[compute_index(destination, batch, token, index)] = input[compute_index(source, batch, token, index)];
     }
 }
+
+@compute @workgroup_size(128, 1, 1)
+fn transpose(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+    let stride = destination.shape.x / 4u;
+    let index = invocation_id.x;
+    let token = invocation_id.y;
+    let batch = invocation_id.z;
+
+    if index < stride {
+        output[compute_index(destination, token, batch, index)] = input[compute_index(source, batch, token, index)];
+    }
+}

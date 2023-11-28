@@ -245,9 +245,21 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
-            "token_shift",
+            "token_shift_rev",
             include_str!("shaders/token_shift.wgsl"),
-            "token_shift",
+            "token_shift_rev",
+            None,
+        )
+        .with_pipeline(
+            "token_shift_fp32",
+            include_str!("shaders/token_shift.wgsl"),
+            "token_shift_fp32",
+            None,
+        )
+        .with_pipeline(
+            "token_shift_rev_fp32",
+            include_str!("shaders/token_shift.wgsl"),
+            "token_shift_rev_fp32",
             None,
         )
         .with_pipeline(
@@ -262,11 +274,35 @@ impl<'a> ContextBuilder<'a> {
             "time_mix",
             None,
         )
+        .with_pipeline(
+            "time_mix_v6",
+            include_str!("shaders/time_mix_v6.wgsl"),
+            "time_mix",
+            None,
+        )
         .with_pipeline("add", include_str!("shaders/add.wgsl"), "add", None)
+        .with_pipeline(
+            "add_fp16",
+            include_str!("shaders/add.wgsl"),
+            "add_fp16",
+            None,
+        )
         .with_pipeline("silu", include_str!("shaders/silu.wgsl"), "silu", None)
         .with_pipeline(
+            "tanh",
+            include_str!("shaders/activation.wgsl"),
+            "activation_tanh",
+            None,
+        )
+        .with_pipeline(
+            "stable_exp",
+            include_str!("shaders/activation.wgsl"),
+            "stable_exp",
+            None,
+        )
+        .with_pipeline(
             "squared_relu",
-            include_str!("shaders/squared_relu.wgsl"),
+            include_str!("shaders/activation.wgsl"),
             "squared_relu",
             None,
         )
@@ -286,6 +322,12 @@ impl<'a> ContextBuilder<'a> {
 
     fn with_util_pipelines(self) -> Self {
         self.with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
+            .with_pipeline(
+                "transpose",
+                include_str!("shaders/blit.wgsl"),
+                "transpose",
+                None,
+            )
             .with_pipeline("blend", include_str!("shaders/blend.wgsl"), "blend", None)
             .with_pipeline(
                 "blend_lora",

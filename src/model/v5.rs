@@ -549,11 +549,11 @@ impl<'a> Model<'a> {
 
         let input = TensorStack::try_from(input)?;
         let num_batch = input.num_batch();
-        let num_active_batch = input.num_active_batch();
         let num_token = input.num_token();
         let head_size = self.info.num_emb / self.info.num_head;
         assert_ne!(num_token, 0);
-        assert_ne!(num_active_batch, 0);
+
+        let turbo = self.turbo && num_token == self.token_chunk_size;
 
         // collect batch output copy commands for later
         let mut redirect = vec![None; num_batch];
@@ -572,7 +572,6 @@ impl<'a> Model<'a> {
 
         let buffer = self.request_runtime(num_token);
         let output = self.request_output(num_header.max(1));
-        // let stack = self.request_stack(num_active_batch);
 
         // gather and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
@@ -674,53 +673,6 @@ impl<'a> Model<'a> {
 
             encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
 
-            let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
-                TensorOp::List(vec![
-                    layer.att.w_k.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_kx.view(.., .., .., ..)?,
-                        buffer.att_k.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_v.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_vx.view(.., .., .., ..)?,
-                        buffer.att_v.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_r.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_rx.view(.., .., .., ..)?,
-                        buffer.att_r.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_g.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_gx.view(.., .., .., ..)?,
-                        buffer.att_g.view(.., .., .., ..)?,
-                    )?,
-                ])
-            } else {
-                TensorOp::List(vec![
-                    layer.att.w_k.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_kx.view(.., .., .., ..)?,
-                        buffer.att_k.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_v.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_vx.view(.., .., .., ..)?,
-                        buffer.att_v.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_r.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_rx.view(.., .., .., ..)?,
-                        buffer.att_r.view(.., .., .., ..)?,
-                    )?,
-                    layer.att.w_g.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.att_gx.view(.., .., .., ..)?,
-                        buffer.att_g.view(.., .., .., ..)?,
-                    )?,
-                ])
-            };
             let ops = TensorOp::List(vec![
                 TensorOp::layer_norm(
                     &layer.att_layer_norm.w,
@@ -729,33 +681,60 @@ impl<'a> Model<'a> {
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.att.time_mix_k,
+                    layer.att.time_mix_k.view(.., .., .., ..)?,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_kx,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.att.time_mix_v,
+                    layer.att.time_mix_v.view(.., .., .., ..)?,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_vx,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.att.time_mix_r,
+                    layer.att.time_mix_r.view(.., .., .., ..)?,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_rx,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.att.time_mix_g,
+                    layer.att.time_mix_g.view(.., .., .., ..)?,
                     &buffer.att_x,
                     state.att(index)?,
                     &buffer.att_gx,
+                    false,
                 )?,
-                matmul_ops,
+                layer.att.w_k.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_kx.view(.., .., .., ..)?,
+                    buffer.att_k.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                layer.att.w_v.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_vx.view(.., .., .., ..)?,
+                    buffer.att_v.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                layer.att.w_r.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_rx.view(.., .., .., ..)?,
+                    buffer.att_r.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                layer.att.w_g.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.att_gx.view(.., .., .., ..)?,
+                    buffer.att_g.view(.., .., .., ..)?,
+                    turbo,
+                )?,
                 TensorOp::time_mix_v5(
                     &buffer.cursors,
                     &time_decay,
@@ -773,7 +752,10 @@ impl<'a> Model<'a> {
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
-                TensorOp::add(&buffer.input, &buffer.att_o)?,
+                TensorOp::add(
+                    buffer.input.view(.., .., .., ..)?,
+                    buffer.att_o.view(.., .., .., ..)?,
+                )?,
             ]);
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
@@ -782,45 +764,6 @@ impl<'a> Model<'a> {
 
             encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
 
-            let matmul_ops = if self.turbo && num_token == self.token_chunk_size {
-                TensorOp::List(vec![
-                    layer.ffn.w_k.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.ffn_kx.view(.., .., .., ..)?,
-                        buffer.ffn_k.view(.., .., .., ..)?,
-                    )?,
-                    TensorOp::squared_relu(&buffer.ffn_k)?,
-                    layer.ffn.w_v.matmul_mat_op(
-                        buffer.half_k.view(.., .., .., ..)?,
-                        buffer.ffn_k.view(.., .., .., ..)?,
-                        buffer.ffn_v.view(.., .., .., ..)?,
-                    )?,
-                    layer.ffn.w_r.matmul_mat_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.ffn_rx.view(.., .., .., ..)?,
-                        buffer.ffn_r.view(.., .., .., ..)?,
-                    )?,
-                ])
-            } else {
-                TensorOp::List(vec![
-                    layer.ffn.w_k.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.ffn_kx.view(.., .., .., ..)?,
-                        buffer.ffn_k.view(.., .., .., ..)?,
-                    )?,
-                    TensorOp::squared_relu(&buffer.ffn_k)?,
-                    layer.ffn.w_v.matmul_vec_op(
-                        buffer.half_k.view(.., .., .., ..)?,
-                        buffer.ffn_k.view(.., .., .., ..)?,
-                        buffer.ffn_v.view(.., .., .., ..)?,
-                    )?,
-                    layer.ffn.w_r.matmul_vec_op(
-                        buffer.half_x.view(.., .., .., ..)?,
-                        buffer.ffn_rx.view(.., .., .., ..)?,
-                        buffer.ffn_r.view(.., .., .., ..)?,
-                    )?,
-                ])
-            };
             let ops = TensorOp::List(vec![
                 TensorOp::layer_norm(
                     &layer.ffn_layer_norm.w,
@@ -829,19 +772,39 @@ impl<'a> Model<'a> {
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.ffn.time_mix_k,
+                    layer.ffn.time_mix_k.view(.., .., .., ..)?,
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_kx,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    &layer.ffn.time_mix_r,
+                    layer.ffn.time_mix_r.view(.., .., .., ..)?,
                     &buffer.ffn_x,
                     state.ffn(index)?,
                     &buffer.ffn_rx,
+                    false,
                 )?,
-                matmul_ops,
+                layer.ffn.w_k.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.ffn_kx.view(.., .., .., ..)?,
+                    buffer.ffn_k.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                TensorOp::squared_relu(&buffer.ffn_k)?,
+                layer.ffn.w_v.matmul_op(
+                    buffer.half_k.view(.., .., .., ..)?,
+                    buffer.ffn_k.view(.., .., .., ..)?,
+                    buffer.ffn_v.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                layer.ffn.w_r.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    buffer.ffn_rx.view(.., .., .., ..)?,
+                    buffer.ffn_r.view(.., .., .., ..)?,
+                    turbo,
+                )?,
                 TensorOp::channel_mix(
                     &buffer.cursors,
                     &buffer.ffn_r,
@@ -849,7 +812,10 @@ impl<'a> Model<'a> {
                     &buffer.ffn_x,
                     state.ffn(index)?,
                 )?,
-                TensorOp::add(&buffer.att_o, &buffer.ffn_x)?,
+                TensorOp::add(
+                    buffer.att_o.view(.., .., .., ..)?,
+                    buffer.ffn_x.view(.., .., .., ..)?,
+                )?,
             ]);
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
@@ -1044,7 +1010,7 @@ impl<'a> FromBuilder for Model<'a> {
 
                 let ffn = format!("blocks.{layer}.ffn");
                 let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
-                let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
+                let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r"))?;
 
                 let ffn = Ffn {
                     time_mix_k,
@@ -1178,7 +1144,7 @@ impl super::Model for Model<'_> {
             return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
         }
         if num_token == 0 {
-            return Ok(vec![None; max_batch]);
+            return Err(ModelError::EmptyInput.into());
         }
 
         // we only infer at most `token_chunk_size` tokens at a time

@@ -6,7 +6,7 @@
 const BLOCK_SIZE: u32 = 128u;
 
 fn sigmoid(x: vec4<f32>) -> vec4<f32> {
-    return 1.0 / (1.0 + exp(-x));
+    return 0.5 * (1.0 + tanh(0.5 * x));
 }
 
 @compute @workgroup_size(128, 1, 1)
@@ -19,7 +19,6 @@ fn silu(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if index < stride {
         let bti = (batch * shape[1] + token) * stride + index;
         let x = input[bti];
-        let s = select(1.0 - sigmoid(-x), sigmoid(x), x >= vec4<f32>(0.0));
-        output[bti] = x * s * output[bti];
+        output[bti] = x * sigmoid(x) * output[bti];
     }
 }
