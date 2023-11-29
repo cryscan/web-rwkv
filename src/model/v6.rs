@@ -307,8 +307,8 @@ impl FromBuilder for ModelState {
             })
             .collect();
         Ok(Self {
-            context: context.clone(),
-            info: info.clone(),
+            context,
+            info,
             max_batch,
             chunk_size,
             head_size,
@@ -317,7 +317,7 @@ impl FromBuilder for ModelState {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
@@ -377,6 +377,7 @@ impl super::ModelState for ModelState {
             let host = map.back_async().await;
             data.push((shape, host.to_vec()))
         }
+        let data = data.into();
 
         BackedState {
             max_batch,
@@ -415,6 +416,7 @@ impl super::ModelState for ModelState {
             let host = map.back_async().await;
             data.push((shape, host.to_vec()));
         }
+        let data = data.into();
 
         Ok(BackedState {
             max_batch: 1,
@@ -468,7 +470,7 @@ pub struct BackedState {
     pub max_batch: usize,
     pub chunk_size: usize,
     pub head_size: usize,
-    pub data: Vec<(Shape, Vec<f32>)>,
+    pub data: Arc<Vec<(Shape, Vec<f32>)>>,
 }
 
 impl FromBuilder for BackedState {
@@ -492,7 +494,8 @@ impl FromBuilder for BackedState {
                     .concat()
             })
             .map(|x| (shape, x))
-            .collect();
+            .collect_vec()
+            .into();
         Ok(Self {
             max_batch,
             chunk_size,
@@ -1184,7 +1187,7 @@ impl<'a> FromBuilder for Model<'a> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl super::Model for Model<'_> {
     type ModelState = ModelState;
 
