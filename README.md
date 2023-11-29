@@ -33,7 +33,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 9. Use `-turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.
 
 ## Use in Your Project
-To use in your own rust project, simply add `web-rwkv = "0.3"` as a dependency in your `Cargo.toml`.
+To use in your own rust project, simply add `web-rwkv = "0.4"` as a dependency in your `Cargo.toml`.
 Check examples on how to create the environment, the tokenizer and how to run the model.
 
 ### Explanation of Batched Inference
