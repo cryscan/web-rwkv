@@ -65,7 +65,7 @@ pub trait FromBuilder: Sized {
     fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
 }
 
-pub trait BackedState {
+pub trait BackedState: Send {
     fn max_batch(&self) -> usize;
     fn num_layer(&self) -> usize;
 
@@ -73,7 +73,7 @@ pub trait BackedState {
     fn embed(&self, batch: usize, layer: usize) -> Vec<f32>;
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait ModelState {
     type BackedState: BackedState;
 
@@ -99,7 +99,7 @@ pub trait ModelState {
     ) -> Result<(), TensorError>;
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 pub trait Model {
     type ModelState: ModelState;
 

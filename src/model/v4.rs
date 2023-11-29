@@ -253,7 +253,7 @@ impl FromBuilder for ModelState {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
@@ -272,7 +272,7 @@ impl super::ModelState for ModelState {
         if backed.max_batch() != self.max_batch() {
             return Err(ModelError::BatchSize(backed.max_batch(), self.max_batch()).into());
         }
-        let host = self.context.tensor_from_data(self.shape(), &backed.data)?;
+        let host = self.context.tensor_from_data(self.shape(), &*backed.data)?;
         self.0.load(&host).map_err(|err| err.into())
     }
 
@@ -283,7 +283,7 @@ impl super::ModelState for ModelState {
         }
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
-        let host = self.context.tensor_from_data(shape, &backed.data)?;
+        let host = self.context.tensor_from_data(shape, &*backed.data)?;
         self.0.load_batch(&host, batch).map_err(|err| err.into())
     }
 
@@ -298,11 +298,8 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor(self, &map).expect("back entire state");
         self.context.queue.submit(Some(encoder.finish()));
 
-        let host = map.back_async().await;
-        BackedState {
-            shape,
-            data: host.to_vec(),
-        }
+        let data = map.back_async().await.to_vec().into();
+        BackedState { shape, data }
     }
 
     async fn back_batch(&self, batch: usize) -> Result<Self::BackedState> {
@@ -325,11 +322,8 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor_batch(self, &map, batch)?;
         self.context.queue.submit(Some(encoder.finish()));
 
-        let host = map.back_async().await;
-        Ok(BackedState {
-            shape,
-            data: host.to_vec(),
-        })
+        let data = map.back_async().await.to_vec().into();
+        Ok(BackedState { shape, data })
     }
 
     fn blit(&self, other: &Self) -> Result<(), TensorError> {
@@ -369,7 +363,7 @@ impl super::ModelState for ModelState {
 #[derive(Debug, Clone)]
 pub struct BackedState {
     pub shape: Shape,
-    pub data: Vec<f32>,
+    pub data: Arc<Vec<f32>>,
 }
 
 impl FromBuilder for BackedState {
@@ -398,7 +392,8 @@ impl FromBuilder for BackedState {
                     .concat()
             })
             .collect_vec()
-            .concat();
+            .concat()
+            .into();
         Ok(Self { shape, data })
     }
 }
@@ -910,7 +905,7 @@ impl<'a> FromBuilder for Model<'a> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl super::Model for Model<'_> {
     type ModelState = ModelState;
 
