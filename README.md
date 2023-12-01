@@ -24,13 +24,33 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 ## Compile and Run
 1. [Install Rust](https://rustup.rs/).
 2. Download the model from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert it using [`convert_safetensors.py`](./convert_safetensors.py). Put the `.st` model under `assets/models`.
-3. Run `cargo run --release --example gen` to generate 100 tokens and measure the time cost.
-4. Run `cargo run --release --example chat` to chat with the model.
-5. Run `cargo run --release --example batch` to generate 4 batches of text with various lengths simultaneously.
-6. To specify the location of your safetensors model, use `cargo run --release --example chat -- --model /path/to/model`.
-7. To load custom prompts for chat, use `cargo run --release --example chat -- --prompt /path/to/prompt`. See [`assets/prompt.json`](./assets/prompt.json) for details.
-8. To specify layer quantization, use `--quant <LAYERS>` or `--quant-nf4 <LAYERS>` to quantize the first `<LAYERS>` layers. For example, use `cargo run --release --example chat -- --quant 32` to quantize all 32 layers.
-9. Use `-turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.
+3. To generate 100 tokens and measure the time cost, run
+   ```bash
+   $ cargo run --release --example gen
+   ```
+4. To chat with the model, run
+   ```bash
+   $ cargo run --release --example chat
+   ```
+5. To generate 4 batches of text with various lengths simultaneously, run
+   ```bash
+   $ cargo run --release --example batch
+   ```
+6. To specify the location of your safetensors model, use 
+   ```bash
+   $ cargo run --release --example chat -- --model /path/to/model
+   ```
+7. To load custom prompts for chat, use 
+   ```bash
+   $ cargo run --release --example chat -- --prompt /path/to/prompt
+   ```
+   See [`assets/prompt.json`](./assets/prompt.json) for details.
+8. To specify layer quantization, use `--quant <LAYERS>` or `--quant-nf4 <LAYERS>` to quantize the first `<LAYERS>` layers. For example, use 
+   ```bash
+   $ cargo run --release --example chat -- --quant 32
+   ```
+   to quantize all 32 layers.
+9.  Use `--turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.
 
 ## Use in Your Project
 To use in your own rust project, simply add `web-rwkv = "0.4"` as a dependency in your `Cargo.toml`.
@@ -56,6 +76,11 @@ Since there are only `token_chunk_size` tokens are processed during each `run()`
 You can now download the converted models [here](https://huggingface.co/cgisky/RWKV-safetensors-fp16).
 
 You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
+
+If you don't have python installed or don't want to, there is a pure rust converter that you can run
+```bash
+$ cargo run --release -- --input /path/to/model.pth
+```
 
 ## Troubleshoot
 - "thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: HeaderTooLarge'"
