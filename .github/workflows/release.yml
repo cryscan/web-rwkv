@@ -16,7 +16,7 @@ env:
   # Space separated paths to include in the archive.
   RELEASE_ADDS: README.md LICENSE assets
   RELEASE_BINS: web-rwkv-converter
-  EXAMPLE_BINS: gen chat
+  EXAMPLE_BINS: gen chat batch
 
 jobs:
   build:
@@ -112,11 +112,11 @@ jobs:
       - name: Create tarball (MacOS)
         if: matrix.build == 'macos'
         run: |
-          for bin in $${{ env.RELEASE_BINS }}
+          for bin in ${{ env.RELEASE_BINS }}
           do
             mv ./target/release/${bin} ./dist/${bin}
           done
-          for bin in $${{ env.EXAMPLE_BINS }}
+          for bin in ${{ env.EXAMPLE_BINS }}
           do
             mv ./target/release/examples/${bin} ./dist/${bin}
           done
