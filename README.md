@@ -79,7 +79,7 @@ You may download the official RWKV World series models from [HuggingFace](https:
 
 If you don't have python installed or don't want to, there is a pure rust converter that you can run
 ```bash
-$ cargo run --release -- --input /path/to/model.pth
+$ cargo run --release --workspace -- --input /path/to/model.pth
 ```
 
 ## Troubleshoot
