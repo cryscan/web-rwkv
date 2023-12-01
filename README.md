@@ -21,6 +21,21 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 <image src="screenshots/batch.gif">
 </p>
 
+Note that `web-rwkv` is only an inference engine. It only provides the following functionalities:
+- A tokenizer.
+- Model loading.
+- State creation and updating.
+- A `run` function that takes in prompt tokens and returns logits (predicted next token probabilities after calling `softmax`).
+
+It *does not* provide the following:
+- OpenAI API or APIs of any kind.
+  - If you would like to deploy an API server, check [AI00 RWKV Server](https://github.com/cgisky1980/ai00_rwkv_server) which is a fully-functional OpenAI-compatible API server built upon `web-rwkv`.
+  - You could also check the [`web-rwkv-axum`](https://github.com/Prunoideae/web-rwkv-axum) project if you want some fancy inference pipelines, including Classifier-Free Guidance (CFG), Backus–Naur Form (BNF) guidance, and more.
+- Samplers, though in the examples a basic nucleus sampler is implemented, this is *not* included in the library itself.
+- State caching or management system.
+- Python (or any other languages) binding.
+- Runtime. Without a runtime makes it easy to be integrated into any applications from servers, front-end apps (yes, `web-rwkv` can run in browser) to game engines.
+
 ## Compile and Run
 1. [Install Rust](https://rustup.rs/).
 2. Download the model from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert it using [`convert_safetensors.py`](./convert_safetensors.py). Put the `.st` model under `assets/models`.
@@ -79,7 +94,8 @@ You may download the official RWKV World series models from [HuggingFace](https:
 
 If you don't have python installed or don't want to, there is a pure rust converter that you can run
 ```bash
-$ cargo run --release --workspace -- --input /path/to/model.pth
+$ cd ./crates/web-rwkv-converter
+$ cargo run --release -- --input /path/to/model.pth
 ```
 
 ## Troubleshoot
