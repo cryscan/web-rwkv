@@ -1748,6 +1748,7 @@ impl<'a> TensorOp<'a> {
 mod tests {
     use std::f32::consts::PI;
 
+    use anyhow::Result;
     use half::f16;
     use itertools::Itertools;
     use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, PowerPreference};
@@ -1756,6 +1757,7 @@ mod tests {
     use super::{TensorOp, TensorPass};
     use crate::{
         context::{Context, ContextBuilder, Instance},
+        model::matrix::Matrix,
         tensor::{ops::TensorCommand, Shape, TensorGpu, TensorInit, TensorShape},
     };
 
@@ -1783,7 +1785,7 @@ mod tests {
     }
 
     #[test]
-    fn test_copy() -> Result<(), anyhow::Error> {
+    fn test_copy() -> Result<()> {
         let context = match create_context() {
             Ok(context) => context,
             Err(_) => return Ok(()),
@@ -1810,7 +1812,7 @@ mod tests {
     }
 
     #[test]
-    fn test_softmax() -> Result<(), anyhow::Error> {
+    fn test_softmax() -> Result<()> {
         let context = match create_context() {
             Ok(context) => context,
             Err(_) => return Ok(()),
@@ -1866,7 +1868,7 @@ mod tests {
     }
 
     #[test]
-    fn test_layer_norm() -> Result<(), anyhow::Error> {
+    fn test_layer_norm() -> Result<()> {
         let context = match create_context() {
             Ok(context) => context,
             Err(_) => return Ok(()),
@@ -1946,7 +1948,7 @@ mod tests {
     }
 
     #[test]
-    fn test_matmul() -> Result<(), anyhow::Error> {
+    fn test_matmul() -> Result<()> {
         let context = match create_context() {
             Ok(context) => context,
             Err(_) => return Ok(()),
@@ -2057,7 +2059,117 @@ mod tests {
     }
 
     #[test]
-    fn test_matmul_nf4() -> Result<(), anyhow::Error> {
+    fn test_matmul_int8() -> Result<()> {
+        let context = match create_context() {
+            Ok(context) => context,
+            Err(_) => return Ok(()),
+        };
+        fastrand::seed(42);
+
+        const C: usize = 2048;
+        const R: usize = 7148;
+
+        let matrix_f16 = vec![(); R * C]
+            .into_iter()
+            .map(|_| 10.0 * (fastrand::f32() - 0.5))
+            .map(f16::from_f32)
+            .collect_vec();
+
+        let mut matrix_u8 = matrix_f16
+            .clone()
+            .into_iter()
+            .map(f16::to_f32)
+            .collect_vec();
+
+        let mut mx = vec![f32::MAX; C];
+        let mut my = vec![f32::MAX; R];
+        let mut rx = vec![f32::MIN; C];
+        let mut ry = vec![f32::MIN; R];
+
+        if R > C {
+            for i in 0..R {
+                (0..C).for_each(|j| my[i] = my[i].min(matrix_u8[C * i + j]));
+                (0..C).for_each(|j| matrix_u8[C * i + j] -= my[i]);
+            }
+            for j in 0..C {
+                (0..R).for_each(|i| mx[j] = mx[j].min(matrix_u8[C * i + j]));
+                (0..R).for_each(|i| matrix_u8[C * i + j] -= mx[j]);
+            }
+        } else {
+            for j in 0..C {
+                (0..R).for_each(|i| mx[j] = mx[j].min(matrix_u8[C * i + j]));
+                (0..R).for_each(|i| matrix_u8[C * i + j] -= mx[j]);
+            }
+            for i in 0..R {
+                (0..C).for_each(|j| my[i] = my[i].min(matrix_u8[C * i + j]));
+                (0..C).for_each(|j| matrix_u8[C * i + j] -= my[i]);
+            }
+        }
+        for j in 0..C {
+            (0..R).for_each(|i| rx[j] = rx[j].max(matrix_u8[C * i + j]));
+            (0..R).for_each(|i| matrix_u8[C * i + j] /= rx[j]);
+        }
+        for i in 0..R {
+            (0..C).for_each(|j| ry[i] = ry[i].max(matrix_u8[C * i + j]));
+            (0..C).for_each(|j| matrix_u8[C * i + j] /= ry[i]);
+        }
+
+        // let matrix_u8 = matrix_u8
+        //     .into_iter()
+        //     .map(|x| (0.5 + 255.0 * x.clamp(0.0, 1.0)) as u8)
+        //     .collect_vec();
+
+        let matrix_f16_dev = context.tensor_from_data(Shape::new(C, R, 1, 1), &matrix_f16)?;
+        let matrix_quant = Matrix::quant_u8(&matrix_f16_dev)?;
+        let (matrix_u8_dev, mx_dev, my_dev, rx_dev, ry_dev) = match matrix_quant {
+            Matrix::Int8 { w, mx, rx, my, ry } => (w, mx, my, rx, ry),
+            _ => unreachable!(),
+        };
+
+        let matrix_u8_map = context.tensor_init(Shape::new(C, R, 1, 1));
+        let mx_map = context.tensor_init(Shape::new(C, 1, 1, 1));
+        let my_map = context.tensor_init(Shape::new(R, 1, 1, 1));
+        let rx_map = context.tensor_init(Shape::new(C, 1, 1, 1));
+        let ry_map = context.tensor_init(Shape::new(R, 1, 1, 1));
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        encoder.copy_tensor(&matrix_u8_dev, &matrix_u8_map)?;
+        encoder.copy_tensor(&mx_dev, &mx_map)?;
+        encoder.copy_tensor(&my_dev, &my_map)?;
+        encoder.copy_tensor(&rx_dev, &rx_map)?;
+        encoder.copy_tensor(&ry_dev, &ry_map)?;
+
+        context.queue.submit(Some(encoder.finish()));
+
+        let matrix_u8_host = matrix_u8_map.back().to_vec();
+        let mx_host = mx_map.back().to_vec();
+        let my_host = my_map.back().to_vec();
+        let rx_host = rx_map.back().to_vec();
+        let ry_host = ry_map.back().to_vec();
+
+        let matrix_u8_host = matrix_u8_host
+            .into_iter()
+            .map(|x| (x as f32) / 255.0)
+            .collect_vec();
+
+        let output = [matrix_u8_host, mx_host, my_host, rx_host, ry_host].concat();
+        let ans = [matrix_u8, mx, my, rx, ry].concat();
+
+        for (index, (a, b)) in Iterator::zip(output.into_iter(), ans.into_iter()).enumerate() {
+            assert!(
+                is_approx_eps(a, b, 0.005),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matmul_nf4() -> Result<()> {
         let context = match create_context() {
             Ok(context) => context,
             Err(_) => return Ok(()),
@@ -2245,7 +2357,7 @@ mod tests {
     }
 
     #[test]
-    fn test_blit() -> Result<(), anyhow::Error> {
+    fn test_blit() -> Result<()> {
         let context = match create_context() {
             Ok(context) => context,
             Err(_) => return Ok(()),
@@ -2298,7 +2410,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transpose() -> Result<(), anyhow::Error> {
+    fn test_transpose() -> Result<()> {
         let context = match create_context() {
             Ok(context) => context,
             Err(_) => return Ok(()),
