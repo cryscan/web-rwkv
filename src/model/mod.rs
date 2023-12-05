@@ -68,7 +68,7 @@ pub trait FromBuilder: Sized {
     fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
 }
 
-pub trait BackedState {
+pub trait BackedState: Send {
     fn max_batch(&self) -> usize;
     fn num_layer(&self) -> usize;
 
@@ -77,8 +77,8 @@ pub trait BackedState {
 }
 
 #[async_trait]
-pub trait ModelState {
-    type BackedState: BackedState + Send;
+pub trait ModelState: Sync {
+    type BackedState: BackedState;
 
     fn context(&self) -> &Context;
     fn max_batch(&self) -> usize;
@@ -103,8 +103,8 @@ pub trait ModelState {
 }
 
 #[async_trait]
-pub trait Model {
-    type ModelState: ModelState + Sync;
+pub trait Model: Sync {
+    type ModelState: ModelState;
 
     fn context(&self) -> &Context;
     fn info(&self) -> &ModelInfo;
