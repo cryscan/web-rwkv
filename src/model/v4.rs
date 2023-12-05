@@ -446,13 +446,272 @@ impl<'a> Model<'a> {
     fn head_shape(&self, num_batch: usize) -> Shape {
         Shape::new(self.info.num_vocab, 1, num_batch, 1)
     }
+}
+
+impl<'a> FromBuilder for Model<'a> {
+    type Builder<'b> = ModelBuilder<'b>;
+    type Error = anyhow::Error;
+
+    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+        let ModelBuilder {
+            context,
+            data,
+            lora,
+            quant,
+            turbo,
+            head_chunk_size,
+            token_chunk_size,
+        } = builder;
+
+        if !head_chunk_size.is_power_of_two() {
+            return Err(ModelError::InvalidChunkSize(head_chunk_size).into());
+        }
+        if !token_chunk_size.is_power_of_two() {
+            return Err(ModelError::InvalidChunkSize(token_chunk_size).into());
+        }
+
+        let loader = Loader::new(&context, data, lora)?;
+        let info = Loader::info(data)?;
+
+        let rescale = turbo || quant.iter().any(|(_, quant)| matches!(quant, Quant::NF4));
+
+        let embed = Embed {
+            layer_norm: LayerNorm {
+                w: loader.load_vector_f16("blocks.0.ln0.weight")?,
+                b: loader.load_vector_f16("blocks.0.ln0.bias")?,
+            },
+            w: loader.load_embed()?,
+        };
+
+        let head = Head {
+            layer_norm: LayerNorm {
+                w: loader.load_vector_f16("ln_out.weight")?,
+                b: loader.load_vector_f16("ln_out.bias")?,
+            },
+            w: loader.load_head(head_chunk_size)?,
+        };
+
+        context.queue.submit(None);
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        let matrix_f16_cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(0);
+        let load_matrix = |name: String, quant: Quant| -> Result<Matrix> {
+            match quant {
+                Quant::None => Ok(Matrix::Fp16(loader.load_matrix_f16(name)?)),
+                Quant::Int8 => {
+                    let shape = loader.tensor_shape(&name)?;
+                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    loader.load_in_place_matrix_f16(&buffer, &name)?;
+                    Ok(Matrix::quant_u8(&buffer)?)
+                }
+                Quant::NF4 => {
+                    let shape = loader.tensor_shape(&name)?;
+                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    loader.load_in_place_matrix_f16(&buffer, &name)?;
+                    Ok(Matrix::quant_nf4(&buffer)?)
+                }
+            }
+        };
+        let load_matrix_discount = |name: String, quant: Quant, discount: f32| -> Result<Matrix> {
+            match quant {
+                Quant::None => Ok(Matrix::Fp16(
+                    loader.load_matrix_f16_discount(name, discount)?,
+                )),
+                Quant::Int8 => {
+                    let shape = loader.tensor_shape(&name)?;
+                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
+                    Ok(Matrix::quant_u8(&buffer)?)
+                }
+                Quant::NF4 => {
+                    let shape = loader.tensor_shape(&name)?;
+                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
+                    Ok(Matrix::quant_nf4(&buffer)?)
+                }
+            }
+        };
+
+        let layers = (0..info.num_layer)
+            .map(|layer| {
+                let quant = quant.get(&layer).copied().unwrap_or_default();
+                let discount = match rescale {
+                    true => 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32)),
+                    false => 1.0,
+                };
+                if matches!(quant, Quant::None) {
+                    matrix_f16_cache.clear();
+                }
+
+                let att_layer_norm = LayerNorm {
+                    w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
+                    b: loader.load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
+                };
+
+                let att = format!("blocks.{layer}.att");
+                let time_decay = loader.load_vector_exp_f32(format!("{att}.time_decay"))?;
+                let time_first = loader.load_vector_f32(format!("{att}.time_first"))?;
+                let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k"))?;
+                let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v"))?;
+                let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r"))?;
+
+                let att = Att {
+                    time_decay,
+                    time_first,
+                    time_mix_k,
+                    time_mix_v,
+                    time_mix_r,
+                    w_k: load_matrix(format!("{att}.key.weight"), quant)?,
+                    w_v: load_matrix(format!("{att}.value.weight"), quant)?,
+                    w_r: load_matrix(format!("{att}.receptance.weight"), quant)?,
+                    w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount)?,
+                };
+
+                let ffn_layer_norm = LayerNorm {
+                    w: loader.load_vector_f16(format!("blocks.{layer}.ln2.weight"))?,
+                    b: loader.load_vector_f16(format!("blocks.{layer}.ln2.bias"))?,
+                };
+
+                let ffn = format!("blocks.{layer}.ffn");
+                let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
+                let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r"))?;
+
+                let ffn = Ffn {
+                    time_mix_k,
+                    time_mix_r,
+                    w_r: load_matrix(format!("{ffn}.receptance.weight"), quant)?,
+                    w_k: load_matrix(format!("{ffn}.key.weight"), quant)?,
+                    w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount)?,
+                };
+
+                context.queue.submit(None);
+                context.device.poll(wgpu::MaintainBase::Wait);
+
+                Ok(Layer {
+                    att_layer_norm,
+                    ffn_layer_norm,
+                    att,
+                    ffn,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        context.queue.submit(None);
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        let tensor = ModelTensor {
+            embed,
+            head,
+            layers,
+        };
+        Ok(Self {
+            context,
+            info,
+            rescale,
+            turbo,
+            head_chunk_size,
+            token_chunk_size,
+            tensor,
+            runtime_cache: ResourceCache::new(1),
+            output_cache: ResourceCache::new(1),
+            softmax_cache: ResourceCache::new(1),
+        })
+    }
+}
+
+#[async_trait]
+impl super::Model for Model<'_> {
+    type ModelState = ModelState;
+
+    #[inline]
+    fn context(&self) -> &Context {
+        &self.context
+    }
+
+    #[inline]
+    fn info(&self) -> &ModelInfo {
+        &self.info
+    }
+
+    #[inline]
+    fn token_chunk_size(&self) -> usize {
+        self.token_chunk_size
+    }
+
+    #[inline]
+    fn head_chunk_size(&self) -> usize {
+        self.head_chunk_size
+    }
+
+    async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
+        let max_batch = input.len();
+
+        let mut redirect = vec![None; max_batch];
+        let input: Vec<_> = input
+            .into_iter()
+            .enumerate()
+            .filter_map(|(batch, data)| data.map(|data| (batch, data)))
+            .map(|(batch, data)| {
+                TensorCpu::from_data(&self.context, self.head_shape(1), data)
+                    .map(|tensor| (batch, tensor))
+            })
+            .try_collect()?;
+        let input = TensorCpu::stack(
+            input
+                .into_iter()
+                .enumerate()
+                .map(|(index, (batch, tensor))| {
+                    redirect[batch] = Some(index);
+                    tensor
+                })
+                .collect_vec(),
+        )?;
+
+        let num_batch = input.shape()[2];
+        let softmax = self.request_softmax(num_batch);
+        softmax.buffer.load(&input)?;
+
+        let op = TensorOp::softmax(&softmax.buffer)?;
+
+        let mut encoder = self
+            .context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
+        encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
+        self.context.queue.submit(Some(encoder.finish()));
+
+        let mut output = softmax
+            .map
+            .clone()
+            .back_async()
+            .await
+            .split(2)
+            .expect("split buffer map")
+            .into_iter()
+            .map(|tensor| Some(tensor.to_vec()))
+            .collect_vec();
+
+        let mut probs = vec![None; max_batch];
+        for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
+            if let Some(redirect) = redirect {
+                std::mem::swap(probs, &mut output[redirect]);
+            }
+        }
+
+        Ok(probs)
+    }
 
     fn run_internal(
         &self,
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
         last: Option<usize>,
-    ) -> Result<(Arc<Output>, Vec<Option<usize>>)> {
+    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)> {
         let context = &self.context;
         let tensor = &self.tensor;
 
@@ -733,305 +992,6 @@ impl<'a> Model<'a> {
         }
 
         context.queue.submit(Some(encoder.finish()));
-        Ok((output, redirect))
-    }
-}
-
-impl<'a> FromBuilder for Model<'a> {
-    type Builder<'b> = ModelBuilder<'b>;
-    type Error = anyhow::Error;
-
-    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
-        let ModelBuilder {
-            context,
-            data,
-            lora,
-            quant,
-            turbo,
-            head_chunk_size,
-            token_chunk_size,
-        } = builder;
-
-        if !head_chunk_size.is_power_of_two() {
-            return Err(ModelError::InvalidChunkSize(head_chunk_size).into());
-        }
-        if !token_chunk_size.is_power_of_two() {
-            return Err(ModelError::InvalidChunkSize(token_chunk_size).into());
-        }
-
-        let loader = Loader::new(&context, data, lora)?;
-        let info = Loader::info(data)?;
-
-        let rescale = turbo || quant.iter().any(|(_, quant)| matches!(quant, Quant::NF4));
-
-        let embed = Embed {
-            layer_norm: LayerNorm {
-                w: loader.load_vector_f16("blocks.0.ln0.weight")?,
-                b: loader.load_vector_f16("blocks.0.ln0.bias")?,
-            },
-            w: loader.load_embed()?,
-        };
-
-        let head = Head {
-            layer_norm: LayerNorm {
-                w: loader.load_vector_f16("ln_out.weight")?,
-                b: loader.load_vector_f16("ln_out.bias")?,
-            },
-            w: loader.load_head(head_chunk_size)?,
-        };
-
-        context.queue.submit(None);
-        context.device.poll(wgpu::MaintainBase::Wait);
-
-        let matrix_f16_cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(0);
-        let load_matrix = |name: String, quant: Quant| -> Result<Matrix> {
-            match quant {
-                Quant::None => Ok(Matrix::Fp16(loader.load_matrix_f16(name)?)),
-                Quant::Int8 => {
-                    let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
-                    loader.load_in_place_matrix_f16(&buffer, &name)?;
-                    Ok(Matrix::quant_u8(&buffer)?)
-                }
-                Quant::NF4 => {
-                    let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
-                    loader.load_in_place_matrix_f16(&buffer, &name)?;
-                    Ok(Matrix::quant_nf4(&buffer)?)
-                }
-            }
-        };
-        let load_matrix_discount = |name: String, quant: Quant, discount: f32| -> Result<Matrix> {
-            match quant {
-                Quant::None => Ok(Matrix::Fp16(
-                    loader.load_matrix_f16_discount(name, discount)?,
-                )),
-                Quant::Int8 => {
-                    let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
-                    loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
-                    Ok(Matrix::quant_u8(&buffer)?)
-                }
-                Quant::NF4 => {
-                    let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
-                    loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
-                    Ok(Matrix::quant_nf4(&buffer)?)
-                }
-            }
-        };
-
-        let layers = (0..info.num_layer)
-            .map(|layer| {
-                let quant = quant.get(&layer).copied().unwrap_or_default();
-                let discount = match rescale {
-                    true => 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32)),
-                    false => 1.0,
-                };
-
-                let att_layer_norm = LayerNorm {
-                    w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
-                    b: loader.load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
-                };
-
-                let att = format!("blocks.{layer}.att");
-                let time_decay = loader.load_vector_exp_f32(format!("{att}.time_decay"))?;
-                let time_first = loader.load_vector_f32(format!("{att}.time_first"))?;
-                let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k"))?;
-                let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v"))?;
-                let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r"))?;
-
-                let att = Att {
-                    time_decay,
-                    time_first,
-                    time_mix_k,
-                    time_mix_v,
-                    time_mix_r,
-                    w_k: load_matrix(format!("{att}.key.weight"), quant)?,
-                    w_v: load_matrix(format!("{att}.value.weight"), quant)?,
-                    w_r: load_matrix(format!("{att}.receptance.weight"), quant)?,
-                    w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount)?,
-                };
-
-                let ffn_layer_norm = LayerNorm {
-                    w: loader.load_vector_f16(format!("blocks.{layer}.ln2.weight"))?,
-                    b: loader.load_vector_f16(format!("blocks.{layer}.ln2.bias"))?,
-                };
-
-                let ffn = format!("blocks.{layer}.ffn");
-                let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
-                let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r"))?;
-
-                let ffn = Ffn {
-                    time_mix_k,
-                    time_mix_r,
-                    w_r: load_matrix(format!("{ffn}.receptance.weight"), quant)?,
-                    w_k: load_matrix(format!("{ffn}.key.weight"), quant)?,
-                    w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount)?,
-                };
-
-                context.queue.submit(None);
-                context.device.poll(wgpu::MaintainBase::Wait);
-
-                Ok(Layer {
-                    att_layer_norm,
-                    ffn_layer_norm,
-                    att,
-                    ffn,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        context.queue.submit(None);
-        context.device.poll(wgpu::MaintainBase::Wait);
-
-        let tensor = ModelTensor {
-            embed,
-            head,
-            layers,
-        };
-        Ok(Self {
-            context,
-            info,
-            rescale,
-            turbo,
-            head_chunk_size,
-            token_chunk_size,
-            tensor,
-            runtime_cache: ResourceCache::new(1),
-            output_cache: ResourceCache::new(1),
-            softmax_cache: ResourceCache::new(1),
-        })
-    }
-}
-
-#[async_trait]
-impl super::Model for Model<'_> {
-    type ModelState = ModelState;
-
-    #[inline]
-    fn context(&self) -> &Context {
-        &self.context
-    }
-
-    #[inline]
-    fn info(&self) -> &ModelInfo {
-        &self.info
-    }
-
-    async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
-        let max_batch = input.len();
-
-        let mut redirect = vec![None; max_batch];
-        let input: Vec<_> = input
-            .into_iter()
-            .enumerate()
-            .filter_map(|(batch, data)| data.map(|data| (batch, data)))
-            .map(|(batch, data)| {
-                TensorCpu::from_data(&self.context, self.head_shape(1), data)
-                    .map(|tensor| (batch, tensor))
-            })
-            .try_collect()?;
-        let input = TensorCpu::stack(
-            input
-                .into_iter()
-                .enumerate()
-                .map(|(index, (batch, tensor))| {
-                    redirect[batch] = Some(index);
-                    tensor
-                })
-                .collect_vec(),
-        )?;
-
-        let num_batch = input.shape()[2];
-        let softmax = self.request_softmax(num_batch);
-        softmax.buffer.load(&input)?;
-
-        let op = TensorOp::softmax(&softmax.buffer)?;
-
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&op);
-        drop(pass);
-
-        encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
-        self.context.queue.submit(Some(encoder.finish()));
-
-        let mut output = softmax
-            .map
-            .clone()
-            .back_async()
-            .await
-            .split(2)
-            .expect("split buffer map")
-            .into_iter()
-            .map(|tensor| Some(tensor.to_vec()))
-            .collect_vec();
-
-        let mut probs = vec![None; max_batch];
-        for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
-            if let Some(redirect) = redirect {
-                std::mem::swap(probs, &mut output[redirect]);
-            }
-        }
-
-        Ok(probs)
-    }
-
-    async fn run(
-        &self,
-        tokens: &mut Vec<Vec<u16>>,
-        state: &Self::ModelState,
-    ) -> Result<Vec<Option<Vec<f32>>>> {
-        use super::ModelState;
-
-        let num_token: usize = tokens.iter().map(Vec::len).sum();
-        let max_batch = state.max_batch();
-
-        if tokens.len() != max_batch {
-            return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
-        }
-        if num_token == 0 {
-            return Err(ModelError::EmptyInput.into());
-        }
-
-        // we only infer at most `token_chunk_size` tokens at a time
-        let mut num_token = num_token.min(self.token_chunk_size);
-        let mut inputs = vec![vec![]; max_batch];
-        let mut last = None;
-
-        // take `num_token` tokens out of all the inputs and put into `input`
-        for (index, (batch, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
-            let mid = batch.len().min(num_token);
-            num_token -= mid;
-
-            let (head, tail) = batch.split_at(mid);
-            last = (!tail.is_empty()).then_some(index);
-            *input = head.to_vec();
-            *batch = tail.to_vec();
-
-            if num_token == 0 {
-                break;
-            }
-        }
-
-        let (output, redirect) = self.run_internal(inputs, state, last)?;
-        let output = output.map.clone().back_async().await;
-
-        Ok(redirect
-            .into_iter()
-            .map(|index| {
-                index.map(|index| {
-                    output
-                        .slice(.., index, .., ..)
-                        .expect("this never happens")
-                        .to_vec()
-                })
-            })
-            .collect())
+        Ok((output.map.clone(), redirect))
     }
 }

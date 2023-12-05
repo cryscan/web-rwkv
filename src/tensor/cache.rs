@@ -4,11 +4,26 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[derive(Debug)]
+struct CacheItem<V> {
+    value: Arc<V>,
+    count: usize,
+}
+
+impl<V> CacheItem<V> {
+    fn make(f: impl FnOnce() -> V) -> Self {
+        Self {
+            value: f().into(),
+            count: 0,
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 #[derive(Debug, Clone)]
 pub struct ResourceCache<K, V> {
     max_count: usize,
-    map: Arc<Mutex<HashMap<K, (Arc<V>, usize)>>>,
+    map: Arc<Mutex<HashMap<K, CacheItem<V>>>>,
 }
 
 impl<K, V> Default for ResourceCache<K, V> {
@@ -33,14 +48,25 @@ where
 
     pub fn request(&self, key: K, f: impl FnOnce() -> V) -> Arc<V> {
         let mut map = self.map.lock().unwrap();
-        let (value, _) = map.remove(&key).unwrap_or_else(|| (Arc::new(f()), 0));
-        map.insert(key, (value.clone(), 0));
         if self.max_count > 0 {
-            map.retain(|_, (_, count)| {
-                *count += 1;
-                *count <= self.max_count
+            map.retain(|_, item| {
+                item.count += 1;
+                item.count <= self.max_count
             });
         }
+        let CacheItem { value, .. } = map.remove(&key).unwrap_or_else(|| CacheItem::make(f));
+        map.insert(
+            key,
+            CacheItem {
+                value: value.clone(),
+                count: 0,
+            },
+        );
         value
+    }
+
+    pub fn clear(&self) {
+        let mut map = self.map.lock().unwrap();
+        map.clear();
     }
 }
