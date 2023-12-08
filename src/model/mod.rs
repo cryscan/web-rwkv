@@ -70,7 +70,9 @@ pub trait FromBuilder: Sized {
     fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
 }
 
-pub trait BackedState: Send {
+pub trait BackedState:
+    Send + for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible>
+{
     fn max_batch(&self) -> usize;
     fn num_layer(&self) -> usize;
 
@@ -79,7 +81,9 @@ pub trait BackedState: Send {
 }
 
 #[async_trait]
-pub trait ModelState: Sync {
+pub trait ModelState:
+    Sync + for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible>
+{
     type BackedState: BackedState;
 
     fn context(&self) -> &Context;
@@ -258,7 +262,7 @@ pub struct StateBuilder {
     chunk_size: usize,
 }
 
-impl<'a> StateBuilder {
+impl StateBuilder {
     pub fn new(context: &Context, info: &ModelInfo) -> Self {
         Self {
             context: context.clone(),
@@ -284,14 +288,12 @@ impl<'a> StateBuilder {
 
     pub fn build<S>(self) -> S
     where
-        S: ModelState + FromBuilder<Builder<'a> = Self, Error = Infallible>,
+        S: ModelState,
     {
         S::from_builder(self).expect("build model state")
     }
 
-    pub fn build_backed<B: BackedState + FromBuilder<Builder<'a> = Self, Error = Infallible>>(
-        self,
-    ) -> B {
+    pub fn build_backed<B: BackedState>(self) -> B {
         B::from_builder(self).expect("build backed state")
     }
 }
