@@ -13,8 +13,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, v6, FromBuilder, Lora, Model, ModelBuilder, ModelState,
-        ModelVersion, Quant, StateBuilder,
+        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelState, ModelVersion,
+        Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -83,17 +83,14 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model<'a, M>(
+fn load_model<'a, M: Model>(
     context: &Context,
     data: &'a [u8],
     lora: Option<PathBuf>,
     quant: Option<usize>,
     quant_nf4: Option<usize>,
     turbo: bool,
-) -> Result<M>
-where
-    M: Model + FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>,
-{
+) -> Result<M> {
     let quant = quant
         .map(|layer| (0..layer).map(|layer| (layer, Quant::Int8)).collect_vec())
         .unwrap_or_default();

@@ -7,8 +7,11 @@ use itertools::Itertools;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
-    loader::Loader, matrix::Matrix, FromBuilder, ModelBuilder, ModelError, ModelInfo, Quant,
-    StateBuilder,
+    loader::Loader,
+    matrix::Matrix,
+    run::{ModelRun, Output},
+    softmax::{ModelSoftmax, Softmax},
+    FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, Quant, StateBuilder,
 };
 use crate::{
     context::Context,
@@ -17,8 +20,8 @@ use crate::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
-        DeepClone, IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu,
-        TensorInit, TensorReshape, TensorShape, TensorStack, TensorView,
+        DeepClone, IntoPackedCursors, ReadWrite, TensorCpu, TensorError, TensorGpu, TensorReshape,
+        TensorShape, TensorStack, TensorView,
     },
 };
 
@@ -194,42 +197,6 @@ impl Runtime {
             half_t: context.tensor_init(time_mix_t_shape),
             half_w: context.tensor_init(time_decay_shape),
             half_k: context.tensor_init(hidden_shape),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Output {
-    head_x: TensorGpu<f32, ReadWrite>,
-    head_o: TensorGpu<f32, ReadWrite>,
-    map: TensorGpu<f32, ReadBack>,
-}
-
-impl Output {
-    pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
-        let head_shape = Shape::new(info.num_emb, num_batch, 1, 1);
-        let output_shape = Shape::new(info.num_vocab, num_batch, 1, 1);
-
-        Self {
-            head_x: context.tensor_init(head_shape),
-            head_o: context.tensor_init(output_shape),
-            map: context.tensor_init(output_shape),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Softmax {
-    buffer: TensorGpu<f32, ReadWrite>,
-    map: TensorGpu<f32, ReadBack>,
-}
-
-impl Softmax {
-    pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
-        let shape = Shape::new(info.num_vocab, 1, num_batch, 1);
-        Self {
-            buffer: context.tensor_init(shape),
-            map: context.tensor_init(shape),
         }
     }
 }
@@ -540,25 +507,6 @@ impl<'a> Model<'a> {
             Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
         })
     }
-
-    #[inline]
-    fn request_output(&self, num_batch: usize) -> Arc<Output> {
-        self.output_cache.request(num_batch, || {
-            Output::new(&self.context, &self.info, num_batch)
-        })
-    }
-
-    #[inline]
-    fn request_softmax(&self, num_batch: usize) -> Arc<Softmax> {
-        self.softmax_cache.request(num_batch, || {
-            Softmax::new(&self.context, &self.info, num_batch)
-        })
-    }
-
-    #[inline]
-    fn head_shape(&self, num_batch: usize) -> Shape {
-        Shape::new(self.info.num_vocab, 1, num_batch, 1)
-    }
 }
 
 impl<'a> FromBuilder for Model<'a> {
@@ -770,7 +718,7 @@ impl<'a> FromBuilder for Model<'a> {
 }
 
 #[async_trait]
-impl super::Model for Model<'_> {
+impl ModelBase for Model<'_> {
     type ModelState = ModelState;
 
     #[inline]
@@ -793,75 +741,34 @@ impl super::Model for Model<'_> {
         self.head_chunk_size
     }
 
-    async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
-        let max_batch = input.len();
-
-        let mut redirect = vec![None; max_batch];
-        let input: Vec<_> = input
-            .into_iter()
-            .enumerate()
-            .filter_map(|(batch, data)| data.map(|data| (batch, data)))
-            .map(|(batch, data)| {
-                TensorCpu::from_data(&self.context, self.head_shape(1), data)
-                    .map(|tensor| (batch, tensor))
-            })
-            .try_collect()?;
-        let input = TensorCpu::stack(
-            input
-                .into_iter()
-                .enumerate()
-                .map(|(index, (batch, tensor))| {
-                    redirect[batch] = Some(index);
-                    tensor
-                })
-                .collect_vec(),
-        )?;
-
-        let num_batch = input.shape()[2];
-        let softmax = self.request_softmax(num_batch);
-        softmax.buffer.load(&input)?;
-
-        let op = TensorOp::softmax(&softmax.buffer)?;
-
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
-
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&op);
-        drop(pass);
-
-        encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
-        self.context.queue.submit(Some(encoder.finish()));
-
-        let mut output = softmax
-            .map
-            .clone()
-            .back_async()
-            .await
-            .split(2)
-            .expect("split buffer map")
-            .into_iter()
-            .map(|tensor| Some(tensor.to_vec()))
-            .collect_vec();
-
-        let mut probs = vec![None; max_batch];
-        for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
-            if let Some(redirect) = redirect {
-                std::mem::swap(probs, &mut output[redirect]);
-            }
-        }
-
-        Ok(probs)
+    #[inline]
+    fn head_shape(&self, num_batch: usize) -> Shape {
+        Shape::new(self.info.num_vocab, 1, num_batch, 1)
     }
+}
 
+impl ModelSoftmax for Model<'_> {
+    #[inline]
+    fn request_softmax(&self, num_batch: usize) -> Arc<Softmax> {
+        self.softmax_cache.request(num_batch, || {
+            Softmax::new(&self.context, &self.info, num_batch)
+        })
+    }
+}
+
+impl ModelRun for Model<'_> {
+    #[inline]
+    fn request_output(&self, num_batch: usize) -> Arc<Output> {
+        self.output_cache.request(num_batch, || {
+            Output::new(&self.context, &self.info, num_batch)
+        })
+    }
     fn run_internal(
         &self,
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
         last: Option<usize>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)> {
+    ) -> Result<(Arc<Output>, Vec<Option<usize>>)> {
         let context = &self.context;
         let tensor = &self.tensor;
 
@@ -1274,6 +1181,6 @@ impl super::Model for Model<'_> {
         }
 
         context.queue.submit(Some(encoder.finish()));
-        Ok((output.map.clone(), redirect))
+        Ok((output.clone(), redirect))
     }
 }

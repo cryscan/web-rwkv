@@ -8,11 +8,13 @@ use web_rwkv_derive::{Deref, DerefMut};
 
 use crate::{
     context::Context,
-    tensor::{ReadBack, TensorError, TensorGpu},
+    tensor::{shape::Shape, TensorError},
 };
 
 pub mod loader;
 pub mod matrix;
+pub mod run;
+pub mod softmax;
 pub mod v4;
 pub mod v5;
 pub mod v6;
@@ -102,8 +104,7 @@ pub trait ModelState: Sync {
     ) -> Result<(), TensorError>;
 }
 
-#[async_trait]
-pub trait Model: Sync {
+pub trait ModelBase: Sync {
     type ModelState: ModelState;
 
     fn context(&self) -> &Context;
@@ -112,71 +113,23 @@ pub trait Model: Sync {
     fn token_chunk_size(&self) -> usize;
     fn head_chunk_size(&self) -> usize;
 
-    /// Softmax of the input tensors.
-    async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>>;
+    fn head_shape(&self, num_batch: usize) -> Shape;
+}
 
-    /// Run the model for a batch of tokens as input.
-    /// The length of `tokens` must match the number of batches in `state`.
-    /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
-    async fn run(
-        &self,
-        tokens: &mut Vec<Vec<u16>>,
-        state: &Self::ModelState,
-    ) -> Result<Vec<Option<Vec<f32>>>> {
-        let num_token: usize = tokens.iter().map(Vec::len).sum();
-        let max_batch = state.max_batch();
+pub trait Model:
+    ModelBase
+    + softmax::ModelSoftmax
+    + run::ModelRun
+    + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
+{
+}
 
-        if tokens.len() != max_batch {
-            return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
-        }
-        if num_token == 0 {
-            return Err(ModelError::EmptyInput.into());
-        }
-
-        // we only infer at most `token_chunk_size` tokens at a time
-        let mut num_token = num_token.min(self.token_chunk_size());
-        let mut inputs = vec![vec![]; max_batch];
-        let mut last = None;
-
-        // take `num_token` tokens out of all the inputs and put into `input`
-        for (index, (batch, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
-            let mid = batch.len().min(num_token);
-            num_token -= mid;
-
-            let (head, tail) = batch.split_at(mid);
-            last = (!tail.is_empty()).then_some(index);
-            *input = head.to_vec();
-            *batch = tail.to_vec();
-
-            if num_token == 0 {
-                break;
-            }
-        }
-
-        let (output, redirect) = self.run_internal(inputs, state, last)?;
-        let output = output.back_async().await;
-
-        Ok(redirect
-            .into_iter()
-            .map(|index| {
-                index.map(|index| {
-                    output
-                        .slice(.., index, .., ..)
-                        .expect("this never happens")
-                        .to_vec()
-                })
-            })
-            .collect())
-    }
-
-    /// Actual implementation of the model's inference.
-    #[allow(clippy::type_complexity)]
-    fn run_internal(
-        &self,
-        tokens: Vec<Vec<u16>>,
-        state: &Self::ModelState,
-        last: Option<usize>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)>;
+impl<S: ModelState, M> Model for M where
+    M: ModelBase<ModelState = S>
+        + softmax::ModelSoftmax
+        + run::ModelRun
+        + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
+{
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -288,7 +241,7 @@ impl<'a> ModelBuilder<'a> {
 
     pub fn build<M>(self) -> Result<M>
     where
-        M: Model + FromBuilder<Builder<'a> = Self, Error = anyhow::Error>,
+        M: ModelBase + FromBuilder<Builder<'a> = Self, Error = anyhow::Error>,
     {
         M::from_builder(self)
     }
