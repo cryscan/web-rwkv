@@ -92,9 +92,11 @@ You can now download the converted models [here](https://huggingface.co/cgisky/R
 
 You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
 
-If you don't have python installed or don't want to, there is a pure rust converter that you can run
+If you don't have python installed or don't want to, there is a pure rust [`converter`](https://github.com/cryscan/web-rwkv-converter).
+You can clone that repo and run
 ```bash
-$ cargo run --release --example converter --all-features -- --input /path/to/model.pth
+$ cd /path/to/web-rwkv-converter
+$ cargo run --release --example converter -- --input /path/to/model.pth
 ```
 
 ## Troubleshoot

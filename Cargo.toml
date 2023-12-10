@@ -33,19 +33,6 @@ itertools = "0.11"
 log = "0.4"
 web-rwkv-derive = { version = "0.2.0", path = "crates/web-rwkv-derive" }
 
-[dependencies.repugnant-pickle]
-git = "https://github.com/KerfuffleV2/repugnant-pickle"
-tag = "v0.0.1"
-features = ["torch"]
-optional = true
-
-[features]
-converter = ["dep:repugnant-pickle"]
-
-[[example]]
-name = "converter"
-required-features = ["converter"]
-
 [dev-dependencies]
 pollster = "0.3.0"
 memmap2 = "0.7"
