@@ -1,11 +1,24 @@
-use std::{collections::HashMap, fs::File, path::PathBuf};
+use std::{collections::HashMap, path::Path};
 
 use anyhow::Result;
-use clap::Parser;
 use half::{bf16, f16};
-use memmap2::Mmap;
+use itertools::Itertools;
 use repugnant_pickle::{RepugnantTorchTensors as TorchTensors, TensorType};
 use safetensors::{tensor::TensorView, Dtype};
+
+pub const RENAME: [(&str, &str); 4] = [
+    ("time_faaaa", "time_first"),
+    ("time_maa", "time_mix"),
+    ("lora_A", "lora.0"),
+    ("lora_B", "lora.1"),
+];
+
+pub const TRANSPOSE: [&str; 4] = [
+    "time_mix_w1",
+    "time_mix_w2",
+    "time_decay_w1",
+    "time_decay_w2",
+];
 
 struct Tensor {
     name: String,
@@ -13,13 +26,15 @@ struct Tensor {
     data: Vec<f16>,
 }
 
-fn load_tensors(
-    data: &[u8],
+fn load_tensors<'a, 'b, 'c>(
+    data: &'a [u8],
     torch: TorchTensors,
-    rename: &[(&str, &str)],
-    transpose: &[&str],
+    rename: impl IntoIterator<Item = (&'b str, &'b str)>,
+    transpose: impl IntoIterator<Item = &'c str>,
 ) -> Vec<Tensor> {
     let mut tensors = vec![];
+    let rename = rename.into_iter().collect_vec();
+    let transpose = transpose.into_iter().collect_vec();
 
     for tensor in torch.into_iter() {
         let name = rename
@@ -68,58 +83,25 @@ fn load_tensors(
     tensors
 }
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    #[arg(short, long, value_name = "FILE")]
-    input: PathBuf,
-    #[arg(short, long, value_name = "FILE")]
-    output: Option<PathBuf>,
-}
-
-fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let tensors = TorchTensors::new_from_file(&cli.input)?;
-    // print!("{:#?}", tensors);
-
-    let file = File::open(&cli.input)?;
-    let map = unsafe { Mmap::map(&file)? };
-
-    let rename = [
-        ("time_faaaa", "time_first"),
-        ("time_maa", "time_mix"),
-        ("lora_A", "lora.0"),
-        ("lora_B", "lora.1"),
-    ];
-    let transpose = [
-        "time_mix_w1",
-        "time_mix_w2",
-        "time_decay_w1",
-        "time_decay_w2",
-    ];
-
-    let tensors = load_tensors(&map, tensors, &rename, &transpose);
+pub fn convert_safetensors<'a, 'b, 'c>(
+    input: impl AsRef<Path>,
+    data: &'a [u8],
+    output: impl AsRef<Path>,
+    rename: impl IntoIterator<Item = (&'b str, &'b str)>,
+    transpose: impl IntoIterator<Item = &'c str>,
+) -> Result<()> {
+    let torch = TorchTensors::new_from_file(input)?;
+    let tensors = load_tensors(data, torch, rename, transpose);
     let views = tensors
         .iter()
         .map(|x| TensorView::new(Dtype::F16, x.shape.clone(), bytemuck::cast_slice(&x.data)))
         .collect::<Result<Vec<_>, _>>()?;
-    let metadata: HashMap<String, TensorView> = tensors
+    let data = tensors
         .iter()
         .zip(views)
         .map(|(tensor, view)| (tensor.name.clone(), view))
-        .collect();
+        .collect::<HashMap<_, _>>();
 
-    let output = cli.output.unwrap_or_else(|| {
-        let path = cli
-            .input
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-        let stem = cli.input.file_stem().expect("please name the file");
-        let name: PathBuf = [&stem.to_string_lossy(), "st"].join(".").into();
-        path.join(name)
-    });
-    safetensors::serialize_to_file(&metadata, &None, &output)?;
-
+    safetensors::serialize_to_file(&data, &None, output.as_ref())?;
     Ok(())
 }

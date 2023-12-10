@@ -15,8 +15,7 @@ env:
 
   # Space separated paths to include in the archive.
   RELEASE_ADDS: README.md LICENSE assets
-  RELEASE_BINS: web-rwkv-converter
-  EXAMPLE_BINS: gen chat batch
+  EXAMPLE_BINS: gen chat batch converter
 
 jobs:
   build:
@@ -64,19 +63,15 @@ jobs:
         if: matrix.build == 'linux'
         run: |
           rustup target add ${{ env.LINUX_TARGET }}
-          cargo build --release --workspace --target ${{ env.LINUX_TARGET }}
-          cargo build --release --examples --target ${{ env.LINUX_TARGET }}
+          cargo build --release --examples --target ${{ env.LINUX_TARGET }} --all-features
       - name: Build (MacOS)
         if: matrix.build == 'macos'
         run: |
-          cargo build --release --workspace
-          cargo build --release --examples
-
+          cargo build --release --examples --all-features
       - name: Build (Windows)
         if: matrix.build == 'windows'
         run: |
-          cargo build --release --workspace
-          cargo build --release --examples
+          cargo build --release --examples --all-features
 
       - name: Create artifact directory
         run: |
@@ -85,10 +80,6 @@ jobs:
       - name: Create tarball (Linux)
         if: matrix.build == 'linux'
         run: |
-          for bin in ${{ env.RELEASE_BINS }}
-          do
-            mv ./target/${{ env.LINUX_TARGET }}/release/${bin} ./dist/${bin}
-          done
           for bin in ${{ env.EXAMPLE_BINS }}
           do
             mv ./target/${{ env.LINUX_TARGET }}/release/examples/${bin} ./dist/${bin}
@@ -99,10 +90,6 @@ jobs:
         if: matrix.build == 'windows'
         shell: bash
         run: |
-          for bin in ${{ env.RELEASE_BINS }}
-          do
-            mv ./target/release/${bin}.exe ./dist/${bin}.exe
-          done
           for bin in ${{ env.EXAMPLE_BINS }}
           do
             mv ./target/release/examples/${bin}.exe ./dist/${bin}.exe
@@ -112,10 +99,6 @@ jobs:
       - name: Create tarball (MacOS)
         if: matrix.build == 'macos'
         run: |
-          for bin in ${{ env.RELEASE_BINS }}
-          do
-            mv ./target/release/${bin} ./dist/${bin}
-          done
           for bin in ${{ env.EXAMPLE_BINS }}
           do
             mv ./target/release/examples/${bin} ./dist/${bin}

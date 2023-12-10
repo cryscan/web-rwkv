@@ -107,9 +107,9 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-fn load_model<'a, M: Model>(
+fn load_model<M: Model>(
     context: &Context,
-    data: &'a [u8],
+    data: &[u8],
     lora: Option<PathBuf>,
     quant: Option<usize>,
     quant_nf4: Option<usize>,
@@ -121,7 +121,7 @@ fn load_model<'a, M: Model>(
     let quant_nf4 = quant_nf4
         .map(|layer| (0..layer).map(|layer| (layer, Quant::NF4)).collect_vec())
         .unwrap_or_default();
-    let quant = quant.into_iter().chain(quant_nf4.into_iter()).collect();
+    let quant = quant.into_iter().chain(quant_nf4).collect();
     let model = ModelBuilder::new(context, data)
         .with_quant(quant)
         .with_turbo(turbo);
