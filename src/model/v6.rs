@@ -767,7 +767,7 @@ impl ModelRun for Model<'_> {
         &self,
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
-        last: Option<usize>,
+        compute_head: Vec<bool>,
     ) -> Result<(Arc<Output>, Vec<Option<usize>>)> {
         let context = &self.context;
         let tensor = &self.tensor;
@@ -805,7 +805,7 @@ impl ModelRun for Model<'_> {
             .cursors
             .iter()
             .filter(|cursor| cursor.len > 0)
-            .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
+            .filter(|cursor| compute_head[cursor.batch])
             .enumerate()
             .map(|(index, cursor)| {
                 redirect[cursor.batch] = Some(index);

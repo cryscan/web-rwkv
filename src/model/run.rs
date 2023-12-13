@@ -39,7 +39,7 @@ pub trait ModelRun: ModelBase {
         &self,
         tokens: Vec<Vec<u16>>,
         state: &Self::ModelState,
-        last: Option<usize>,
+        compute_head: Vec<bool>,
     ) -> Result<(Arc<Output>, Vec<Option<usize>>)>;
 
     /// Run the model for a batch of tokens as input.
@@ -63,24 +63,32 @@ pub trait ModelRun: ModelBase {
         // we only infer at most `token_chunk_size` tokens at a time
         let mut num_token = num_token.min(self.token_chunk_size());
         let mut inputs = vec![vec![]; max_batch];
-        let mut last = None;
+        let mut compute_head = vec![false; max_batch];
 
         // take `num_token` tokens out of all the inputs and put into `input`
-        for (index, (batch, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
-            let mid = batch.len().min(num_token);
+        // first pass, make sure each slot computes at least one token
+        for (index, (remain, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
+            let mid = 1.min(remain.len()).min(num_token);
             num_token -= mid;
 
-            let (head, tail) = batch.split_at(mid);
-            last = (!tail.is_empty()).then_some(index);
-            *input = head.to_vec();
-            *batch = tail.to_vec();
-
-            if num_token == 0 {
-                break;
-            }
+            let (head, tail) = remain.split_at(mid);
+            compute_head[index] = tail.is_empty();
+            input.append(&mut head.to_vec());
+            *remain = tail.to_vec();
         }
 
-        let (output, redirect) = self.run_internal(inputs, state, last)?;
+        // second pass, assign rest token budgets from left to right
+        for (index, (remain, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
+            let mid = remain.len().min(num_token);
+            num_token -= mid;
+
+            let (head, tail) = remain.split_at(mid);
+            compute_head[index] = tail.is_empty();
+            input.append(&mut head.to_vec());
+            *remain = tail.to_vec();
+        }
+
+        let (output, redirect) = self.run_internal(inputs, state, compute_head)?;
         let output = output.map.clone().back_async().await;
 
         Ok(redirect

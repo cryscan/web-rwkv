@@ -770,7 +770,7 @@ pub struct TensorStack<'a, T: Scalar> {
 }
 
 impl<'a, T: Scalar> TensorStack<'a, T> {
-    /// Number of input batches.
+    /// Number of input batches (including empty batches).
     #[inline]
     pub fn num_batch(&self) -> usize {
         self.cursors.len()
