@@ -53,7 +53,7 @@ impl<'a> Loader<'a> {
 
     pub fn info(data: &'a [u8]) -> Result<ModelInfo> {
         let model = SafeTensors::deserialize(data)?;
-        let num_layers = {
+        let num_layer = {
             let mut r: usize = 0;
             for i in model.names() {
                 const PREFIX: &str = "blocks.";
@@ -107,7 +107,7 @@ impl<'a> Loader<'a> {
 
         Ok(ModelInfo {
             version,
-            num_layer: num_layers,
+            num_layer,
             num_emb,
             num_hidden,
             num_vocab,
