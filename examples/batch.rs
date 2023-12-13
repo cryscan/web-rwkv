@@ -229,7 +229,7 @@ where
         "The Eiffel Tower is located in the city of",
         "The name of the capital of Italy is",
         "The Space Needle is located in downtown",
-        "User: 水是什么？\n\nAssistant: ",
+        "人们发现",
     ];
     let mut prompts = prompts
         .to_vec()

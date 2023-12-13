@@ -39,7 +39,7 @@ pub trait ModelRun: ModelBase {
         &self,
         tokens: Vec<Vec<u16>>,
         state: &Self::ModelState,
-        compute_head: Vec<bool>,
+        should_output: Vec<bool>,
     ) -> Result<(Arc<Output>, Vec<Option<usize>>)>;
 
     /// Run the model for a batch of tokens as input.
@@ -63,32 +63,44 @@ pub trait ModelRun: ModelBase {
         // we only infer at most `token_chunk_size` tokens at a time
         let mut num_token = num_token.min(self.token_chunk_size());
         let mut inputs = vec![vec![]; max_batch];
-        let mut compute_head = vec![false; max_batch];
+        let mut should_output = vec![false; max_batch];
 
         // take `num_token` tokens out of all the inputs and put into `input`
         // first pass, make sure each slot computes at least one token
-        for (index, (remain, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
+        for (output, input, remain) in itertools::multizip((
+            should_output.iter_mut(),
+            inputs.iter_mut(),
+            tokens.iter_mut(),
+        )) {
             let mid = 1.min(remain.len()).min(num_token);
             num_token -= mid;
 
-            let (head, tail) = remain.split_at(mid);
-            compute_head[index] = tail.is_empty();
-            input.append(&mut head.to_vec());
-            *remain = tail.to_vec();
+            if mid > 0 {
+                let (head, tail) = remain.split_at(mid);
+                *output = tail.is_empty();
+                *input = [&input, head].concat();
+                *remain = tail.to_vec();
+            }
         }
 
         // second pass, assign rest token budgets from left to right
-        for (index, (remain, input)) in tokens.iter_mut().zip(inputs.iter_mut()).enumerate() {
+        for (output, input, remain) in itertools::multizip((
+            should_output.iter_mut(),
+            inputs.iter_mut(),
+            tokens.iter_mut(),
+        )) {
             let mid = remain.len().min(num_token);
             num_token -= mid;
 
-            let (head, tail) = remain.split_at(mid);
-            compute_head[index] = tail.is_empty();
-            input.append(&mut head.to_vec());
-            *remain = tail.to_vec();
+            if mid > 0 {
+                let (head, tail) = remain.split_at(mid);
+                *output = tail.is_empty();
+                *input = [&input, head].concat();
+                *remain = tail.to_vec();
+            }
         }
 
-        let (output, redirect) = self.run_internal(inputs, state, compute_head)?;
+        let (output, redirect) = self.run_internal(inputs, state, should_output)?;
         let output = output.map.clone().back_async().await;
 
         Ok(redirect
