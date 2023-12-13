@@ -31,29 +31,30 @@ use web_rwkv::{
     tokenizer::Tokenizer,
 };
 
-fn sample(probs: Vec<f32>, top_p: f32) -> u16 {
+fn sample(probs: Vec<f32>, _top_p: f32) -> u16 {
     let sorted = probs
         .into_iter()
         .enumerate()
         .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(y).reverse())
-        .scan((0, 0.0), |(_, cum), (id, x)| {
-            if *cum > top_p {
-                None
-            } else {
-                *cum += x;
-                Some((id, *cum))
-            }
-        })
+        // .scan((0, 0.0), |(_, cum), (id, x)| {
+        //     if *cum > top_p {
+        //         None
+        //     } else {
+        //         *cum += x;
+        //         Some((id, *cum))
+        //     }
+        // })
         .collect_vec();
-    let sum: f32 = sorted.iter().map(|(_, x)| x).sum();
-    let sorted = sorted.into_iter().map(|(id, x)| (id, x / sum));
+    // let sum: f32 = sorted.iter().map(|(_, x)| x).sum();
+    // let sorted = sorted.into_iter().map(|(id, x)| (id, x / sum));
 
-    let rand = fastrand::f32();
-    let token = sorted
-        .into_iter()
-        .find_or_first(|&(_, cum)| rand <= cum)
-        .map(|(id, _)| id)
-        .unwrap_or_default();
+    // let rand = fastrand::f32();
+    // let token = sorted
+    //     .into_iter()
+    //     .find_or_first(|&(_, cum)| rand <= cum)
+    //     .map(|(id, _)| id)
+    //     .unwrap_or_default();
+    let token = sorted[0].0;
     token as u16
 }
 
@@ -228,7 +229,7 @@ where
         "The Eiffel Tower is located in the city of",
         "The name of the capital of Italy is",
         "The Space Needle is located in downtown",
-        "人们发现",
+        "User: 水是什么？\n\nAssistant: ",
     ];
     let mut prompts = prompts
         .to_vec()

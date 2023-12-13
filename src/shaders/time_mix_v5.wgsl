@@ -53,23 +53,21 @@ fn compute_cursor(x: u32) -> Cursor {
 
 @compute @workgroup_size(32, 1, 1)
 fn time_mix(in: Input) {
-    let stride = shape[0] / 4u;
-    let dim = shape[1] * stride;
+    let stride_head = shape[0] / 4u;
+    let stride = shape[1] * stride_head;
 
     let index = in.uid.x;
-    let head = in.tid.x / stride;
-    let h = head * stride;
+    let head = in.tid.x / stride_head;
+    let h = head * stride_head;
 
     shared_u[in.tid.x] = time_first[index];
     shared_w[in.tid.x] = time_decay[index];
 
     for (var t = 0u; t < shape[2]; t += 1u) {
         let cursor = compute_cursor(cursors[t]);
-        if cursor.token == 0u {
-            state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * dim + index];
-        }
+        state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
 
-        let bti = t * dim + index;
+        let bti = t * stride + index;
 
         workgroupBarrier();
         shared_k[in.tid.x] = k[bti];
@@ -78,7 +76,7 @@ fn time_mix(in: Input) {
 
         let vv = v[bti];
         var y = vec4<f32>(0.0);
-        for (var j = 0u; j < stride; j += 1u) {
+        for (var j = 0u; j < stride_head; j += 1u) {
             let kk = shared_k[h + j];
             let rr = shared_r[h + j];
             let uu = shared_u[h + j];
@@ -89,10 +87,10 @@ fn time_mix(in: Input) {
 
             let bji = compute_index(cursor.batch, j * 4u + 1u, index);
 
-            ss[0] = state[bji + dim * 0u];
-            ss[1] = state[bji + dim * 1u];
-            ss[2] = state[bji + dim * 2u];
-            ss[3] = state[bji + dim * 3u];
+            ss[0] = state[bji + stride * 0u];
+            ss[1] = state[bji + stride * 1u];
+            ss[2] = state[bji + stride * 2u];
+            ss[3] = state[bji + stride * 3u];
 
             kv[0] = kk[0] * vv;
             kv[1] = kk[1] * vv;
@@ -104,10 +102,10 @@ fn time_mix(in: Input) {
             y += rr[2] * fma(vec4<f32>(uu[2]), kv[2], ss[2]);
             y += rr[3] * fma(vec4<f32>(uu[3]), kv[3], ss[3]);
 
-            state[bji + dim * 0u] = fma(vec4<f32>(ww[0]), ss[0], kv[0]);
-            state[bji + dim * 1u] = fma(vec4<f32>(ww[1]), ss[1], kv[1]);
-            state[bji + dim * 2u] = fma(vec4<f32>(ww[2]), ss[2], kv[2]);
-            state[bji + dim * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
+            state[bji + stride * 0u] = fma(vec4<f32>(ww[0]), ss[0], kv[0]);
+            state[bji + stride * 1u] = fma(vec4<f32>(ww[1]), ss[1], kv[1]);
+            state[bji + stride * 2u] = fma(vec4<f32>(ww[2]), ss[2], kv[2]);
+            state[bji + stride * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
         }
         x[bti] = y;
     }
