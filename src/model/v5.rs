@@ -1036,7 +1036,7 @@ impl ModelRun for Model<'_> {
 
             for (chunk, matrix) in tensor.head.w.iter().enumerate() {
                 let start = chunk * self.head_chunk_size;
-                let end = start + self.head_chunk_size;
+                let end = start + matrix.shape()[1];
                 let input = head_x.view(.., .., .., ..)?;
                 let output = output.head_o.view(start..end, .., .., ..)?;
                 ops.push(TensorOp::matmul_vec_fp16(matrix, input, output)?);

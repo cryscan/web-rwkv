@@ -485,14 +485,18 @@ impl<'a> Loader<'a> {
         let tensor = self.model.tensor("head.weight")?;
         let shape = tensor.shape();
         let shape = Shape::new(shape[1], shape[0], 1, 1);
-        let chunks = shape[1] / chunk_size;
+        let chunks = (shape[1] + chunk_size - 1) / chunk_size;
         let data = bytemuck::cast_slice(tensor.data());
 
         let head = (0..chunks)
             .map(|chunk| {
+                let real_chunk_size = ((chunk + 1) * chunk_size).min(shape[1]) - chunk * chunk_size;
                 let start = (chunk * chunk_size) * shape[0];
-                let end = start + chunk_size * shape[0];
-                context.tensor_from_data(Shape::new(shape[0], chunk_size, 1, 1), &data[start..end])
+                let end = start + real_chunk_size * shape[0];
+                context.tensor_from_data(
+                    Shape::new(shape[0], real_chunk_size, 1, 1),
+                    &data[start..end],
+                )
             })
             .try_collect()?;
         Ok(head)
