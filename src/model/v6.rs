@@ -929,7 +929,7 @@ impl ModelRun for Model<'_> {
                     &layer.att_layer_norm.b,
                     &buffer.att_x,
                 )?,
-                TensorOp::token_shift(
+                TensorOp::token_shift_fp16(
                     &buffer.cursors,
                     layer.att.time_mix_x.view(.., .., .., ..)?,
                     &buffer.att_x,
@@ -1073,7 +1073,7 @@ impl ModelRun for Model<'_> {
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
-                TensorOp::add(
+                TensorOp::add_fp32(
                     buffer.input.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
@@ -1091,7 +1091,7 @@ impl ModelRun for Model<'_> {
                     &layer.ffn_layer_norm.b,
                     &buffer.ffn_x,
                 )?,
-                TensorOp::token_shift(
+                TensorOp::token_shift_fp16(
                     &buffer.cursors,
                     layer.ffn.time_mix_k.view(.., .., .., ..)?,
                     &buffer.ffn_x,
@@ -1099,7 +1099,7 @@ impl ModelRun for Model<'_> {
                     &buffer.ffn_kx,
                     true,
                 )?,
-                TensorOp::token_shift(
+                TensorOp::token_shift_fp16(
                     &buffer.cursors,
                     layer.ffn.time_mix_r.view(.., .., .., ..)?,
                     &buffer.ffn_x,
@@ -1133,7 +1133,7 @@ impl ModelRun for Model<'_> {
                     &buffer.ffn_x,
                     state.ffn(index)?,
                 )?,
-                TensorOp::add(
+                TensorOp::add_fp32(
                     buffer.att_o.view(.., .., .., ..)?,
                     buffer.ffn_x.view(.., .., .., ..)?,
                 )?,

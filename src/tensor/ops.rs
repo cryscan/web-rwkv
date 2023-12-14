@@ -632,7 +632,7 @@ impl<'a> TensorOp<'a> {
     }
 
     /// Add `input` onto `output`.
-    pub fn add(
+    pub fn add_fp32(
         input: TensorView<'a, f32>,
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
@@ -642,7 +642,7 @@ impl<'a> TensorOp<'a> {
             .or(input.check_shape(shape))?;
 
         let context = &output.tensor.context;
-        let pipeline = context.pipeline("add")?;
+        let pipeline = context.pipeline("add_fp32")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -723,7 +723,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    pub fn token_shift(
+    pub fn token_shift_fp16(
         cursors: &'a TensorGpu<u32, ReadWrite>,
         time_mix: TensorView<'a, f16>,
         x: &'a TensorGpu<f32, ReadWrite>,
@@ -741,8 +741,8 @@ impl<'a> TensorOp<'a> {
 
         let context = &output.context;
         let pipeline = match reversed {
-            true => context.pipeline("token_shift_rev")?,
-            false => context.pipeline("token_shift")?,
+            false => context.pipeline("token_shift_fp16")?,
+            true => context.pipeline("token_shift_rev_fp16")?,
         };
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -804,8 +804,8 @@ impl<'a> TensorOp<'a> {
 
         let context = &output.context;
         let pipeline = match reversed {
-            true => context.pipeline("token_shift_rev_fp32")?,
             false => context.pipeline("token_shift_fp32")?,
+            true => context.pipeline("token_shift_rev_fp32")?,
         };
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -850,7 +850,7 @@ impl<'a> TensorOp<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn time_mix(
+    pub fn time_mix_v4(
         cursors: &'a TensorGpu<u32, ReadWrite>,
         time_decay: &'a TensorGpu<f32, ReadWrite>,
         time_first: &'a TensorGpu<f32, ReadWrite>,
@@ -871,7 +871,7 @@ impl<'a> TensorOp<'a> {
         state.check_shape(Shape::new(shape[0], 4, num_batch, 1))?;
 
         let context = &x.context;
-        let pipeline = context.pipeline("time_mix")?;
+        let pipeline = context.pipeline("time_mix_v4")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),

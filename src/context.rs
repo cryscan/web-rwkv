@@ -245,15 +245,15 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
-            "token_shift",
+            "token_shift_fp16",
             include_str!("shaders/token_shift.wgsl"),
-            "token_shift",
+            "token_shift_fp16",
             None,
         )
         .with_pipeline(
-            "token_shift_rev",
+            "token_shift_rev_fp16",
             include_str!("shaders/token_shift.wgsl"),
-            "token_shift_rev",
+            "token_shift_rev_fp16",
             None,
         )
         .with_pipeline(
@@ -269,8 +269,8 @@ impl<'a> ContextBuilder<'a> {
             None,
         )
         .with_pipeline(
-            "time_mix",
-            include_str!("shaders/time_mix.wgsl"),
+            "time_mix_v4",
+            include_str!("shaders/time_mix_v4.wgsl"),
             "time_mix",
             None,
         )
@@ -286,7 +286,12 @@ impl<'a> ContextBuilder<'a> {
             "time_mix",
             None,
         )
-        .with_pipeline("add", include_str!("shaders/add.wgsl"), "add", None)
+        .with_pipeline(
+            "add_fp32",
+            include_str!("shaders/add.wgsl"),
+            "add_fp32",
+            None,
+        )
         .with_pipeline(
             "add_fp16",
             include_str!("shaders/add.wgsl"),
