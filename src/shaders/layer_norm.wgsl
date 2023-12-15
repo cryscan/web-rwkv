@@ -5,6 +5,7 @@
 @group(0) @binding(3) var<storage, read_write> x: array<vec4<f32>>;         // (B, T, C)
 
 const BLOCK_SIZE: u32 = 128u;
+const EPS: f32 = 1.0e-5;
 
 var<workgroup> sum: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> sum_squared: array<vec4<f32>, BLOCK_SIZE>;
@@ -49,7 +50,7 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if index == 0u {
         mean = dot(sum[0], vec4<f32>(1.0)) / f32(shape[0]);
-        deviation = inverseSqrt(dot(sum_squared[0], vec4<f32>(1.0)) / f32(shape[0]) - mean * mean);
+        deviation = inverseSqrt(dot(sum_squared[0], vec4<f32>(1.0)) / f32(shape[0]) - mean * mean + EPS);
     }
     workgroupBarrier();
 
