@@ -272,9 +272,9 @@ impl<'a> TensorOp<'a> {
     }
 
     /// Int8 matrix-vector multiplication.
-    /// - `matrix` shape: `[C, R, 1]`.
-    /// - `mx` and `rx` shape: `[C, 1, 1]`.
-    /// - `my` and `ry` shape: `[R, 1, 1]`.
+    /// - `matrix` shape: `[C, R, B]`.
+    /// - `mx` and `rx` shape: `[C, 1, B]`.
+    /// - `my` and `ry` shape: `[R, 1, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_vec_int8(
@@ -287,12 +287,12 @@ impl<'a> TensorOp<'a> {
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape()[0], shape[0], 1, 1))?;
+        matrix.check_shape(Shape::new(input.shape()[0], shape[0], shape[2], 1))?;
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
-        mx.check_shape(Shape::new(matrix.shape[0], 1, 1, 1))?;
-        rx.check_shape(Shape::new(matrix.shape[0], 1, 1, 1))?;
-        my.check_shape(Shape::new(matrix.shape[1], 1, 1, 1))?;
-        ry.check_shape(Shape::new(matrix.shape[1], 1, 1, 1))?;
+        mx.check_shape(Shape::new(matrix.shape[0], shape[2], 1, 1))?;
+        rx.check_shape(Shape::new(matrix.shape[0], shape[2], 1, 1))?;
+        my.check_shape(Shape::new(matrix.shape[1], shape[2], 1, 1))?;
+        ry.check_shape(Shape::new(matrix.shape[1], shape[2], 1, 1))?;
 
         let context = &matrix.context;
         let pipeline = context.pipeline("matmul_vec_int8")?;
@@ -351,8 +351,8 @@ impl<'a> TensorOp<'a> {
     }
 
     /// NFloat4 matrix-vector multiplication.
-    /// - `matrix` shape: `[C, R, 1]`.
-    /// - `absmax` shape: `[C / S, R, 1]`.
+    /// - `matrix` shape: `[C, R, B]`.
+    /// - `absmax` shape: `[C / S, R, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_vec_nf4(
@@ -363,12 +363,12 @@ impl<'a> TensorOp<'a> {
         output: TensorView<'a, f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape()[0] / 2, shape[0], 1, 1))?;
+        matrix.check_shape(Shape::new(input.shape()[0] / 2, shape[0], shape[2], 1))?;
         input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
         absmax.check_shape(Shape::new(
             input.shape()[0] / Self::NF4_BLOCK_SIZE,
             shape[0],
-            1,
+            shape[2],
             1,
         ))?;
 
@@ -378,10 +378,10 @@ impl<'a> TensorOp<'a> {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
-                // BindGroupEntry {
-                //     binding: 0,
-                //     resource: matrix.meta_binding(),
-                // },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: matrix.meta_binding(),
+                },
                 BindGroupEntry {
                     binding: 1,
                     resource: input.meta_binding(),

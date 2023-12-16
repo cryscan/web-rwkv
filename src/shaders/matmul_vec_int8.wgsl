@@ -8,11 +8,11 @@ struct View {
 @group(0) @binding(1) var<uniform> source: View;                            // [R, T, B]
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
 
-@group(0) @binding(3) var<storage, read> matrix: array<u32>;                // (R, C)
-@group(0) @binding(4) var<storage, read> mx: array<vec4<f32>>;              // (C)
-@group(0) @binding(5) var<storage, read> rx: array<vec4<f32>>;              // (C)
-@group(0) @binding(6) var<storage, read> my: array<vec4<f32>>;              // (R)
-@group(0) @binding(7) var<storage, read> ry: array<vec4<f32>>;              // (R)
+@group(0) @binding(3) var<storage, read> matrix: array<u32>;                // (B, R, C)
+@group(0) @binding(4) var<storage, read> mx: array<vec4<f32>>;              // (B, C)
+@group(0) @binding(5) var<storage, read> rx: array<vec4<f32>>;              // (B, C)
+@group(0) @binding(6) var<storage, read> my: array<vec4<f32>>;              // (B, R)
+@group(0) @binding(7) var<storage, read> ry: array<vec4<f32>>;              // (B, R)
 
 @group(0) @binding(8) var<storage, read> input: array<vec4<f32>>;           // (B, T, C)
 @group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, R)
@@ -47,12 +47,12 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let batch = invocation_id.z;
 
     let bb = compute_index(source, batch, token, 0u);
-    let cb = channel * 4u * stride;
+    let cb = batch * shape.y * stride + channel * 4u * stride;
 
     // let myc = unpack4x16float(my[channel]);
     // let ryc = unpack4x16float(ry[channel]);
-    let myc = my[channel];
-    let ryc = ry[channel];
+    let myc = my[batch * shape.y + channel];
+    let ryc = ry[batch * shape.y + channel];
 
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {

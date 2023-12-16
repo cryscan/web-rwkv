@@ -4,6 +4,7 @@ struct View {
     shape: vec4<u32>,  
 };
 
+@group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [C, R, B]
 @group(0) @binding(1) var<uniform> source: View;                            // [R, T, B]
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
 @group(0) @binding(3) var<uniform> quant: array<vec4<f32>, 4u>;
@@ -85,7 +86,7 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let batch = invocation_id.z;
 
     let bb = compute_index(source, batch, token, 0u, 8u);
-    let cb = channel * 4u * stride;
+    let cb = batch * shape.y * stride + channel * 4u * stride;
 
     if index == 0u {
         q = quant;
