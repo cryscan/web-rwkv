@@ -2197,7 +2197,7 @@ mod tests {
             .collect_vec();
         let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
-        #[allow(clippy::lossy_float_literal)]
+        #[allow(clippy::excessive_precision)]
         let quant: [f32; 16] = [
             -1.0,
             -0.6961928009986877,

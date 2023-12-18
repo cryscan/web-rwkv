@@ -2,12 +2,14 @@ use std::{collections::HashMap, convert::Infallible};
 
 use anyhow::Result;
 use async_trait::async_trait;
+use half::f16;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
 use crate::{
     context::Context,
+    num::Scalar,
     tensor::{shape::Shape, TensorError},
 };
 
@@ -21,6 +23,11 @@ pub mod v6;
 
 pub const RESCALE_LAYER: usize = 6;
 
+pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
+pub const HEAD_CHUNK_SIZES: [usize; 8] = [
+    0x4000, 0x3000, 0x2000, 0x1800, 0x1600, 0x1400, 0x1200, 0x1000,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelVersion {
     V4,
@@ -31,7 +38,7 @@ pub enum ModelVersion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelError {
     InvalidVersion,
-    InvalidChunkSize(usize),
+    NoViableChunkSize,
     BatchSize(usize, usize),
     BatchOutOfRange { batch: usize, max: usize },
     EmptyInput,
@@ -41,7 +48,7 @@ impl std::fmt::Display for ModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ModelError::InvalidVersion => write!(f, "invalid model version"),
-            ModelError::InvalidChunkSize(size) => write!(f, "chunk size {size} not power of 2"),
+            ModelError::NoViableChunkSize => write!(f, "no viable chunk size found"),
             ModelError::BatchSize(lhs, rhs) => write!(f, "input batch size {lhs} not match {rhs}"),
             ModelError::BatchOutOfRange { batch, max } => {
                 write!(f, "batch {batch} out of range of max {max}")
@@ -61,6 +68,13 @@ pub struct ModelInfo {
     pub num_hidden: usize,
     pub num_vocab: usize,
     pub num_head: usize,
+}
+
+impl ModelInfo {
+    /// Computes the required storage buffer size.
+    pub fn max_buffer_size(&self) -> usize {
+        (self.num_emb * self.num_hidden * f16::size()).max(128 << 20)
+    }
 }
 
 pub trait FromBuilder: Sized {
@@ -199,7 +213,6 @@ pub struct ModelBuilder<'a> {
     lora: Vec<Lora>,
     quant: HashMap<usize, Quant>,
     turbo: bool,
-    head_chunk_size: usize,
     token_chunk_size: usize,
 }
 
@@ -211,7 +224,6 @@ impl<'a> ModelBuilder<'a> {
             lora: vec![],
             quant: Default::default(),
             turbo: false,
-            head_chunk_size: 4096,
             token_chunk_size: 32,
         }
     }
@@ -227,13 +239,6 @@ impl<'a> ModelBuilder<'a> {
 
     pub fn with_turbo(self, turbo: bool) -> Self {
         Self { turbo, ..self }
-    }
-
-    pub fn with_head_chunk_size(self, head_chunk_size: usize) -> Self {
-        Self {
-            head_chunk_size,
-            ..self
-        }
     }
 
     pub fn with_token_chunk_size(self, token_chunk_size: usize) -> Self {

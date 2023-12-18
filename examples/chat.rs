@@ -14,8 +14,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelState, ModelVersion,
-        Quant, StateBuilder,
+        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelState,
+        ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -70,8 +70,12 @@ impl Sampler {
     }
 }
 
-async fn create_context() -> Result<Context> {
+async fn create_context(info: &ModelInfo) -> Result<Context> {
     let instance = Instance::new();
+    let limits = wgpu::Limits {
+        max_storage_buffer_binding_size: info.max_buffer_size() as u32,
+        ..Default::default()
+    };
     #[cfg(not(debug_assertions))]
     let adapter = {
         let backends = wgpu::Backends::all();
@@ -93,6 +97,7 @@ async fn create_context() -> Result<Context> {
         .await?;
     let context = ContextBuilder::new(adapter)
         .with_default_pipelines()
+        .with_limits(limits)
         .build()
         .await?;
     println!("{:#?}", context.adapter.get_info());
@@ -164,9 +169,7 @@ fn load_prompt(path: Option<PathBuf>) -> Result<Prompt> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let context = create_context().await?;
     let tokenizer = load_tokenizer()?;
-
     let model = cli.model.unwrap_or(
         std::fs::read_dir("assets/models")
             .unwrap()
@@ -183,6 +186,8 @@ async fn run(cli: Cli) -> Result<()> {
 
     let info = Loader::info(&map)?;
     println!("{:#?}", info);
+
+    let context = create_context(&info).await?;
 
     match info.version {
         ModelVersion::V4 => {

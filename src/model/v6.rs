@@ -12,10 +12,12 @@ use super::{
     run::{ModelRun, Output},
     softmax::{ModelSoftmax, Softmax},
     FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, Quant, StateBuilder,
+    HEAD_CHUNK_SIZES,
 };
 use crate::{
     context::Context,
-    model::RESCALE_LAYER,
+    model::{MIN_TOKEN_CHUNK_SIZE, RESCALE_LAYER},
+    num::Scalar,
     tensor::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorPass},
@@ -520,19 +522,23 @@ impl<'a> FromBuilder for Model<'a> {
             lora,
             quant,
             turbo,
-            head_chunk_size,
             token_chunk_size,
         } = builder;
 
-        if !head_chunk_size.is_power_of_two() {
-            return Err(ModelError::InvalidChunkSize(head_chunk_size).into());
-        }
-        if !token_chunk_size.is_power_of_two() {
-            return Err(ModelError::InvalidChunkSize(token_chunk_size).into());
-        }
-
         let loader = Loader::new(&context, data, lora)?;
         let info = Loader::info(data)?;
+
+        let token_chunk_size = token_chunk_size
+            .max(MIN_TOKEN_CHUNK_SIZE)
+            .next_power_of_two();
+        log::info!("token chunk size: {token_chunk_size}");
+
+        let max_chunk_size = context.device.limits().max_storage_buffer_binding_size as usize;
+        let head_chunk_size = HEAD_CHUNK_SIZES
+            .into_iter()
+            .find(|&x| info.num_emb * x * f16::size() <= max_chunk_size)
+            .ok_or(ModelError::NoViableChunkSize)?;
+        log::info!("head chunk size: {head_chunk_size}");
 
         let rescale = turbo || quant.iter().any(|(_, quant)| matches!(quant, Quant::NF4));
 
