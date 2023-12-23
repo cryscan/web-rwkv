@@ -66,17 +66,21 @@ impl<'b, 'a: 'b> TensorPass<'a> for ComputePass<'b> {
                 dispatch,
             } => {
                 self.set_pipeline(pipeline);
-                bindings.iter().enumerate().for_each(|(index, bind_group)| {
+                for (index, bind_group) in bindings.iter().enumerate() {
                     self.set_bind_group(index as u32, bind_group, &[])
-                });
+                }
                 self.dispatch_workgroups(dispatch[0], dispatch[1], dispatch[2]);
             }
             TensorOp::List(ops) => {
                 ops.iter().for_each(|op| self.execute_tensor_op(op));
             }
+            TensorOp::Hook(_) => {}
         }
     }
 }
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TensorOpHook(pub usize);
 
 pub enum TensorOp<'a> {
     Atom {
@@ -85,6 +89,7 @@ pub enum TensorOp<'a> {
         dispatch: [u32; 3],
     },
     List(Vec<TensorOp<'a>>),
+    Hook(TensorOpHook),
 }
 
 impl<'a> TensorOp<'a> {
