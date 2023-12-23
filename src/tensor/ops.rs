@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use half::f16;
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, CommandEncoder, ComputePass, ComputePipeline,
@@ -82,17 +84,17 @@ impl<'b, 'a: 'b> TensorPass<'a> for ComputePass<'b> {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TensorOpHook(pub usize);
 
-pub enum TensorOp<'a> {
+pub enum TensorOp {
     Atom {
-        pipeline: &'a ComputePipeline,
+        pipeline: Arc<ComputePipeline>,
         bindings: Vec<BindGroup>,
         dispatch: [u32; 3],
     },
-    List(Vec<TensorOp<'a>>),
+    List(Vec<TensorOp>),
     Hook(TensorOpHook),
 }
 
-impl<'a> TensorOp<'a> {
+impl TensorOp {
     pub const BLOCK_SIZE: u32 = 128;
     pub const NF4_BLOCK_SIZE: usize = 64;
 
@@ -107,7 +109,7 @@ impl<'a> TensorOp<'a> {
     }
 
     /// Softmax operator applied on `x`.
-    pub fn softmax(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn softmax(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape();
         let context = &x.context;
         let pipeline = context.pipeline("softmax")?;
@@ -138,9 +140,9 @@ impl<'a> TensorOp<'a> {
     /// - `w` shape: `[C, 1, 1]`.
     /// - `b` shape: `[C, 1, 1]`.
     pub fn layer_norm(
-        w: &'a TensorGpu<f16, ReadWrite>,
-        b: &'a TensorGpu<f16, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        w: &TensorGpu<f16, ReadWrite>,
+        b: &TensorGpu<f16, ReadWrite>,
+        x: &TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape();
         w.check_shape(Shape::new(shape[0], 1, 1, 1))?;
@@ -183,9 +185,9 @@ impl<'a> TensorOp<'a> {
     /// - `w` shape: `[S, H, 1]`.
     /// - `b` shape: `[S, H, 1]`.
     pub fn group_norm(
-        w: &'a TensorGpu<f16, ReadWrite>,
-        b: &'a TensorGpu<f16, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        w: &TensorGpu<f16, ReadWrite>,
+        b: &TensorGpu<f16, ReadWrite>,
+        x: &TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape();
         w.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
@@ -228,9 +230,9 @@ impl<'a> TensorOp<'a> {
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_vec_fp16(
-        matrix: &'a TensorGpu<f16, ReadWrite>,
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
+        matrix: &TensorGpu<f16, ReadWrite>,
+        input: TensorView<f32>,
+        output: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         matrix.check_shape(Shape::new(input.shape()[0], shape[0], shape[2], 1))?;
@@ -283,13 +285,13 @@ impl<'a> TensorOp<'a> {
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_vec_int8(
-        matrix: &'a TensorGpu<u8, ReadWrite>,
-        mx: &'a TensorGpu<f32, ReadWrite>,
-        rx: &'a TensorGpu<f32, ReadWrite>,
-        my: &'a TensorGpu<f32, ReadWrite>,
-        ry: &'a TensorGpu<f32, ReadWrite>,
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
+        matrix: &TensorGpu<u8, ReadWrite>,
+        mx: &TensorGpu<f32, ReadWrite>,
+        rx: &TensorGpu<f32, ReadWrite>,
+        my: &TensorGpu<f32, ReadWrite>,
+        ry: &TensorGpu<f32, ReadWrite>,
+        input: TensorView<f32>,
+        output: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         matrix.check_shape(Shape::new(input.shape()[0], shape[0], shape[2], 1))?;
@@ -361,11 +363,11 @@ impl<'a> TensorOp<'a> {
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_vec_nf4(
-        matrix: &'a TensorGpu<u8, ReadWrite>,
-        quant: &'a TensorGpu<f32, Uniform>,
-        absmax: &'a TensorGpu<f16, ReadWrite>,
-        input: TensorView<'a, f16>,
-        output: TensorView<'a, f32>,
+        matrix: &TensorGpu<u8, ReadWrite>,
+        quant: &TensorGpu<f32, Uniform>,
+        absmax: &TensorGpu<f16, ReadWrite>,
+        input: TensorView<f16>,
+        output: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         matrix.check_shape(Shape::new(input.shape()[0] / 2, shape[0], shape[2], 1))?;
@@ -432,9 +434,9 @@ impl<'a> TensorOp<'a> {
     ///
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
     pub fn matmul_mat_fp16(
-        matrix: TensorView<'a, f16>,
-        input: TensorView<'a, f16>,
-        output: TensorView<'a, f32>,
+        matrix: TensorView<f16>,
+        input: TensorView<f16>,
+        output: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
@@ -491,13 +493,13 @@ impl<'a> TensorOp<'a> {
     ///
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
     pub fn matmul_mat_int8(
-        matrix: TensorView<'a, u8>,
-        mx: &'a TensorGpu<f32, ReadWrite>,
-        rx: &'a TensorGpu<f32, ReadWrite>,
-        my: &'a TensorGpu<f32, ReadWrite>,
-        ry: &'a TensorGpu<f32, ReadWrite>,
-        input: TensorView<'a, f16>,
-        output: TensorView<'a, f32>,
+        matrix: TensorView<u8>,
+        mx: &TensorGpu<f32, ReadWrite>,
+        rx: &TensorGpu<f32, ReadWrite>,
+        my: &TensorGpu<f32, ReadWrite>,
+        ry: &TensorGpu<f32, ReadWrite>,
+        input: TensorView<f16>,
+        output: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
@@ -574,11 +576,11 @@ impl<'a> TensorOp<'a> {
     ///
     /// Note: `K` must be multiples of 256; `M` and `N` must be multiples of 8.
     pub fn matmul_mat_nf4(
-        matrix: TensorView<'a, u8>,
-        quant: &'a TensorGpu<f32, Uniform>,
-        absmax: &'a TensorGpu<f16, ReadWrite>,
-        input: TensorView<'a, f16>,
-        output: TensorView<'a, f32>,
+        matrix: TensorView<u8>,
+        quant: &TensorGpu<f32, Uniform>,
+        absmax: &TensorGpu<f16, ReadWrite>,
+        input: TensorView<f16>,
+        output: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
@@ -637,10 +639,7 @@ impl<'a> TensorOp<'a> {
     }
 
     /// Add `input` onto `output`.
-    pub fn add_fp32(
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
-    ) -> Result<Self, TensorError> {
+    pub fn add_fp32(input: TensorView<f32>, output: TensorView<f32>) -> Result<Self, TensorError> {
         let shape = output.shape();
         input
             .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
@@ -683,10 +682,7 @@ impl<'a> TensorOp<'a> {
     }
 
     /// Add `input` onto `output`.
-    pub fn add_fp16(
-        input: TensorView<'a, f16>,
-        output: TensorView<'a, f32>,
-    ) -> Result<Self, TensorError> {
+    pub fn add_fp16(input: TensorView<f16>, output: TensorView<f32>) -> Result<Self, TensorError> {
         let shape = output.shape();
         input
             .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
@@ -729,11 +725,11 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn token_shift_fp16(
-        cursors: &'a TensorGpu<u32, ReadWrite>,
-        time_mix: TensorView<'a, f16>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        cursors: &TensorGpu<u32, ReadWrite>,
+        time_mix: TensorView<f16>,
+        x: &TensorGpu<f32, ReadWrite>,
         sx: TensorView<f32>,
-        output: &'a TensorGpu<f32, ReadWrite>,
+        output: &TensorGpu<f32, ReadWrite>,
         reversed: bool,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
@@ -792,11 +788,11 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn token_shift_fp32(
-        cursors: &'a TensorGpu<u32, ReadWrite>,
-        time_mix: TensorView<'a, f32>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        cursors: &TensorGpu<u32, ReadWrite>,
+        time_mix: TensorView<f32>,
+        x: &TensorGpu<f32, ReadWrite>,
         sx: TensorView<f32>,
-        output: &'a TensorGpu<f32, ReadWrite>,
+        output: &TensorGpu<f32, ReadWrite>,
         reversed: bool,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
@@ -856,13 +852,13 @@ impl<'a> TensorOp<'a> {
 
     #[allow(clippy::too_many_arguments)]
     pub fn time_mix_v4(
-        cursors: &'a TensorGpu<u32, ReadWrite>,
-        time_decay: &'a TensorGpu<f32, ReadWrite>,
-        time_first: &'a TensorGpu<f32, ReadWrite>,
-        k: &'a TensorGpu<f32, ReadWrite>,
-        v: &'a TensorGpu<f32, ReadWrite>,
-        r: &'a TensorGpu<f32, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        cursors: &TensorGpu<u32, ReadWrite>,
+        time_decay: &TensorGpu<f32, ReadWrite>,
+        time_first: &TensorGpu<f32, ReadWrite>,
+        k: &TensorGpu<f32, ReadWrite>,
+        v: &TensorGpu<f32, ReadWrite>,
+        r: &TensorGpu<f32, ReadWrite>,
+        x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape;
@@ -933,13 +929,13 @@ impl<'a> TensorOp<'a> {
 
     #[allow(clippy::too_many_arguments)]
     pub fn time_mix_v5(
-        cursors: &'a TensorGpu<u32, ReadWrite>,
-        time_decay: &'a TensorGpu<f32, ReadWrite>,
-        time_first: &'a TensorGpu<f32, ReadWrite>,
-        k: &'a TensorGpu<f32, ReadWrite>,
-        v: &'a TensorGpu<f32, ReadWrite>,
-        r: &'a TensorGpu<f32, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        cursors: &TensorGpu<u32, ReadWrite>,
+        time_decay: &TensorGpu<f32, ReadWrite>,
+        time_first: &TensorGpu<f32, ReadWrite>,
+        k: &TensorGpu<f32, ReadWrite>,
+        v: &TensorGpu<f32, ReadWrite>,
+        r: &TensorGpu<f32, ReadWrite>,
+        x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape;
@@ -1011,13 +1007,13 @@ impl<'a> TensorOp<'a> {
 
     #[allow(clippy::too_many_arguments)]
     pub fn time_mix_v6(
-        cursors: &'a TensorGpu<u32, ReadWrite>,
-        time_decay: &'a TensorGpu<f32, ReadWrite>,
-        time_first: &'a TensorGpu<f32, ReadWrite>,
-        k: &'a TensorGpu<f32, ReadWrite>,
-        v: &'a TensorGpu<f32, ReadWrite>,
-        r: &'a TensorGpu<f32, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
+        cursors: &TensorGpu<u32, ReadWrite>,
+        time_decay: &TensorGpu<f32, ReadWrite>,
+        time_first: &TensorGpu<f32, ReadWrite>,
+        k: &TensorGpu<f32, ReadWrite>,
+        v: &TensorGpu<f32, ReadWrite>,
+        r: &TensorGpu<f32, ReadWrite>,
+        x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape;
@@ -1088,8 +1084,8 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn silu(
-        input: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
+        input: &TensorGpu<f32, ReadWrite>,
+        output: &TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
         input.check_shape(shape)?;
@@ -1126,7 +1122,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    pub fn tanh(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn tanh(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape;
 
         let context = &x.context;
@@ -1157,7 +1153,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    pub fn stable_exp(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn stable_exp(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape;
 
         let context = &x.context;
@@ -1188,7 +1184,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    pub fn squared_relu(x: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn squared_relu(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape;
         let context = &x.context;
         let pipeline = context.pipeline("squared_relu")?;
@@ -1219,11 +1215,11 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn channel_mix(
-        cursors: &'a TensorGpu<u32, ReadWrite>,
-        r: &'a TensorGpu<f32, ReadWrite>,
-        v: &'a TensorGpu<f32, ReadWrite>,
-        x: &'a TensorGpu<f32, ReadWrite>,
-        state: TensorView<'a, f32>,
+        cursors: &TensorGpu<u32, ReadWrite>,
+        r: &TensorGpu<f32, ReadWrite>,
+        v: &TensorGpu<f32, ReadWrite>,
+        x: &TensorGpu<f32, ReadWrite>,
+        state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
         let shape = x.shape;
         let num_batch = state.shape()[2];
@@ -1277,10 +1273,7 @@ impl<'a> TensorOp<'a> {
     }
 
     /// Copy the content of `input` into `output`, given an `offset`.
-    pub fn blit(
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
-    ) -> Result<Self, TensorError> {
+    pub fn blit(input: TensorView<f32>, output: TensorView<f32>) -> Result<Self, TensorError> {
         let shape = output.shape();
         input.check_shape(shape)?;
 
@@ -1321,10 +1314,7 @@ impl<'a> TensorOp<'a> {
     }
 
     /// Swap the `token` and `batch` axes.
-    pub fn transpose(
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
-    ) -> Result<Self, TensorError> {
+    pub fn transpose(input: TensorView<f32>, output: TensorView<f32>) -> Result<Self, TensorError> {
         let shape = input.shape();
         output.check_shape(Shape::new(shape[0], shape[2], shape[1], 1))?;
 
@@ -1365,9 +1355,9 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn blend(
-        factor: &'a TensorGpu<f32, Uniform>,
-        input: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<f32, ReadWrite>,
+        factor: &TensorGpu<f32, Uniform>,
+        input: &TensorGpu<f32, ReadWrite>,
+        output: &TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         input.check_shape(shape)?;
@@ -1410,10 +1400,10 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn blend_lora(
-        factor: &'a TensorGpu<f32, Uniform>,
-        xa: TensorView<'a, f16>,
-        xb: TensorView<'a, f16>,
-        output: TensorView<'a, f16>,
+        factor: &TensorGpu<f32, Uniform>,
+        xa: TensorView<f16>,
+        xb: TensorView<f16>,
+        output: TensorView<f16>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         factor.check_shape(Shape::new(4, 1, 1, 1))?;
@@ -1468,7 +1458,7 @@ impl<'a> TensorOp<'a> {
         })
     }
 
-    pub fn half(output: &'a TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn half(output: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = output.shape();
 
         let context = &output.context;
@@ -1500,8 +1490,8 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn quantize_fp16(
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f16>,
+        input: TensorView<f32>,
+        output: TensorView<f16>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         input.check_shape(shape)?;
@@ -1543,12 +1533,12 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn quantize_mat_int8(
-        input: &'a TensorGpu<f16, ReadWrite>,
-        mx: &'a TensorGpu<f32, ReadWrite>,
-        rx: &'a TensorGpu<f32, ReadWrite>,
-        my: &'a TensorGpu<f32, ReadWrite>,
-        ry: &'a TensorGpu<f32, ReadWrite>,
-        output: &'a TensorGpu<u8, ReadWrite>,
+        input: &TensorGpu<f16, ReadWrite>,
+        mx: &TensorGpu<f32, ReadWrite>,
+        rx: &TensorGpu<f32, ReadWrite>,
+        my: &TensorGpu<f32, ReadWrite>,
+        ry: &TensorGpu<f32, ReadWrite>,
+        output: &TensorGpu<u8, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let shape = output.shape;
         input.check_shape(shape)?;
@@ -1616,10 +1606,10 @@ impl<'a> TensorOp<'a> {
     }
 
     pub fn quantize_mat_nf4(
-        input: &'a TensorGpu<f16, ReadWrite>,
-        quant: &'a TensorGpu<f32, Uniform>,
-        absmax: &'a TensorGpu<f16, ReadWrite>,
-        output: &'a TensorGpu<u8, ReadWrite>,
+        input: &TensorGpu<f16, ReadWrite>,
+        quant: &TensorGpu<f32, Uniform>,
+        absmax: &TensorGpu<f16, ReadWrite>,
+        output: &TensorGpu<u8, ReadWrite>,
     ) -> Result<Self, TensorError> {
         let context = &output.context;
         let shape = output.shape();

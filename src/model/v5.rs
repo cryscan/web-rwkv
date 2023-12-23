@@ -380,7 +380,7 @@ impl super::ModelState for ModelState {
         to_batch: usize,
     ) -> Result<(), TensorError> {
         for (state, other) in self.state.iter().zip(other.state.iter()) {
-            let op: TensorOp<'_> = TensorOp::blit(
+            let op = TensorOp::blit(
                 state.view(.., .., from_batch, ..)?,
                 other.view(.., .., to_batch, ..)?,
             )?;
