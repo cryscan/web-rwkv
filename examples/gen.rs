@@ -195,7 +195,7 @@ where
     let num_tokens = 100;
     for index in 0..=num_tokens {
         instant = Instant::now();
-        let logits = model.run(&mut tokens, &state, &Default::default()).await?;
+        let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
         duration = match index {
             0 => Duration::default(),

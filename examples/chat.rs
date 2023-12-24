@@ -252,7 +252,7 @@ where
 
     // run initial prompt
     loop {
-        let logits = model.run(&mut tokens, &state, &Default::default()).await?;
+        let logits = model.run(&mut tokens, &state).await?;
         if logits.iter().any(Option::is_some) {
             break;
         }
@@ -296,7 +296,7 @@ where
 
         loop {
             let mut logits = loop {
-                let logits = model.run(&mut tokens, &state, &Default::default()).await?;
+                let logits = model.run(&mut tokens, &state).await?;
                 if logits.iter().any(Option::is_some) {
                     break logits;
                 }
