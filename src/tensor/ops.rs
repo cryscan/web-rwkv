@@ -76,13 +76,11 @@ impl<'b, 'a: 'b> TensorPass<'a> for ComputePass<'b> {
             TensorOp::List(ops) => {
                 ops.iter().for_each(|op| self.execute_tensor_op(op));
             }
-            TensorOp::Hook(_) => {}
         }
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TensorOpHook(pub usize);
+pub trait TensorOpHook {}
 
 pub enum TensorOp {
     Atom {
@@ -91,7 +89,6 @@ pub enum TensorOp {
         dispatch: [u32; 3],
     },
     List(Vec<TensorOp>),
-    Hook(TensorOpHook),
 }
 
 impl TensorOp {

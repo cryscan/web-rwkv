@@ -304,7 +304,7 @@ where
             println!("{index}: {prompt}");
         }
 
-        let logits = model.run(&mut tokens, &state).await?;
+        let logits = model.run(&mut tokens, &state, &Default::default()).await?;
         let probs = model.softmax(logits).await?;
         for (index, probs) in probs
             .into_iter()
