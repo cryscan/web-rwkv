@@ -25,12 +25,12 @@ pub enum Matrix {
 }
 
 impl Matrix {
-    pub fn matmul_vec_op<'a>(
-        &'a self,
-        half: TensorView<'a, f16>,
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
-    ) -> Result<TensorOp<'a>, TensorError> {
+    pub fn matmul_vec_op(
+        &self,
+        half: TensorView<f16>,
+        input: TensorView<f32>,
+        output: TensorView<f32>,
+    ) -> Result<TensorOp, TensorError> {
         match self {
             Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output),
             Matrix::Int8 { w, mx, rx, my, ry } => {
@@ -43,12 +43,12 @@ impl Matrix {
         }
     }
 
-    pub fn matmul_mat_op<'a>(
-        &'a self,
-        half: TensorView<'a, f16>,
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
-    ) -> Result<TensorOp<'a>, TensorError> {
+    pub fn matmul_mat_op(
+        &self,
+        half: TensorView<f16>,
+        input: TensorView<f32>,
+        output: TensorView<f32>,
+    ) -> Result<TensorOp, TensorError> {
         match self {
             Matrix::Fp16(matrix) => Ok(TensorOp::List(vec![
                 TensorOp::quantize_fp16(input, half.clone())?,
@@ -65,13 +65,13 @@ impl Matrix {
         }
     }
 
-    pub fn matmul_op<'a>(
-        &'a self,
-        half: TensorView<'a, f16>,
-        input: TensorView<'a, f32>,
-        output: TensorView<'a, f32>,
+    pub fn matmul_op(
+        &self,
+        half: TensorView<f16>,
+        input: TensorView<f32>,
+        output: TensorView<f32>,
         turbo: bool,
-    ) -> Result<TensorOp<'a>, TensorError> {
+    ) -> Result<TensorOp, TensorError> {
         match turbo {
             true => self.matmul_mat_op(half, input, output),
             false => self.matmul_vec_op(half, input, output),

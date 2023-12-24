@@ -71,7 +71,7 @@ pub struct ContextInner {
     pub device: Device,
     pub queue: Queue,
 
-    pipelines: HashMap<String, ComputePipeline>,
+    pipelines: HashMap<String, Arc<ComputePipeline>>,
 
     shape_cache: ResourceCache<Shape, Buffer>,
     view_cache: ResourceCache<View, Buffer>,
@@ -152,7 +152,10 @@ impl<'a> ContextBuilder<'a> {
                     module,
                     entry_point,
                 });
-                (String::from_str(name).expect("bad pipeline name"), pipeline)
+                (
+                    String::from_str(name).expect("bad pipeline name"),
+                    Arc::new(pipeline),
+                )
             })
             .collect();
         Ok(Context(
@@ -512,8 +515,11 @@ impl PartialEq for Context {
 impl Eq for Context {}
 
 impl Context {
-    pub fn pipeline(&self, name: &'static str) -> Result<&ComputePipeline, TensorError> {
-        self.pipelines.get(name).ok_or(TensorError::Pipeline(name))
+    pub fn pipeline(&self, name: &'static str) -> Result<Arc<ComputePipeline>, TensorError> {
+        self.pipelines
+            .get(name)
+            .ok_or(TensorError::Pipeline(name))
+            .cloned()
     }
 
     pub fn request_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
