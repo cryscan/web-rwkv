@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use half::f16;
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
@@ -168,7 +169,7 @@ impl Runtime {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Hook {
     PostEmbedLoaded,
     PostEmbedLayerNorm,
