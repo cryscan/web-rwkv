@@ -34,7 +34,7 @@ log = "0.4"
 web-rwkv-derive = { version = "0.2.0", path = "crates/web-rwkv-derive" }
 
 [dev-dependencies]
-pollster = "0.3.0"
+tokio = { version = "1", features = ["full"] }
 memmap2 = "0.9"
 fastrand = "2.0"
 # wgpu-profiler = "0.14.1"

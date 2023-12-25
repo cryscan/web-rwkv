@@ -1761,18 +1761,15 @@ mod tests {
         (a - b).abs() <= f32::max(eps, f32::max(a.abs(), b.abs()) * eps)
     }
 
-    fn create_context() -> Result<Context, anyhow::Error> {
-        let adapter = pollster::block_on(async {
-            let instance = Instance::new();
-            instance.adapter(PowerPreference::HighPerformance).await
-        })?;
-        let context = pollster::block_on(async {
-            ContextBuilder::new(adapter)
-                .with_default_pipelines()
-                // .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
-                .build()
-                .await
-        })?;
+    #[tokio::main]
+    async fn create_context() -> Result<Context> {
+        let instance = Instance::new();
+        let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
+        let context = ContextBuilder::new(adapter)
+            .with_default_pipelines()
+            // .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+            .build()
+            .await?;
         Ok(context)
     }
 
@@ -1950,7 +1947,7 @@ mod tests {
 
         const C: usize = 2560;
         const R: usize = 2048;
-        const T: usize = 31;
+        const T: usize = 32;
         const B: usize = 2;
 
         let matrix = vec![(); C * R * B]
@@ -2040,7 +2037,9 @@ mod tests {
             }
         }
 
-        for (index, (a, b)) in Iterator::zip(output_host.into_iter(), ans.into_iter()).enumerate() {
+        for (index, (a, b)) in
+            itertools::zip_eq(output_host.into_iter(), ans.into_iter()).enumerate()
+        {
             assert!(
                 is_approx_eps(a, b, 0.01),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"

@@ -232,7 +232,8 @@ struct Cli {
     turbo: bool,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
-    pollster::block_on(run(cli)).unwrap();
+    run(cli).await.unwrap();
 }

@@ -22,10 +22,10 @@ struct Input {
 var<workgroup> sa: array<array<vec2<u32>, 32u>, 32u>;
 var<workgroup> sb: array<array<vec2<u32>, 32u>, 32u>;
 
-fn compute_index(view: View, z: u32, y: u32, x: u32) -> u32 {
+fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x / 4u;
     let offset = view.offset.x / 4u;
-    return ((view.offset.z + z) * view.stride.y + view.offset.y + y) * stride + offset + x;
+    return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * stride + offset + index;
 }
 
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
@@ -50,7 +50,7 @@ fn matmul(in: Input) {
                 let x = k + i;
                 let y = b.x + j;
                 if all(vec2<u32>(x, y) < ra) {
-                    sa[j][i] = xa[compute_index(va, in.uid.z, y, x)];
+                    sa[j][i] = xa[compute_index(va, in.bid.z, y, x)];
                 } else {
                     sa[j][i] = vec2<u32>(0u);
                 }
@@ -58,7 +58,7 @@ fn matmul(in: Input) {
                 let x = k + i;
                 let y = b.y + j;
                 if all(vec2<u32>(x, y) < rb) {
-                    sb[j][i] = xb[compute_index(vb, in.uid.z, y, x)];
+                    sb[j][i] = xb[compute_index(vb, in.bid.z, y, x)];
                 } else {
                     sb[j][i] = vec2<u32>(0u);
                 }
@@ -69,6 +69,9 @@ fn matmul(in: Input) {
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
             for (var x = 0u; x < 32u; x += 1u) {
+                if k + x >= stride {
+                    break;
+                }
                 let aa = mat4x4<f32>(
                     unpack4x16float(sa[t.x][x]),
                     unpack4x16float(sa[t.x + 1u][x]),

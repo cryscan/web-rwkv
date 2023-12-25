@@ -891,6 +891,7 @@ mod sealed {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
     use wgpu::PowerPreference;
 
     use super::Shape;
@@ -899,22 +900,20 @@ mod tests {
         tensor::{TensorCpu, TensorInit, TensorShape},
     };
 
-    fn create_context() -> Result<Context, anyhow::Error> {
-        let adapter = pollster::block_on(async {
-            let instance = Instance::new();
-            instance.adapter(PowerPreference::HighPerformance).await
-        })?;
-        let context = pollster::block_on(async {
-            ContextBuilder::new(adapter)
-                .with_default_pipelines()
-                .build()
-                .await
-        })?;
+    #[tokio::main]
+    async fn create_context() -> Result<Context> {
+        let instance = Instance::new();
+        let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
+        let context = ContextBuilder::new(adapter)
+            .with_default_pipelines()
+            // .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+            .build()
+            .await?;
         Ok(context)
     }
 
     #[test]
-    fn test_repeat() -> Result<(), anyhow::Error> {
+    fn test_repeat() -> Result<()> {
         let context = match create_context() {
             Ok(context) => context,
             Err(_) => return Ok(()),
