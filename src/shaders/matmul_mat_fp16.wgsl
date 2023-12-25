@@ -50,7 +50,7 @@ fn matmul(in: Input) {
                 let x = k + i;
                 let y = b.x + j;
                 if all(vec2<u32>(x, y) < ra) {
-                    sa[j][i] = xa[compute_index(va, in.bid.z, y, x)];
+                    sa[j][i] = xa[compute_index(va, in.uid.z, y, x)];
                 } else {
                     sa[j][i] = vec2<u32>(0u);
                 }
@@ -58,7 +58,7 @@ fn matmul(in: Input) {
                 let x = k + i;
                 let y = b.y + j;
                 if all(vec2<u32>(x, y) < rb) {
-                    sb[j][i] = xb[compute_index(vb, in.bid.z, y, x)];
+                    sb[j][i] = xb[compute_index(vb, in.uid.z, y, x)];
                 } else {
                     sb[j][i] = vec2<u32>(0u);
                 }
