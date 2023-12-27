@@ -9,17 +9,15 @@ use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
-    loader::Loader,
     matrix::Matrix,
     run::{HookMap, ModelRun, Output},
     softmax::{ModelSoftmax, Softmax},
-    FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, Quant, StateBuilder,
-    HEAD_CHUNK_SIZES, MIN_TOKEN_CHUNK_SIZE,
+    FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, PreparedModelBuilder, Quant,
+    StateBuilder,
 };
 use crate::{
     context::Context,
     model::RESCALE_LAYER,
-    num::Scalar,
     tensor::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorOpHook, TensorPass},
@@ -437,31 +435,16 @@ impl<'a> FromBuilder for Model<'a> {
     type Error = anyhow::Error;
 
     fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
-        let ModelBuilder {
+        let PreparedModelBuilder {
             context,
-            data,
-            lora,
+            info,
+            loader,
             quant,
             turbo,
+            rescale,
             token_chunk_size,
-        } = builder;
-
-        let loader = Loader::new(&context, data, lora)?;
-        let info = Loader::info(data)?;
-
-        let token_chunk_size = token_chunk_size
-            .max(MIN_TOKEN_CHUNK_SIZE)
-            .next_power_of_two();
-        log::info!("token chunk size: {token_chunk_size}");
-
-        let max_chunk_size = context.device.limits().max_storage_buffer_binding_size as usize;
-        let head_chunk_size = HEAD_CHUNK_SIZES
-            .into_iter()
-            .find(|&x| info.num_emb * x * f16::size() <= max_chunk_size)
-            .ok_or(ModelError::NoViableChunkSize)?;
-        log::info!("head chunk size: {head_chunk_size}");
-
-        let rescale = turbo || quant.iter().any(|(_, quant)| matches!(quant, Quant::NF4));
+            head_chunk_size,
+        } = builder.prepare()?;
 
         let embed = Embed {
             layer_norm: LayerNorm {

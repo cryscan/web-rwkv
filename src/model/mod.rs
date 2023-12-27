@@ -13,6 +13,8 @@ use crate::{
     tensor::{shape::Shape, TensorError},
 };
 
+use self::loader::Loader;
+
 pub mod loader;
 pub mod matrix;
 pub mod run;
@@ -216,6 +218,17 @@ pub struct ModelBuilder<'a> {
     token_chunk_size: usize,
 }
 
+struct PreparedModelBuilder<'a> {
+    context: Context,
+    info: ModelInfo,
+    loader: Loader<'a>,
+    quant: HashMap<usize, Quant>,
+    turbo: bool,
+    rescale: bool,
+    token_chunk_size: usize,
+    head_chunk_size: usize,
+}
+
 impl<'a> ModelBuilder<'a> {
     pub fn new(context: &Context, data: &'a [u8]) -> Self {
         Self {
@@ -226,6 +239,45 @@ impl<'a> ModelBuilder<'a> {
             turbo: false,
             token_chunk_size: 32,
         }
+    }
+
+    fn prepare(self) -> Result<PreparedModelBuilder<'a>> {
+        let ModelBuilder {
+            context,
+            data,
+            lora,
+            quant,
+            turbo,
+            token_chunk_size,
+        } = self;
+
+        let loader = Loader::new(&context, data, lora)?;
+        let info = Loader::info(data)?;
+
+        let token_chunk_size = token_chunk_size
+            .max(MIN_TOKEN_CHUNK_SIZE)
+            .next_power_of_two();
+        log::info!("token chunk size: {token_chunk_size}");
+
+        let max_chunk_size = context.device.limits().max_storage_buffer_binding_size as usize;
+        let head_chunk_size = HEAD_CHUNK_SIZES
+            .into_iter()
+            .find(|&x| info.num_emb * x * f16::size() <= max_chunk_size)
+            .ok_or(ModelError::NoViableChunkSize)?;
+        log::info!("head chunk size: {head_chunk_size}");
+
+        let rescale = turbo || quant.iter().any(|(_, quant)| matches!(quant, Quant::NF4));
+
+        Ok(PreparedModelBuilder {
+            context,
+            info,
+            loader,
+            quant,
+            turbo,
+            rescale,
+            token_chunk_size,
+            head_chunk_size,
+        })
     }
 
     pub fn with_quant(self, quant: HashMap<usize, Quant>) -> Self {
