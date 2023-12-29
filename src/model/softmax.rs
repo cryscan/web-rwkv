@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use anyhow::Result;
-use async_trait::async_trait;
 use itertools::Itertools;
 use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
@@ -31,11 +30,19 @@ impl Softmax {
     }
 }
 
-#[async_trait]
-pub trait ModelSoftmax: ModelBase {
+pub(crate) trait ModelSoftmaxInner: ModelBase {
     fn request_softmax(&self, num_batch: usize) -> Arc<Softmax>;
+}
 
+pub trait ModelSoftmax: ModelBase {
     /// Softmax of the input tensors.
+    fn softmax(
+        &self,
+        input: Vec<Option<Vec<f32>>>,
+    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
+}
+
+impl<Model: ModelSoftmaxInner> ModelSoftmax for Model {
     async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
         let max_batch = input.len();
         let context = self.context();

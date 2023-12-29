@@ -1,7 +1,6 @@
-use std::{collections::HashMap, hash::Hash, sync::Arc};
+use std::{collections::HashMap, future::Future, hash::Hash, sync::Arc};
 
 use anyhow::Result;
-use async_trait::async_trait;
 
 use super::{ModelBase, ModelError, ModelInfo, ModelState};
 use crate::{
@@ -35,9 +34,8 @@ impl Output {
 
 pub type HookMap<Hook, ModelState, Runtime> = HashMap<Hook, fn(&ModelState, &Runtime) -> TensorOp>;
 
-#[async_trait]
-pub trait ModelRun: ModelBase {
-    type Hook: TensorOpHook + Hash + Send + Sync;
+pub(crate) trait ModelRunInner: ModelBase {
+    type Hook: TensorOpHook + Hash + Send;
     type Runtime;
 
     fn request_output(&self, num_batch: usize) -> Arc<Output>;
@@ -51,10 +49,40 @@ pub trait ModelRun: ModelBase {
         should_output: Vec<bool>,
         hooks: &HookMap<Self::Hook, Self::ModelState, Self::Runtime>,
     ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)>;
+}
+
+pub trait ModelRun: ModelBase {
+    type Hook: TensorOpHook + Hash + Send;
+    type Runtime;
 
     /// Run the model for a batch of tokens as input.
     /// The length of `tokens` must match the number of batches in `state`.
     /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
+    fn run(
+        &self,
+        tokens: &mut Vec<Vec<u16>>,
+        state: &Self::ModelState,
+    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
+
+    /// Run the model for a batch of tokens as input, but with custom hooks.
+    /// The length of `tokens` must match the number of batches in `state`.
+    /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
+    fn run_with_hooks(
+        &self,
+        tokens: &mut Vec<Vec<u16>>,
+        state: &Self::ModelState,
+        hooks: &HookMap<Self::Hook, Self::ModelState, Self::Runtime>,
+    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
+}
+
+impl<Hook, Runtime, Model> ModelRun for Model
+where
+    Hook: TensorOpHook + Hash + Send + Sync,
+    Model: ModelRunInner<Hook = Hook, Runtime = Runtime>,
+{
+    type Hook = Hook;
+    type Runtime = Runtime;
+
     async fn run(
         &self,
         tokens: &mut Vec<Vec<u16>>,
@@ -64,9 +92,6 @@ pub trait ModelRun: ModelBase {
         self.run_with_hooks(tokens, state, &hooks).await
     }
 
-    /// Run the model for a batch of tokens as input, but with custom hooks.
-    /// The length of `tokens` must match the number of batches in `state`.
-    /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
     async fn run_with_hooks(
         &self,
         tokens: &mut Vec<Vec<u16>>,

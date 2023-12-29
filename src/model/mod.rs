@@ -1,7 +1,6 @@
-use std::{collections::HashMap, convert::Infallible};
+use std::{collections::HashMap, convert::Infallible, future::Future};
 
 use anyhow::Result;
-use async_trait::async_trait;
 use half::f16;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -96,7 +95,6 @@ pub trait BackedState:
     fn embed(&self, batch: usize, layer: usize) -> Vec<f32>;
 }
 
-#[async_trait]
 pub trait ModelState:
     Sync + for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible>
 {
@@ -110,9 +108,9 @@ pub trait ModelState:
     /// Load one batch from host. The batch size the backed state should be 1.
     fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<()>;
     /// Back the entire device state to host.
-    async fn back(&self) -> Self::BackedState;
+    fn back(&self) -> impl Future<Output = Self::BackedState> + Send;
     /// Back one batch of the device state to host.
-    async fn back_batch(&self, batch: usize) -> Result<Self::BackedState>;
+    fn back_batch(&self, batch: usize) -> impl Future<Output = Result<Self::BackedState>> + Send;
     /// Copy one device state to another. Their shapes must match.
     fn blit(&self, other: &Self) -> Result<(), TensorError>;
     /// Copy one batch from the source state to another.

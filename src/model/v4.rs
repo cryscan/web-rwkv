@@ -1,7 +1,6 @@
 use std::{convert::Infallible, sync::Arc};
 
 use anyhow::Result;
-use async_trait::async_trait;
 use half::f16;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -10,8 +9,8 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
     matrix::Matrix,
-    run::{HookMap, ModelRun, Output},
-    softmax::{ModelSoftmax, Softmax},
+    run::{HookMap, ModelRunInner, Output},
+    softmax::{ModelSoftmaxInner, Softmax},
     FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, PreparedModelBuilder, Quant,
     StateBuilder,
 };
@@ -254,7 +253,6 @@ impl FromBuilder for ModelState {
     }
 }
 
-#[async_trait]
 impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
@@ -619,8 +617,7 @@ impl ModelBase for Model<'_> {
     }
 }
 
-#[async_trait]
-impl ModelSoftmax for Model<'_> {
+impl ModelSoftmaxInner for Model<'_> {
     #[inline]
     fn request_softmax(&self, num_batch: usize) -> Arc<Softmax> {
         self.softmax_cache.request(num_batch, || {
@@ -629,8 +626,7 @@ impl ModelSoftmax for Model<'_> {
     }
 }
 
-#[async_trait]
-impl ModelRun for Model<'_> {
+impl ModelRunInner for Model<'_> {
     type Hook = Hook;
     type Runtime = Runtime;
 
