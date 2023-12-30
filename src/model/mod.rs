@@ -352,18 +352,14 @@ impl StateBuilder {
         }
     }
 
-    pub fn with_max_batch(self, value: usize) -> Self {
-        Self {
-            max_batch: value,
-            ..self
-        }
+    pub fn with_max_batch(mut self, max_batch: usize) -> Self {
+        self.max_batch = max_batch;
+        self
     }
 
-    pub fn with_chunk_size(self, value: usize) -> Self {
-        Self {
-            chunk_size: value,
-            ..self
-        }
+    pub fn with_chunk_size(mut self, chunk_size: usize) -> Self {
+        self.chunk_size = chunk_size;
+        self
     }
 
     pub fn build<S>(self) -> S
