@@ -150,6 +150,7 @@ impl<S: ModelState, M> Model for M where
 {
 }
 
+/// Quantization of a layer.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Quant {
     /// No quantization.
@@ -161,19 +162,25 @@ pub enum Quant {
     NF4,
 }
 
+/// A LoRA that adds to the model when loading.
 #[derive(Debug, Clone)]
 pub struct Lora {
+    /// Binary safetensors LoRA content.
     pub data: Vec<u8>,
+    /// A list of LoRA blend patterns.
+    /// A blend pattern is a regex that matches the name of multiple tensors, and a blend factor.
+    /// When applying the patterns, they are applied in order.
     pub blend: LoraBlend,
 }
 
+/// A list of LoRA blend patterns.
 #[derive(Debug, Clone, Deref, DerefMut)]
 pub struct LoraBlend(pub Vec<LoraBlendPattern>);
 
 impl LoraBlend {
+    /// Build a blend pattern that matches all tensors.
     pub fn full(alpha: f32) -> Self {
-        let pattern = LoraBlendPattern::new(r"blocks\.[0-9]+\.([0-9a-zA-Z\.\_]+)", alpha)
-            .expect("default blend pattern");
+        let pattern = LoraBlendPattern::new(r".+", alpha).expect("default blend pattern");
         Self(vec![pattern])
     }
 }
@@ -184,6 +191,7 @@ impl Default for LoraBlend {
     }
 }
 
+/// A blend pattern is a regex that matches the name of multiple tensors, and a blend factor.
 #[derive(Debug, Clone)]
 pub struct LoraBlendPattern {
     /// A regex pattern that matches tensors in the model.
@@ -207,11 +215,19 @@ impl LoraBlendPattern {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmbedDevice {
+    #[default]
+    Cpu,
+    Gpu,
+}
+
 pub struct ModelBuilder<'a> {
     context: Context,
     data: &'a [u8],
     lora: Vec<Lora>,
     quant: HashMap<usize, Quant>,
+    embed_device: EmbedDevice,
     turbo: bool,
     token_chunk_size: usize,
 }
@@ -221,6 +237,7 @@ struct PreparedModelBuilder<'a> {
     info: ModelInfo,
     loader: Loader<'a>,
     quant: HashMap<usize, Quant>,
+    embed_device: EmbedDevice,
     turbo: bool,
     rescale: bool,
     token_chunk_size: usize,
@@ -235,6 +252,7 @@ impl<'a> ModelBuilder<'a> {
             lora: vec![],
             quant: Default::default(),
             turbo: false,
+            embed_device: Default::default(),
             token_chunk_size: 32,
         }
     }
@@ -245,6 +263,7 @@ impl<'a> ModelBuilder<'a> {
             data,
             lora,
             quant,
+            embed_device,
             turbo,
             token_chunk_size,
         } = self;
@@ -271,6 +290,7 @@ impl<'a> ModelBuilder<'a> {
             info,
             loader,
             quant,
+            embed_device,
             turbo,
             rescale,
             token_chunk_size,
@@ -278,8 +298,9 @@ impl<'a> ModelBuilder<'a> {
         })
     }
 
-    pub fn with_quant(self, quant: HashMap<usize, Quant>) -> Self {
-        Self { quant, ..self }
+    pub fn with_quant(mut self, quant: HashMap<usize, Quant>) -> Self {
+        self.quant = quant;
+        self
     }
 
     pub fn add_lora(mut self, lora: Lora) -> Self {
@@ -287,15 +308,19 @@ impl<'a> ModelBuilder<'a> {
         self
     }
 
-    pub fn with_turbo(self, turbo: bool) -> Self {
-        Self { turbo, ..self }
+    pub fn with_embed_device(mut self, embed_device: EmbedDevice) -> Self {
+        self.embed_device = embed_device;
+        self
     }
 
-    pub fn with_token_chunk_size(self, token_chunk_size: usize) -> Self {
-        Self {
-            token_chunk_size,
-            ..self
-        }
+    pub fn with_turbo(mut self, turbo: bool) -> Self {
+        self.turbo = turbo;
+        self
+    }
+
+    pub fn with_token_chunk_size(mut self, token_chunk_size: usize) -> Self {
+        self.token_chunk_size = token_chunk_size;
+        self
     }
 
     pub fn build<M>(self) -> Result<M>

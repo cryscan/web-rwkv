@@ -96,6 +96,7 @@ struct Layer {
 struct Embed<'a> {
     layer_norm: LayerNorm,
     w: TensorCpu<'a, f16>,
+    _u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
 #[derive(Debug)]
@@ -438,6 +439,7 @@ impl<'a> FromBuilder for Model<'a> {
             info,
             loader,
             quant,
+            embed_device,
             turbo,
             rescale,
             token_chunk_size,
@@ -450,6 +452,10 @@ impl<'a> FromBuilder for Model<'a> {
                 b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
             w: loader.load_embed()?,
+            _u: match embed_device {
+                super::EmbedDevice::Cpu => None,
+                super::EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight")?),
+            },
         };
 
         let head = Head {
