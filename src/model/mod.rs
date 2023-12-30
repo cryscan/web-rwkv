@@ -362,10 +362,7 @@ impl StateBuilder {
         self
     }
 
-    pub fn build<S>(self) -> S
-    where
-        S: ModelState,
-    {
+    pub fn build<S: ModelState>(self) -> S {
         S::from_builder(self).expect("build model state")
     }
 
