@@ -32,7 +32,8 @@ impl Output {
     }
 }
 
-pub type HookMap<Hook, ModelState, Runtime> = HashMap<Hook, fn(&ModelState, &Runtime) -> TensorOp>;
+pub type HookFn<ModelState, Runtime> = Box<dyn Fn(&ModelState, &Runtime) -> TensorOp + Send + Sync>;
+pub type HookMap<Hook, ModelState, Runtime> = HashMap<Hook, HookFn<ModelState, Runtime>>;
 
 pub(crate) trait ModelRunInner: ModelBase {
     type Hook: TensorOpHook + Hash + Send;
