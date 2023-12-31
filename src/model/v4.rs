@@ -20,9 +20,9 @@ use crate::{
     tensor::{
         cache::ResourceCache,
         ops::{TensorCommand, TensorOp, TensorOpHook, TensorPass},
-        shape::{Shape, TensorDimension},
+        shape::Shape,
         DeepClone, IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu,
-        TensorReshape, TensorShape, TensorStack, TensorView,
+        TensorShape, TensorView,
     },
 };
 
@@ -108,6 +108,7 @@ struct Head {
 /// Runtime buffers.
 #[derive(Debug)]
 pub struct Runtime {
+    pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<f32, ReadWrite>,
 
@@ -138,6 +139,7 @@ impl Runtime {
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
 
         Self {
+            tokens: context.tensor_init(cursors_shape),
             cursors: context.tensor_init(cursors_shape),
             input: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
@@ -653,26 +655,7 @@ impl ModelRunInner for Model<'_> {
         let context = &self.context;
         let tensor = &self.tensor;
 
-        let input: Vec<_> = tokens
-            .into_iter()
-            .map(|tokens| -> Result<_, TensorError> {
-                let stack = TensorCpu::stack(
-                    tokens
-                        .into_iter()
-                        .map(|token| tensor.embed.w.slice(.., token as usize, .., ..))
-                        .try_collect()?,
-                )
-                .unwrap_or_else(|_| context.zeros(Shape::new(self.info.num_emb, 1, 0, 1)));
-                stack.map(|x| x.to_f32()).reshape(
-                    TensorDimension::Full,
-                    TensorDimension::Auto,
-                    TensorDimension::Dimension(1),
-                    TensorDimension::Full,
-                )
-            })
-            .try_collect()?;
-
-        let input = TensorStack::try_from(input)?;
+        let input = self.create_input(&tensor.embed.w, &tokens)?;
         let num_batch = input.num_batch();
         let num_token = input.num_token();
         assert_ne!(num_token, 0);

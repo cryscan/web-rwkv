@@ -21,7 +21,7 @@ use crate::{
         ops::{TensorCommand, TensorOp, TensorOpHook, TensorPass},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu,
-        TensorReshape, TensorShape, TensorStack, TensorView,
+        TensorReshape, TensorShape, TensorView,
     },
 };
 
@@ -753,26 +753,7 @@ impl ModelRunInner for Model<'_> {
         let context = &self.context;
         let tensor = &self.tensor;
 
-        let input: Vec<_> = tokens
-            .into_iter()
-            .map(|tokens| -> Result<_, TensorError> {
-                let stack = TensorCpu::stack(
-                    tokens
-                        .into_iter()
-                        .map(|token| tensor.embed.w.slice(.., token as usize, .., ..))
-                        .try_collect()?,
-                )
-                .unwrap_or_else(|_| context.zeros(Shape::new(self.info.num_emb, 1, 0, 1)));
-                stack.map(|x| x.to_f32()).reshape(
-                    TensorDimension::Full,
-                    TensorDimension::Auto,
-                    TensorDimension::Dimension(1),
-                    TensorDimension::Full,
-                )
-            })
-            .try_collect()?;
-
-        let input = TensorStack::try_from(input)?;
+        let input = self.create_input(&tensor.embed.w, &tokens)?;
         let num_batch = input.num_batch();
         let num_token = input.num_token();
         let head_size = self.info.num_emb / self.info.num_head;
