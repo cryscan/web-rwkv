@@ -106,7 +106,7 @@ struct Layer {
 struct Embed<'a> {
     layer_norm: LayerNorm,
     w: TensorCpu<'a, f16>,
-    _u: Option<TensorGpu<f16, ReadWrite>>,
+    u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
 #[derive(Debug)]
@@ -118,6 +118,7 @@ struct Head {
 /// Runtime buffers.
 #[derive(Debug)]
 pub struct Runtime {
+    pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<f32, ReadWrite>,
 
@@ -161,6 +162,7 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize, max_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
+        let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let cursors_shape = Shape::new(max_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
         let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
@@ -169,6 +171,7 @@ impl Runtime {
         let time_decay_shape = Shape::new(Model::TIME_DECAY_ADAPTER_SIZE, num_token, 1, 1);
 
         Self {
+            tokens: context.tensor_init(tokens_shape),
             cursors: context.tensor_init(cursors_shape),
             input: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
@@ -579,7 +582,7 @@ impl<'a> FromBuilder for Model<'a> {
                 b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
             w: loader.load_embed()?,
-            _u: match embed_device {
+            u: match embed_device {
                 super::EmbedDevice::Cpu => None,
                 super::EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight")?),
             },
@@ -806,6 +809,7 @@ impl ModelRunInner for Model<'_> {
             Output::new(&self.context, &self.info, num_batch)
         })
     }
+
     fn run_internal(
         &self,
         tokens: Vec<Vec<u16>>,
@@ -841,6 +845,13 @@ impl ModelRunInner for Model<'_> {
 
         let buffer = self.request_runtime(num_token);
         let output = self.request_output(num_header.max(1));
+
+        let hook_op = |hook: Hook| -> TensorOp {
+            hooks
+                .get(&hook)
+                .map(|f| f(state, &buffer))
+                .unwrap_or(TensorOp::List(vec![]))
+        };
 
         // gather and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
@@ -881,25 +892,30 @@ impl ModelRunInner for Model<'_> {
         //     })
         //     .try_collect()?;
 
+        let mut ops = vec![];
+
         let mut cursors = input.cursors.into_cursors();
         cursors.resize(self.token_chunk_size, 0);
-        let cursors = context.tensor_from_data(buffer.cursors.shape(), cursors)?;
 
-        buffer.input.load(&input.tensor)?;
+        let cursors = context.tensor_from_data(buffer.cursors.shape(), cursors)?;
         buffer.cursors.load(&cursors)?;
 
-        let hook_op = |hook: Hook| -> TensorOp {
-            hooks
-                .get(&hook)
-                .map(|f| f(state, &buffer))
-                .unwrap_or(TensorOp::List(vec![]))
-        };
+        match &tensor.embed.u {
+            Some(u) => {
+                let tokens = tokens
+                    .concat()
+                    .into_iter()
+                    .map(|token| token as u32)
+                    .collect_vec();
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+                let tokens = context.tensor_from_data(buffer.tokens.shape(), tokens)?;
+                buffer.tokens.load(&tokens)?;
 
-        let op = TensorOp::List(vec![
+                ops.push(TensorOp::embed(&buffer.tokens, u, &buffer.input)?);
+            }
+            None => buffer.input.load(&input.tensor)?,
+        }
+        ops.append(&mut vec![
             hook_op(Hook::PostEmbedLoaded),
             TensorOp::layer_norm(
                 &tensor.embed.layer_norm.w,
@@ -908,8 +924,14 @@ impl ModelRunInner for Model<'_> {
             )?,
             hook_op(Hook::PostEmbedLayerNorm),
         ]);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let ops = TensorOp::List(ops);
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&op);
+        pass.execute_tensor_op(&ops);
         drop(pass);
 
         for (index, layer) in tensor.layers.iter().enumerate() {

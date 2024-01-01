@@ -25,8 +25,8 @@ pub mod v6;
 pub const RESCALE_LAYER: usize = 6;
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
-pub const HEAD_CHUNK_SIZES: [usize; 8] = [
-    0x4000, 0x3000, 0x2000, 0x1800, 0x1600, 0x1400, 0x1200, 0x1000,
+pub const HEAD_CHUNK_SIZES: [usize; 10] = [
+    0x10000, 0x5000, 0x4000, 0x3000, 0x2000, 0x1800, 0x1600, 0x1400, 0x1200, 0x1000,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -72,9 +72,14 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
-    /// Computes the required storage buffer size.
+    /// Computes the required storage buffer size, not including head.
+    pub fn max_non_head_buffer_size(&self) -> usize {
+        (self.num_emb * self.num_hidden * f16::size()).max(256 << 20)
+    }
+
+    /// Computes the required storage buffer size, including head.
     pub fn max_buffer_size(&self) -> usize {
-        (self.num_emb * self.num_hidden * f16::size()).max(128 << 20)
+        (self.num_emb * self.num_vocab * f16::size()).max(256 << 20)
     }
 }
 

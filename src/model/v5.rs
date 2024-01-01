@@ -99,7 +99,7 @@ struct Layer {
 struct Embed<'a> {
     layer_norm: LayerNorm,
     w: TensorCpu<'a, f16>,
-    _u: Option<TensorGpu<f16, ReadWrite>>,
+    u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
 #[derive(Debug)]
@@ -111,6 +111,7 @@ struct Head {
 /// Runtime buffers.
 #[derive(Debug)]
 pub struct Runtime {
+    pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<f32, ReadWrite>,
 
@@ -139,10 +140,12 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize, max_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
+        let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let cursors_shape = Shape::new(max_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
 
         Self {
+            tokens: context.tensor_init(tokens_shape),
             cursors: context.tensor_init(cursors_shape),
             input: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
@@ -529,7 +532,7 @@ impl<'a> FromBuilder for Model<'a> {
                 b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
             w: loader.load_embed()?,
-            _u: match embed_device {
+            u: match embed_device {
                 super::EmbedDevice::Cpu => None,
                 super::EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight")?),
             },
@@ -825,18 +828,30 @@ impl ModelRunInner for Model<'_> {
         //     })
         //     .try_collect()?;
 
+        let mut ops = vec![];
+
         let mut cursors = input.cursors.into_cursors();
         cursors.resize(self.token_chunk_size, 0);
-        let cursors = context.tensor_from_data(buffer.cursors.shape(), cursors)?;
 
-        buffer.input.load(&input.tensor)?;
+        let cursors = context.tensor_from_data(buffer.cursors.shape(), cursors)?;
         buffer.cursors.load(&cursors)?;
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        match &tensor.embed.u {
+            Some(u) => {
+                let tokens = tokens
+                    .concat()
+                    .into_iter()
+                    .map(|token| token as u32)
+                    .collect_vec();
 
-        let op = TensorOp::List(vec![
+                let tokens = context.tensor_from_data(buffer.tokens.shape(), tokens)?;
+                buffer.tokens.load(&tokens)?;
+
+                ops.push(TensorOp::embed(&buffer.tokens, u, &buffer.input)?);
+            }
+            None => buffer.input.load(&input.tensor)?,
+        }
+        ops.append(&mut vec![
             hook_op(Hook::PostEmbedLoaded),
             TensorOp::layer_norm(
                 &tensor.embed.layer_norm.w,
@@ -845,8 +860,14 @@ impl ModelRunInner for Model<'_> {
             )?,
             hook_op(Hook::PostEmbedLayerNorm),
         ]);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let ops = TensorOp::List(ops);
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&op);
+        pass.execute_tensor_op(&ops);
         drop(pass);
 
         for (index, layer) in tensor.layers.iter().enumerate() {

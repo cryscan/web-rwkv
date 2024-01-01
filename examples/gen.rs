@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use itertools::Itertools;
@@ -95,6 +95,7 @@ fn load_model<M: Model>(
     lora: Option<PathBuf>,
     quant: Option<usize>,
     quant_nf4: Option<usize>,
+    embed_device: Option<EmbedDevice>,
     turbo: bool,
 ) -> Result<M> {
     let quant = quant
@@ -106,7 +107,8 @@ fn load_model<M: Model>(
     let quant = quant.into_iter().chain(quant_nf4).collect();
     let model = ModelBuilder::new(context, data)
         .with_quant(quant)
-        .with_turbo(turbo);
+        .with_turbo(turbo)
+        .with_embed_device(embed_device.unwrap_or_default().into());
     match lora {
         Some(lora) => {
             let file = File::open(lora)?;
@@ -149,6 +151,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.lora,
                 cli.quant,
                 cli.quant_nf4,
+                cli.embed_device,
                 cli.turbo,
             )?;
             let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
@@ -161,6 +164,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.lora,
                 cli.quant,
                 cli.quant_nf4,
+                cli.embed_device,
                 cli.turbo,
             )?;
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
@@ -173,6 +177,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.lora,
                 cli.quant,
                 cli.quant_nf4,
+                cli.embed_device,
                 cli.turbo,
             )?;
             let state: v6::ModelState = StateBuilder::new(&context, model.info()).build();
@@ -217,6 +222,22 @@ where
     Ok(())
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum EmbedDevice {
+    #[default]
+    Cpu,
+    Gpu,
+}
+
+impl From<EmbedDevice> for web_rwkv::model::EmbedDevice {
+    fn from(value: EmbedDevice) -> Self {
+        match value {
+            EmbedDevice::Cpu => Self::Cpu,
+            EmbedDevice::Gpu => Self::Gpu,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -228,6 +249,8 @@ struct Cli {
     quant: Option<usize>,
     #[arg(long, value_name = "LAYERS")]
     quant_nf4: Option<usize>,
+    #[arg(short, long)]
+    embed_device: Option<EmbedDevice>,
     #[arg(short, long, action)]
     turbo: bool,
 }

@@ -115,20 +115,26 @@ impl<'a> ContextBuilder<'a> {
     }
 
     pub async fn build(self) -> Result<Context, CreateEnvironmentError> {
-        let (device, queue) = self
-            .adapter
+        let Self {
+            adapter,
+            features,
+            limits,
+            pipelines,
+        } = self;
+
+        let (device, queue) = adapter
             .request_device(
                 &DeviceDescriptor {
                     label: None,
-                    features: self.features,
-                    limits: self.limits,
+                    features,
+                    limits,
                 },
                 None,
             )
             .await
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
-        let pipelines = self
-            .pipelines
+
+        let pipelines = pipelines
             .into_iter()
             .map(|(name, (shader, entry_point, layout))| {
                 let module = &device.create_shader_module(ShaderModuleDescriptor {
@@ -158,10 +164,11 @@ impl<'a> ContextBuilder<'a> {
                 )
             })
             .collect();
+
         Ok(Context(
             ContextInner {
                 id: ContextId::new(),
-                adapter: self.adapter,
+                adapter,
                 device,
                 queue,
                 pipelines,
@@ -172,30 +179,29 @@ impl<'a> ContextBuilder<'a> {
         ))
     }
 
-    pub fn with_limits(self, limits: Limits) -> Self {
-        Self { limits, ..self }
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
     }
 
-    pub fn with_features(self, features: Features) -> Self {
-        Self { features, ..self }
+    pub fn with_features(mut self, features: Features) -> Self {
+        self.features = features;
+        self
     }
 
     pub fn with_pipeline(
-        self,
+        mut self,
         name: &'a str,
         shader: &'a str,
         entry_point: &'a str,
         layout: Option<&'a [BindGroupLayoutEntry]>,
     ) -> Self {
-        let mut pipelines = self.pipelines;
-        pipelines.insert(name, (shader, entry_point, layout));
-        Self { pipelines, ..self }
+        self.pipelines.insert(name, (shader, entry_point, layout));
+        self
     }
 
     pub fn with_default_pipelines(self) -> Self {
-        self.with_core_pipelines()
-            .with_util_pipelines()
-            .with_quant_pipelines()
+        self.with_core_pipelines().with_quant_pipelines()
     }
 
     fn with_core_pipelines(self) -> Self {
@@ -333,10 +339,7 @@ impl<'a> ContextBuilder<'a> {
                 "softmax",
                 None,
             )
-    }
-
-    fn with_util_pipelines(self) -> Self {
-        self.with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
+            .with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
             .with_pipeline(
                 "transpose",
                 include_str!("shaders/blit.wgsl"),
