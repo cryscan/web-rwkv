@@ -21,7 +21,7 @@ use crate::{
         ops::{TensorCommand, TensorOp, TensorOpHook, TensorPass},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu,
-        TensorReshape, TensorShape, TensorStack, TensorView,
+        TensorReshape, TensorShape, TensorView,
     },
 };
 
@@ -34,8 +34,6 @@ pub struct Model<'a> {
     rescale: bool,
     /// Whether to use fp16 GEMM for matmul computations.
     turbo: bool,
-    /// The head matrix is too big for a storage buffer so it's divided into chunks.
-    head_chunk_size: usize,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     token_chunk_size: usize,
 
@@ -99,17 +97,19 @@ struct Layer {
 struct Embed<'a> {
     layer_norm: LayerNorm,
     w: TensorCpu<'a, f16>,
+    u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
 #[derive(Debug)]
 struct Head {
     layer_norm: LayerNorm,
-    w: Vec<TensorGpu<f16, ReadWrite>>,
+    w: Matrix,
 }
 
 /// Runtime buffers.
 #[derive(Debug)]
 pub struct Runtime {
+    pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<f32, ReadWrite>,
 
@@ -138,10 +138,12 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize, max_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
+        let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let cursors_shape = Shape::new(max_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
 
         Self {
+            tokens: context.tensor_init(tokens_shape),
             cursors: context.tensor_init(cursors_shape),
             input: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
@@ -515,10 +517,10 @@ impl<'a> FromBuilder for Model<'a> {
             info,
             loader,
             quant,
+            embed_device,
             turbo,
             rescale,
             token_chunk_size,
-            head_chunk_size,
         } = builder.prepare()?;
 
         let embed = Embed {
@@ -527,6 +529,10 @@ impl<'a> FromBuilder for Model<'a> {
                 b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
             w: loader.load_embed()?,
+            u: match embed_device {
+                super::EmbedDevice::Cpu => None,
+                super::EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight")?),
+            },
         };
 
         let head = Head {
@@ -534,7 +540,7 @@ impl<'a> FromBuilder for Model<'a> {
                 w: loader.load_vector_f16("ln_out.weight")?,
                 b: loader.load_vector_f16("ln_out.bias")?,
             },
-            w: loader.load_head(head_chunk_size)?,
+            w: Matrix::Fp16(loader.load_matrix_f16("head.weight")?),
         };
 
         context.queue.submit(None);
@@ -678,7 +684,6 @@ impl<'a> FromBuilder for Model<'a> {
             info,
             rescale,
             turbo,
-            head_chunk_size,
             token_chunk_size,
             tensor,
             runtime_cache: ResourceCache::new(1),
@@ -704,11 +709,6 @@ impl ModelBase for Model<'_> {
     #[inline]
     fn token_chunk_size(&self) -> usize {
         self.token_chunk_size
-    }
-
-    #[inline]
-    fn head_chunk_size(&self) -> usize {
-        self.head_chunk_size
     }
 
     #[inline]
@@ -747,26 +747,7 @@ impl ModelRunInner for Model<'_> {
         let context = &self.context;
         let tensor = &self.tensor;
 
-        let input: Vec<_> = tokens
-            .into_iter()
-            .map(|tokens| -> Result<_, TensorError> {
-                let stack = TensorCpu::stack(
-                    tokens
-                        .into_iter()
-                        .map(|token| tensor.embed.w.slice(.., token as usize, .., ..))
-                        .try_collect()?,
-                )
-                .unwrap_or_else(|_| context.zeros(Shape::new(self.info.num_emb, 1, 0, 1)));
-                stack.map(|x| x.to_f32()).reshape(
-                    TensorDimension::Full,
-                    TensorDimension::Auto,
-                    TensorDimension::Dimension(1),
-                    TensorDimension::Full,
-                )
-            })
-            .try_collect()?;
-
-        let input = TensorStack::try_from(input)?;
+        let input = self.create_input(&tensor.embed.w, &tokens)?;
         let num_batch = input.num_batch();
         let num_token = input.num_token();
         let head_size = self.info.num_emb / self.info.num_head;
@@ -838,18 +819,30 @@ impl ModelRunInner for Model<'_> {
         //     })
         //     .try_collect()?;
 
+        let mut ops = vec![];
+
         let mut cursors = input.cursors.into_cursors();
         cursors.resize(self.token_chunk_size, 0);
-        let cursors = context.tensor_from_data(buffer.cursors.shape(), cursors)?;
 
-        buffer.input.load(&input.tensor)?;
+        let cursors = context.tensor_from_data(buffer.cursors.shape(), cursors)?;
         buffer.cursors.load(&cursors)?;
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        match &tensor.embed.u {
+            Some(u) => {
+                let tokens = tokens
+                    .concat()
+                    .into_iter()
+                    .map(|token| token as u32)
+                    .collect_vec();
 
-        let op = TensorOp::List(vec![
+                let tokens = context.tensor_from_data(buffer.tokens.shape(), tokens)?;
+                buffer.tokens.load(&tokens)?;
+
+                ops.push(TensorOp::embed(&buffer.tokens, u, &buffer.input)?);
+            }
+            None => buffer.input.load(&input.tensor)?,
+        }
+        ops.append(&mut vec![
             hook_op(Hook::PostEmbedLoaded),
             TensorOp::layer_norm(
                 &tensor.embed.layer_norm.w,
@@ -858,8 +851,14 @@ impl ModelRunInner for Model<'_> {
             )?,
             hook_op(Hook::PostEmbedLayerNorm),
         ]);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let ops = TensorOp::List(ops);
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
-        pass.execute_tensor_op(&op);
+        pass.execute_tensor_op(&ops);
         drop(pass);
 
         for (index, layer) in tensor.layers.iter().enumerate() {
@@ -1089,22 +1088,18 @@ impl ModelRunInner for Model<'_> {
         }
 
         if num_header > 0 {
-            let mut ops = vec![
+            let ops = TensorOp::List(vec![
                 hook_op(Hook::PreHead),
                 TensorOp::layer_norm(&tensor.head.layer_norm.w, &tensor.head.layer_norm.b, head_x)?,
                 hook_op(Hook::PostHeadLayerNorm),
-            ];
-
-            for (chunk, matrix) in tensor.head.w.iter().enumerate() {
-                let start = chunk * self.head_chunk_size;
-                let end = start + matrix.shape()[1];
-                let input = head_x.view(.., .., .., ..)?;
-                let output = output.head_o.view(start..end, .., .., ..)?;
-                ops.push(TensorOp::matmul_vec_fp16(matrix, input, output)?);
-            }
-
-            ops.push(hook_op(Hook::PostHead));
-            let ops = TensorOp::List(ops);
+                tensor.head.w.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    head_x.view(.., .., .., ..)?,
+                    output.head_o.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                hook_op(Hook::PostHead),
+            ]);
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
             pass.execute_tensor_op(&head_ops);

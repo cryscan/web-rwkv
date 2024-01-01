@@ -108,7 +108,7 @@ impl TensorOp {
     /// Softmax operator applied on `x`.
     pub fn softmax(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = x.shape();
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("softmax")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -132,6 +132,55 @@ impl TensorOp {
         })
     }
 
+    /// Embedding on GPU.
+    /// - `tokens` shape: `[T, B]`.
+    /// - `input` shape: `[C, V]`.
+    /// - `output` shape: `[C, T, B]`.
+    pub fn embed(
+        tokens: &TensorGpu<u32, ReadWrite>,
+        input: &TensorGpu<f16, ReadWrite>,
+        output: &TensorGpu<f32, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        let shape = output.shape();
+        tokens.check_shape(Shape::new(shape[1], shape[2], 1, 1))?;
+        input.check_shape(Shape::new(shape[0], input.shape[1], 1, 1))?;
+
+        let context = output.context();
+        let pipeline = context.pipeline("embed")?;
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: tokens.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
     /// Layer normalization applied on `x`, with weight `w` and bias `b`.
     /// - `x` shape: `[C, T, B]`.
     /// - `w` shape: `[C, 1, 1]`.
@@ -145,7 +194,7 @@ impl TensorOp {
         w.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         b.check_shape(Shape::new(shape[0], 1, 1, 1))?;
 
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("layer_norm")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -190,7 +239,7 @@ impl TensorOp {
         w.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
         b.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
 
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("group_norm")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -235,7 +284,7 @@ impl TensorOp {
         matrix.check_shape(Shape::new(input.shape()[0], shape[0], shape[2], 1))?;
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
 
-        let context = &output.tensor.context;
+        let context = output.context();
         let pipeline = context.pipeline("matmul_vec_fp16")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -298,7 +347,7 @@ impl TensorOp {
         my.check_shape(Shape::new(matrix.shape[1], shape[2], 1, 1))?;
         ry.check_shape(Shape::new(matrix.shape[1], shape[2], 1, 1))?;
 
-        let context = &matrix.context;
+        let context = matrix.context();
         let pipeline = context.pipeline("matmul_vec_int8")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -376,7 +425,7 @@ impl TensorOp {
             1,
         ))?;
 
-        let context = &matrix.context;
+        let context = matrix.context();
         let pipeline = context.pipeline("matmul_vec_nf4")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -439,7 +488,7 @@ impl TensorOp {
         matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
         input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
 
-        let context = &output.tensor.context;
+        let context = output.context();
         let pipeline = context.pipeline("matmul_mat_fp16")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -506,7 +555,7 @@ impl TensorOp {
         my.check_shape(Shape::new(matrix.shape()[1], shape[2], 1, 1))?;
         ry.check_shape(Shape::new(matrix.shape()[1], shape[2], 1, 1))?;
 
-        let context = &output.tensor.context;
+        let context = output.context();
         let pipeline = context.pipeline("matmul_mat_int8")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -583,7 +632,7 @@ impl TensorOp {
         matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
         input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
 
-        let context = &output.tensor.context;
+        let context = output.context();
         let pipeline = context.pipeline("matmul_mat_nf4")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -642,7 +691,7 @@ impl TensorOp {
             .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
             .or(input.check_shape(shape))?;
 
-        let context = &output.tensor.context;
+        let context = output.context();
         let pipeline = context.pipeline("add_fp32")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -685,7 +734,7 @@ impl TensorOp {
             .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
             .or(input.check_shape(shape))?;
 
-        let context = &output.tensor.context;
+        let context = output.context();
         let pipeline = context.pipeline("add_fp16")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -729,7 +778,7 @@ impl TensorOp {
         output: &TensorGpu<f32, ReadWrite>,
         reversed: bool,
     ) -> Result<Self, TensorError> {
-        let shape = output.shape;
+        let shape = output.shape();
         let num_batch = sx.shape()[2];
         time_mix
             .check_shape(Shape::new(shape[0], 1, 1, 1))
@@ -737,7 +786,7 @@ impl TensorOp {
         x.check_shape(shape)?;
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
-        let context = &output.context;
+        let context = output.context();
         let pipeline = match reversed {
             false => context.pipeline("token_shift_fp16")?,
             true => context.pipeline("token_shift_rev_fp16")?,
@@ -792,7 +841,7 @@ impl TensorOp {
         output: &TensorGpu<f32, ReadWrite>,
         reversed: bool,
     ) -> Result<Self, TensorError> {
-        let shape = output.shape;
+        let shape = output.shape();
         let num_batch = sx.shape()[2];
         time_mix
             .check_shape(Shape::new(shape[0], 1, 1, 1))
@@ -800,7 +849,7 @@ impl TensorOp {
         x.check_shape(shape)?;
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
 
-        let context = &output.context;
+        let context = output.context();
         let pipeline = match reversed {
             false => context.pipeline("token_shift_fp32")?,
             true => context.pipeline("token_shift_rev_fp32")?,
@@ -858,7 +907,7 @@ impl TensorOp {
         x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
-        let shape = x.shape;
+        let shape = x.shape();
         let num_batch = state.shape()[2];
 
         k.check_shape(shape)?;
@@ -868,7 +917,7 @@ impl TensorOp {
         time_first.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         state.check_shape(Shape::new(shape[0], 4, num_batch, 1))?;
 
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("time_mix_v4")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -935,7 +984,7 @@ impl TensorOp {
         x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
-        let shape = x.shape;
+        let shape = x.shape();
         let dim = shape[0] * shape[1];
         let num_batch = state.shape()[2];
 
@@ -946,7 +995,7 @@ impl TensorOp {
         time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
         state.check_shape(Shape::new(dim, shape[0] + 1, num_batch, 1))?;
 
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("time_mix_v5")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1013,7 +1062,7 @@ impl TensorOp {
         x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
-        let shape = x.shape;
+        let shape = x.shape();
         let dim = shape[0] * shape[1];
         let num_batch = state.shape()[2];
 
@@ -1024,7 +1073,7 @@ impl TensorOp {
         time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
         state.check_shape(Shape::new(dim, shape[0] + 1, num_batch, 1))?;
 
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("time_mix_v6")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1084,10 +1133,10 @@ impl TensorOp {
         input: &TensorGpu<f32, ReadWrite>,
         output: &TensorGpu<f32, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let shape = output.shape;
+        let shape = output.shape();
         input.check_shape(shape)?;
 
-        let context = &output.context;
+        let context = output.context();
         let pipeline = context.pipeline("silu")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1120,9 +1169,9 @@ impl TensorOp {
     }
 
     pub fn tanh(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        let shape = x.shape;
+        let shape = x.shape();
 
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("tanh")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1151,9 +1200,9 @@ impl TensorOp {
     }
 
     pub fn stable_exp(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        let shape = x.shape;
+        let shape = x.shape();
 
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("stable_exp")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1182,8 +1231,8 @@ impl TensorOp {
     }
 
     pub fn squared_relu(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        let shape = x.shape;
-        let context = &x.context;
+        let shape = x.shape();
+        let context = x.context();
         let pipeline = context.pipeline("squared_relu")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1218,14 +1267,14 @@ impl TensorOp {
         x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
     ) -> Result<Self, TensorError> {
-        let shape = x.shape;
+        let shape = x.shape();
         let num_batch = state.shape()[2];
         // cursors.check_shape(Shape::new(shape[1], 1, 1, 1))?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         state.check_shape(Shape::new(shape[0], 1, num_batch, 1))?;
 
-        let context = &x.context;
+        let context = x.context();
         let pipeline = context.pipeline("channel_mix")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1274,7 +1323,7 @@ impl TensorOp {
         let shape = output.shape();
         input.check_shape(shape)?;
 
-        let context = &input.tensor.context;
+        let context = input.context();
         let pipeline = context.pipeline("blit")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1315,7 +1364,7 @@ impl TensorOp {
         let shape = input.shape();
         output.check_shape(Shape::new(shape[0], shape[2], shape[1], 1))?;
 
-        let context = &input.tensor.context;
+        let context = input.context();
         let pipeline = context.pipeline("transpose")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1360,7 +1409,7 @@ impl TensorOp {
         input.check_shape(shape)?;
         factor.check_shape(Shape::new(4, 1, 1, 1))?;
 
-        let context = &output.context;
+        let context = output.context();
         let pipeline = context.pipeline("blend")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1407,7 +1456,7 @@ impl TensorOp {
         xa.check_shape(Shape::new(xa.shape()[0], shape[0], shape[2], 1))?;
         xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2], 1))?;
 
-        let context = &output.tensor.context;
+        let context = output.context();
         let pipeline = context.pipeline("blend_lora")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1458,7 +1507,7 @@ impl TensorOp {
     pub fn half(output: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
         let shape = output.shape();
 
-        let context = &output.context;
+        let context = output.context();
         let pipeline = context.pipeline("half")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1493,7 +1542,7 @@ impl TensorOp {
         let shape = output.shape();
         input.check_shape(shape)?;
 
-        let context = &output.tensor.context;
+        let context = output.context();
         let pipeline = context.pipeline("quant_fp16")?;
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1537,14 +1586,14 @@ impl TensorOp {
         ry: &TensorGpu<f32, ReadWrite>,
         output: &TensorGpu<u8, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let shape = output.shape;
+        let shape = output.shape();
         input.check_shape(shape)?;
         mx.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         rx.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         my.check_shape(Shape::new(shape[1], 1, 1, 1))?;
         ry.check_shape(Shape::new(shape[1], 1, 1, 1))?;
 
-        let context = &output.context;
+        let context = output.context();
         let entries = &[
             BindGroupEntry {
                 binding: 0,
@@ -1608,7 +1657,7 @@ impl TensorOp {
         absmax: &TensorGpu<f16, ReadWrite>,
         output: &TensorGpu<u8, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let context = &output.context;
+        let context = output.context();
         let shape = output.shape();
         let input_shape = Shape::new(shape[0] << 1, shape[1], shape[2], shape[3]);
         let absmax_shape = Shape::new(

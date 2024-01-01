@@ -502,6 +502,11 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
 }
 
 impl<T: Scalar, K: Kind> TensorGpu<T, K> {
+    #[inline]
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
     pub fn load(&self, host: &TensorCpu<T>) -> Result<(), TensorError> {
         host.check_shape(self.shape)?;
         self.context
@@ -701,6 +706,11 @@ impl<T: Scalar> TensorShape for TensorView<'_, T> {
 }
 
 impl<T: Scalar> TensorView<'_, T> {
+    #[inline]
+    fn context(&self) -> &Context {
+        self.tensor.context()
+    }
+
     #[inline]
     pub fn data(&self) -> &TensorBuffer {
         &self.tensor.data

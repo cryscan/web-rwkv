@@ -9,10 +9,13 @@ use wgpu::{
     ShaderModuleDescriptor, ShaderStages,
 };
 
-use crate::tensor::{
-    cache::ResourceCache,
-    shape::{IntoBytes, Shape},
-    TensorError, View,
+use crate::{
+    model::ModelInfo,
+    tensor::{
+        cache::ResourceCache,
+        shape::{IntoBytes, Shape},
+        TensorError, View,
+    },
 };
 
 #[derive(Deref)]
@@ -115,20 +118,26 @@ impl<'a> ContextBuilder<'a> {
     }
 
     pub async fn build(self) -> Result<Context, CreateEnvironmentError> {
-        let (device, queue) = self
-            .adapter
+        let Self {
+            adapter,
+            features,
+            limits,
+            pipelines,
+        } = self;
+
+        let (device, queue) = adapter
             .request_device(
                 &DeviceDescriptor {
                     label: None,
-                    features: self.features,
-                    limits: self.limits,
+                    features,
+                    limits,
                 },
                 None,
             )
             .await
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
-        let pipelines = self
-            .pipelines
+
+        let pipelines = pipelines
             .into_iter()
             .map(|(name, (shader, entry_point, layout))| {
                 let module = &device.create_shader_module(ShaderModuleDescriptor {
@@ -158,10 +167,11 @@ impl<'a> ContextBuilder<'a> {
                 )
             })
             .collect();
+
         Ok(Context(
             ContextInner {
                 id: ContextId::new(),
-                adapter: self.adapter,
+                adapter,
                 device,
                 queue,
                 pipelines,
@@ -172,170 +182,175 @@ impl<'a> ContextBuilder<'a> {
         ))
     }
 
-    pub fn with_limits(self, limits: Limits) -> Self {
-        Self { limits, ..self }
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
     }
 
-    pub fn with_features(self, features: Features) -> Self {
-        Self { features, ..self }
+    /// Compute the limits automatically based on given model build info.
+    pub fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
+        let max_buffer_size = info.max_buffer_size();
+        self.limits.max_buffer_size = (256 << 20).max(max_buffer_size as u64);
+        self.limits.max_storage_buffer_binding_size = (128 << 20).max(max_buffer_size as u32);
+        self
+    }
+
+    pub fn with_features(mut self, features: Features) -> Self {
+        self.features = features;
+        self
     }
 
     pub fn with_pipeline(
-        self,
+        mut self,
         name: &'a str,
         shader: &'a str,
         entry_point: &'a str,
         layout: Option<&'a [BindGroupLayoutEntry]>,
     ) -> Self {
-        let mut pipelines = self.pipelines;
-        pipelines.insert(name, (shader, entry_point, layout));
-        Self { pipelines, ..self }
+        self.pipelines.insert(name, (shader, entry_point, layout));
+        self
     }
 
     pub fn with_default_pipelines(self) -> Self {
-        self.with_core_pipelines()
-            .with_util_pipelines()
-            .with_quant_pipelines()
+        self.with_core_pipelines().with_quant_pipelines()
     }
 
     fn with_core_pipelines(self) -> Self {
-        self.with_pipeline(
-            "layer_norm",
-            include_str!("shaders/layer_norm.wgsl"),
-            "layer_norm",
-            None,
-        )
-        .with_pipeline(
-            "group_norm",
-            include_str!("shaders/group_norm.wgsl"),
-            "group_norm",
-            None,
-        )
-        .with_pipeline(
-            "matmul_vec_fp16",
-            include_str!("shaders/matmul_vec_fp16.wgsl"),
-            "matmul",
-            None,
-        )
-        .with_pipeline(
-            "matmul_vec_int8",
-            include_str!("shaders/matmul_vec_int8.wgsl"),
-            "matmul",
-            None,
-        )
-        .with_pipeline(
-            "matmul_vec_nf4",
-            include_str!("shaders/matmul_vec_nf4.wgsl"),
-            "matmul",
-            None,
-        )
-        .with_pipeline(
-            "matmul_mat_fp16",
-            include_str!("shaders/matmul_mat_fp16.wgsl"),
-            "matmul",
-            None,
-        )
-        .with_pipeline(
-            "matmul_mat_int8",
-            include_str!("shaders/matmul_mat_int8.wgsl"),
-            "matmul",
-            None,
-        )
-        .with_pipeline(
-            "matmul_mat_nf4",
-            include_str!("shaders/matmul_mat_nf4.wgsl"),
-            "matmul",
-            None,
-        )
-        .with_pipeline(
-            "token_shift_fp16",
-            include_str!("shaders/token_shift.wgsl"),
-            "token_shift_fp16",
-            None,
-        )
-        .with_pipeline(
-            "token_shift_rev_fp16",
-            include_str!("shaders/token_shift.wgsl"),
-            "token_shift_rev_fp16",
-            None,
-        )
-        .with_pipeline(
-            "token_shift_fp32",
-            include_str!("shaders/token_shift.wgsl"),
-            "token_shift_fp32",
-            None,
-        )
-        .with_pipeline(
-            "token_shift_rev_fp32",
-            include_str!("shaders/token_shift.wgsl"),
-            "token_shift_rev_fp32",
-            None,
-        )
-        .with_pipeline(
-            "time_mix_v4",
-            include_str!("shaders/time_mix_v4.wgsl"),
-            "time_mix",
-            None,
-        )
-        .with_pipeline(
-            "time_mix_v5",
-            include_str!("shaders/time_mix_v5.wgsl"),
-            "time_mix",
-            None,
-        )
-        .with_pipeline(
-            "time_mix_v6",
-            include_str!("shaders/time_mix_v6.wgsl"),
-            "time_mix",
-            None,
-        )
-        .with_pipeline(
-            "add_fp32",
-            include_str!("shaders/add.wgsl"),
-            "add_fp32",
-            None,
-        )
-        .with_pipeline(
-            "add_fp16",
-            include_str!("shaders/add.wgsl"),
-            "add_fp16",
-            None,
-        )
-        .with_pipeline("silu", include_str!("shaders/silu.wgsl"), "silu", None)
-        .with_pipeline(
-            "tanh",
-            include_str!("shaders/activation.wgsl"),
-            "activation_tanh",
-            None,
-        )
-        .with_pipeline(
-            "stable_exp",
-            include_str!("shaders/activation.wgsl"),
-            "stable_exp",
-            None,
-        )
-        .with_pipeline(
-            "squared_relu",
-            include_str!("shaders/activation.wgsl"),
-            "squared_relu",
-            None,
-        )
-        .with_pipeline(
-            "channel_mix",
-            include_str!("shaders/channel_mix.wgsl"),
-            "channel_mix",
-            None,
-        )
-        .with_pipeline(
-            "softmax",
-            include_str!("shaders/softmax.wgsl"),
-            "softmax",
-            None,
-        )
-    }
-
-    fn with_util_pipelines(self) -> Self {
-        self.with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
+        self.with_pipeline("embed", include_str!("shaders/embed.wgsl"), "embed", None)
+            .with_pipeline(
+                "layer_norm",
+                include_str!("shaders/layer_norm.wgsl"),
+                "layer_norm",
+                None,
+            )
+            .with_pipeline(
+                "group_norm",
+                include_str!("shaders/group_norm.wgsl"),
+                "group_norm",
+                None,
+            )
+            .with_pipeline(
+                "matmul_vec_fp16",
+                include_str!("shaders/matmul_vec_fp16.wgsl"),
+                "matmul",
+                None,
+            )
+            .with_pipeline(
+                "matmul_vec_int8",
+                include_str!("shaders/matmul_vec_int8.wgsl"),
+                "matmul",
+                None,
+            )
+            .with_pipeline(
+                "matmul_vec_nf4",
+                include_str!("shaders/matmul_vec_nf4.wgsl"),
+                "matmul",
+                None,
+            )
+            .with_pipeline(
+                "matmul_mat_fp16",
+                include_str!("shaders/matmul_mat_fp16.wgsl"),
+                "matmul",
+                None,
+            )
+            .with_pipeline(
+                "matmul_mat_int8",
+                include_str!("shaders/matmul_mat_int8.wgsl"),
+                "matmul",
+                None,
+            )
+            .with_pipeline(
+                "matmul_mat_nf4",
+                include_str!("shaders/matmul_mat_nf4.wgsl"),
+                "matmul",
+                None,
+            )
+            .with_pipeline(
+                "token_shift_fp16",
+                include_str!("shaders/token_shift.wgsl"),
+                "token_shift_fp16",
+                None,
+            )
+            .with_pipeline(
+                "token_shift_rev_fp16",
+                include_str!("shaders/token_shift.wgsl"),
+                "token_shift_rev_fp16",
+                None,
+            )
+            .with_pipeline(
+                "token_shift_fp32",
+                include_str!("shaders/token_shift.wgsl"),
+                "token_shift_fp32",
+                None,
+            )
+            .with_pipeline(
+                "token_shift_rev_fp32",
+                include_str!("shaders/token_shift.wgsl"),
+                "token_shift_rev_fp32",
+                None,
+            )
+            .with_pipeline(
+                "time_mix_v4",
+                include_str!("shaders/time_mix_v4.wgsl"),
+                "time_mix",
+                None,
+            )
+            .with_pipeline(
+                "time_mix_v5",
+                include_str!("shaders/time_mix_v5.wgsl"),
+                "time_mix",
+                None,
+            )
+            .with_pipeline(
+                "time_mix_v6",
+                include_str!("shaders/time_mix_v6.wgsl"),
+                "time_mix",
+                None,
+            )
+            .with_pipeline(
+                "add_fp32",
+                include_str!("shaders/add.wgsl"),
+                "add_fp32",
+                None,
+            )
+            .with_pipeline(
+                "add_fp16",
+                include_str!("shaders/add.wgsl"),
+                "add_fp16",
+                None,
+            )
+            .with_pipeline("silu", include_str!("shaders/silu.wgsl"), "silu", None)
+            .with_pipeline(
+                "tanh",
+                include_str!("shaders/activation.wgsl"),
+                "activation_tanh",
+                None,
+            )
+            .with_pipeline(
+                "stable_exp",
+                include_str!("shaders/activation.wgsl"),
+                "stable_exp",
+                None,
+            )
+            .with_pipeline(
+                "squared_relu",
+                include_str!("shaders/activation.wgsl"),
+                "squared_relu",
+                None,
+            )
+            .with_pipeline(
+                "channel_mix",
+                include_str!("shaders/channel_mix.wgsl"),
+                "channel_mix",
+                None,
+            )
+            .with_pipeline(
+                "softmax",
+                include_str!("shaders/softmax.wgsl"),
+                "softmax",
+                None,
+            )
+            .with_pipeline("blit", include_str!("shaders/blit.wgsl"), "blit", None)
             .with_pipeline(
                 "transpose",
                 include_str!("shaders/blit.wgsl"),

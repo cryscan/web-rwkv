@@ -1,14 +1,16 @@
 use std::{collections::HashMap, future::Future, hash::Hash, sync::Arc};
 
 use anyhow::Result;
+use half::f16;
+use itertools::Itertools;
 
 use super::{ModelBase, ModelError, ModelInfo, ModelState};
 use crate::{
     context::Context,
     tensor::{
         ops::{TensorOp, TensorOpHook},
-        shape::Shape,
-        ReadBack, ReadWrite, TensorGpu,
+        shape::{Shape, TensorDimension},
+        ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu, TensorReshape, TensorStack,
     },
 };
 
@@ -50,6 +52,35 @@ pub(crate) trait ModelRunInner: ModelBase {
         should_output: Vec<bool>,
         hooks: &HookMap<Self::Hook, Self::ModelState, Self::Runtime>,
     ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)>;
+
+    fn create_input<'a>(
+        &self,
+        embed: &TensorCpu<'a, f16>,
+        tokens: &[Vec<u16>],
+    ) -> Result<TensorStack<'a, f32>, TensorError> {
+        let info = self.info();
+        let context = self.context();
+
+        let input: Vec<_> = tokens
+            .iter()
+            .map(|tokens| -> Result<_, TensorError> {
+                let stack = TensorCpu::stack(
+                    tokens
+                        .iter()
+                        .map(|&token| embed.slice(.., token as usize, .., ..))
+                        .try_collect()?,
+                )
+                .unwrap_or_else(|_| context.zeros(Shape::new(info.num_emb, 1, 0, 1)));
+                stack.map(|x| x.to_f32()).reshape(
+                    TensorDimension::Full,
+                    TensorDimension::Auto,
+                    TensorDimension::Dimension(1),
+                    TensorDimension::Full,
+                )
+            })
+            .try_collect()?;
+        TensorStack::try_from(input)
+    }
 }
 
 pub trait ModelRun: ModelBase {
