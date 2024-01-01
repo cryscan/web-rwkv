@@ -9,10 +9,13 @@ use wgpu::{
     ShaderModuleDescriptor, ShaderStages,
 };
 
-use crate::tensor::{
-    cache::ResourceCache,
-    shape::{IntoBytes, Shape},
-    TensorError, View,
+use crate::{
+    model::{EmbedDevice, ModelInfo},
+    tensor::{
+        cache::ResourceCache,
+        shape::{IntoBytes, Shape},
+        TensorError, View,
+    },
 };
 
 #[derive(Deref)]
@@ -181,6 +184,17 @@ impl<'a> ContextBuilder<'a> {
 
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Compute the limits automatically based on given model build info.
+    pub fn with_auto_limits(mut self, info: &ModelInfo, embed_device: EmbedDevice) -> Self {
+        let max_buffer_size = match embed_device {
+            EmbedDevice::Cpu => info.max_non_head_buffer_size(),
+            EmbedDevice::Gpu => info.max_buffer_size(),
+        };
+        self.limits.max_buffer_size = (256 << 20).max(max_buffer_size as u64);
+        self.limits.max_storage_buffer_binding_size = (128 << 20).max(max_buffer_size as u32);
         self
     }
 

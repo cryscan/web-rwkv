@@ -70,13 +70,8 @@ impl Sampler {
     }
 }
 
-async fn create_context(info: &ModelInfo) -> Result<Context> {
+async fn create_context(info: &ModelInfo, embed_device: Option<EmbedDevice>) -> Result<Context> {
     let instance = Instance::new();
-    let limits = wgpu::Limits {
-        max_storage_buffer_binding_size: info.max_buffer_size() as u32,
-        max_buffer_size: info.max_buffer_size() as u64,
-        ..Default::default()
-    };
     #[cfg(not(debug_assertions))]
     let adapter = {
         let backends = wgpu::Backends::all();
@@ -98,7 +93,7 @@ async fn create_context(info: &ModelInfo) -> Result<Context> {
         .await?;
     let context = ContextBuilder::new(adapter)
         .with_default_pipelines()
-        .with_limits(limits)
+        .with_auto_limits(info, embed_device.unwrap_or_default().into())
         .build()
         .await?;
     println!("{:#?}", context.adapter.get_info());
@@ -190,7 +185,7 @@ async fn run(cli: Cli) -> Result<()> {
     let info = Loader::info(&map)?;
     println!("{:#?}", info);
 
-    let context = create_context(&info).await?;
+    let context = create_context(&info, cli.embed_device).await?;
 
     match info.version {
         ModelVersion::V4 => {
