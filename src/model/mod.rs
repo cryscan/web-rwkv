@@ -23,11 +23,7 @@ pub mod v5;
 pub mod v6;
 
 pub const RESCALE_LAYER: usize = 6;
-
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
-pub const HEAD_CHUNK_SIZES: [usize; 10] = [
-    0x10000, 0x5000, 0x4000, 0x3000, 0x2000, 0x1800, 0x1600, 0x1400, 0x1200, 0x1000,
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelVersion {
@@ -132,10 +128,7 @@ pub trait ModelBase: Sync {
 
     fn context(&self) -> &Context;
     fn info(&self) -> &ModelInfo;
-
     fn token_chunk_size(&self) -> usize;
-    fn head_chunk_size(&self) -> usize;
-
     fn head_shape(&self, num_batch: usize) -> Shape;
 }
 
@@ -246,7 +239,6 @@ struct PreparedModelBuilder<'a> {
     turbo: bool,
     rescale: bool,
     token_chunk_size: usize,
-    head_chunk_size: usize,
 }
 
 impl<'a> ModelBuilder<'a> {
@@ -281,13 +273,6 @@ impl<'a> ModelBuilder<'a> {
             .next_power_of_two();
         log::info!("token chunk size: {token_chunk_size}");
 
-        let max_chunk_size = context.device.limits().max_storage_buffer_binding_size as usize;
-        let head_chunk_size = HEAD_CHUNK_SIZES
-            .into_iter()
-            .find(|&x| info.num_emb * x * f16::size() <= max_chunk_size)
-            .ok_or(ModelError::NoViableChunkSize)?;
-        log::info!("head chunk size: {head_chunk_size}");
-
         let rescale = turbo || quant.iter().any(|(_, quant)| matches!(quant, Quant::NF4));
 
         Ok(PreparedModelBuilder {
@@ -299,7 +284,6 @@ impl<'a> ModelBuilder<'a> {
             turbo,
             rescale,
             token_chunk_size,
-            head_chunk_size,
         })
     }
 

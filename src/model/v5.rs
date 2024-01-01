@@ -34,8 +34,6 @@ pub struct Model<'a> {
     rescale: bool,
     /// Whether to use fp16 GEMM for matmul computations.
     turbo: bool,
-    /// The head matrix is too big for a storage buffer so it's divided into chunks.
-    head_chunk_size: usize,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     token_chunk_size: usize,
 
@@ -105,7 +103,7 @@ struct Embed<'a> {
 #[derive(Debug)]
 struct Head {
     layer_norm: LayerNorm,
-    w: Vec<TensorGpu<f16, ReadWrite>>,
+    w: Matrix,
 }
 
 /// Runtime buffers.
@@ -523,7 +521,6 @@ impl<'a> FromBuilder for Model<'a> {
             turbo,
             rescale,
             token_chunk_size,
-            head_chunk_size,
         } = builder.prepare()?;
 
         let embed = Embed {
@@ -543,7 +540,7 @@ impl<'a> FromBuilder for Model<'a> {
                 w: loader.load_vector_f16("ln_out.weight")?,
                 b: loader.load_vector_f16("ln_out.bias")?,
             },
-            w: loader.load_head(head_chunk_size)?,
+            w: Matrix::Fp16(loader.load_matrix_f16("head.weight")?),
         };
 
         context.queue.submit(None);
@@ -687,7 +684,6 @@ impl<'a> FromBuilder for Model<'a> {
             info,
             rescale,
             turbo,
-            head_chunk_size,
             token_chunk_size,
             tensor,
             runtime_cache: ResourceCache::new(1),
@@ -713,11 +709,6 @@ impl ModelBase for Model<'_> {
     #[inline]
     fn token_chunk_size(&self) -> usize {
         self.token_chunk_size
-    }
-
-    #[inline]
-    fn head_chunk_size(&self) -> usize {
-        self.head_chunk_size
     }
 
     #[inline]
@@ -1097,22 +1088,18 @@ impl ModelRunInner for Model<'_> {
         }
 
         if num_header > 0 {
-            let mut ops = vec![
+            let ops = TensorOp::List(vec![
                 hook_op(Hook::PreHead),
                 TensorOp::layer_norm(&tensor.head.layer_norm.w, &tensor.head.layer_norm.b, head_x)?,
                 hook_op(Hook::PostHeadLayerNorm),
-            ];
-
-            for (chunk, matrix) in tensor.head.w.iter().enumerate() {
-                let start = chunk * self.head_chunk_size;
-                let end = start + matrix.shape()[1];
-                let input = head_x.view(.., .., .., ..)?;
-                let output = output.head_o.view(start..end, .., .., ..)?;
-                ops.push(TensorOp::matmul_vec_fp16(matrix, input, output)?);
-            }
-
-            ops.push(hook_op(Hook::PostHead));
-            let ops = TensorOp::List(ops);
+                tensor.head.w.matmul_op(
+                    buffer.half_x.view(.., .., .., ..)?,
+                    head_x.view(.., .., .., ..)?,
+                    output.head_o.view(.., .., .., ..)?,
+                    turbo,
+                )?,
+                hook_op(Hook::PostHead),
+            ]);
 
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
             pass.execute_tensor_op(&head_ops);
