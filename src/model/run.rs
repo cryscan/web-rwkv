@@ -16,6 +16,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Output {
+    pub half_x: TensorGpu<f16, ReadWrite>,
     pub head_x: TensorGpu<f32, ReadWrite>,
     pub head_o: TensorGpu<f32, ReadWrite>,
     pub map: TensorGpu<f32, ReadBack>,
@@ -27,6 +28,7 @@ impl Output {
         let output_shape = Shape::new(info.num_vocab, num_batch, 1, 1);
 
         Self {
+            half_x: context.tensor_init(head_shape),
             head_x: context.tensor_init(head_shape),
             head_o: context.tensor_init(output_shape),
             map: context.tensor_init(output_shape),
