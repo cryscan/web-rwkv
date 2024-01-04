@@ -1246,7 +1246,7 @@ impl ModelRunInner for Model<'_> {
                 TensorOp::layer_norm(&tensor.head.layer_norm.w, &tensor.head.layer_norm.b, head_x)?,
                 hook_op(Hook::PostHeadLayerNorm),
                 tensor.head.w.matmul_op(
-                    buffer.half_x.view(.., .., .., ..)?,
+                    output.half_x.view(.., .., .., ..)?,
                     head_x.view(.., .., .., ..)?,
                     output.head_o.view(.., .., .., ..)?,
                     turbo,
