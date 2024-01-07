@@ -8,8 +8,8 @@ use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
 
 use super::{
     matrix::Matrix,
-    run::{HookMap, ModelRunInner, Output},
-    softmax::{ModelSoftmaxInner, Softmax},
+    run::{HookMap, ModelRunInternal, Output},
+    softmax::{ModelSoftmaxInternal, Softmax},
     FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, PreparedModelBuilder, Quant,
     StateBuilder,
 };
@@ -694,8 +694,6 @@ impl<'a> FromBuilder for Model<'a> {
 }
 
 impl ModelBase for Model<'_> {
-    type ModelState = ModelState;
-
     #[inline]
     fn context(&self) -> &Context {
         &self.context
@@ -710,14 +708,9 @@ impl ModelBase for Model<'_> {
     fn token_chunk_size(&self) -> usize {
         self.token_chunk_size
     }
-
-    #[inline]
-    fn head_shape(&self, num_batch: usize) -> Shape {
-        Shape::new(self.info.num_vocab, 1, num_batch, 1)
-    }
 }
 
-impl ModelSoftmaxInner for Model<'_> {
+impl ModelSoftmaxInternal for Model<'_> {
     #[inline]
     fn request_softmax(&self, num_batch: usize) -> Arc<Softmax> {
         self.softmax_cache.request(num_batch, || {
@@ -726,9 +719,10 @@ impl ModelSoftmaxInner for Model<'_> {
     }
 }
 
-impl ModelRunInner for Model<'_> {
+impl ModelRunInternal for Model<'_> {
     type Hook = Hook;
     type Runtime = Runtime;
+    type ModelState = ModelState;
 
     #[inline]
     fn request_output(&self, num_batch: usize) -> Arc<Output> {
@@ -1088,6 +1082,7 @@ impl ModelRunInner for Model<'_> {
         }
 
         if num_header > 0 {
+            let turbo = self.turbo && num_header == self.token_chunk_size;
             let ops = TensorOp::List(vec![
                 hook_op(Hook::PreHead),
                 TensorOp::layer_norm(&tensor.head.layer_norm.w, &tensor.head.layer_norm.b, head_x)?,

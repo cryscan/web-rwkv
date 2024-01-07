@@ -6,11 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
-use crate::{
-    context::Context,
-    num::Scalar,
-    tensor::{shape::Shape, TensorError},
-};
+use crate::{context::Context, num::Scalar, tensor::TensorError};
 
 use self::loader::Loader;
 
@@ -124,12 +120,11 @@ pub trait ModelState:
 }
 
 pub trait ModelBase: Sync {
-    type ModelState: ModelState;
-
     fn context(&self) -> &Context;
     fn info(&self) -> &ModelInfo;
+
+    /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     fn token_chunk_size(&self) -> usize;
-    fn head_shape(&self, num_batch: usize) -> Shape;
 }
 
 pub trait Model:
@@ -141,9 +136,9 @@ pub trait Model:
 }
 
 impl<S: ModelState, M> Model for M where
-    M: ModelBase<ModelState = S>
+    M: ModelBase
         + softmax::ModelSoftmax
-        + run::ModelRun
+        + run::ModelRun<ModelState = S>
         + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
 {
 }

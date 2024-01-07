@@ -30,11 +30,11 @@ impl Softmax {
     }
 }
 
-pub(crate) trait ModelSoftmaxInner: ModelBase {
+pub(crate) trait ModelSoftmaxInternal: ModelBase {
     fn request_softmax(&self, num_batch: usize) -> Arc<Softmax>;
 }
 
-pub trait ModelSoftmax: ModelBase {
+pub trait ModelSoftmax {
     /// Softmax of the input tensors.
     fn softmax(
         &self,
@@ -42,10 +42,11 @@ pub trait ModelSoftmax: ModelBase {
     ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
 }
 
-impl<Model: ModelSoftmaxInner> ModelSoftmax for Model {
+impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
     async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
         let max_batch = input.len();
         let context = self.context();
+        let info = self.info();
 
         let mut redirect = vec![None; max_batch];
         let input: Vec<_> = input
@@ -53,8 +54,8 @@ impl<Model: ModelSoftmaxInner> ModelSoftmax for Model {
             .enumerate()
             .filter_map(|(batch, data)| data.map(|data| (batch, data)))
             .map(|(batch, data)| {
-                TensorCpu::from_data(context, self.head_shape(1), data)
-                    .map(|tensor| (batch, tensor))
+                let shape = Shape::new(info.num_vocab, 1, 1, 1);
+                TensorCpu::from_data(context, shape, data).map(|tensor| (batch, tensor))
             })
             .try_collect()?;
         let input = TensorCpu::stack(

@@ -39,9 +39,10 @@ impl Output {
 pub type HookFn<ModelState, Runtime> = Box<dyn Fn(&ModelState, &Runtime) -> TensorOp + Send + Sync>;
 pub type HookMap<Hook, ModelState, Runtime> = HashMap<Hook, HookFn<ModelState, Runtime>>;
 
-pub(crate) trait ModelRunInner: ModelBase {
+pub(crate) trait ModelRunInternal: ModelBase {
     type Hook: TensorOpHook + Hash + Send;
     type Runtime;
+    type ModelState: ModelState;
 
     fn request_output(&self, num_batch: usize) -> Arc<Output>;
 
@@ -85,9 +86,10 @@ pub(crate) trait ModelRunInner: ModelBase {
     }
 }
 
-pub trait ModelRun: ModelBase {
+pub trait ModelRun {
     type Hook: TensorOpHook + Hash + Send;
     type Runtime;
+    type ModelState: ModelState;
 
     /// Run the model for a batch of tokens as input.
     /// The length of `tokens` must match the number of batches in `state`.
@@ -109,13 +111,15 @@ pub trait ModelRun: ModelBase {
     ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
 }
 
-impl<Hook, Runtime, Model> ModelRun for Model
+impl<Hook, Runtime, Model, ModelState> ModelRun for Model
 where
     Hook: TensorOpHook + Hash + Send + Sync,
-    Model: ModelRunInner<Hook = Hook, Runtime = Runtime>,
+    Model: ModelRunInternal<Hook = Hook, Runtime = Runtime, ModelState = ModelState>,
+    ModelState: super::ModelState,
 {
     type Hook = Hook;
     type Runtime = Runtime;
+    type ModelState = ModelState;
 
     async fn run(
         &self,
