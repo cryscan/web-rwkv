@@ -2106,8 +2106,13 @@ mod tests {
         };
         fastrand::seed(42);
 
-        const C: usize = 2048;
-        const R: usize = 7148;
+        const C: usize = 14336;
+        const R: usize = 4096;
+        const T: usize = 32;
+
+        // let matrix_shape = Shape::new(C, R, 1, 1);
+        let input_shape = Shape::new(C, T, 1, 1);
+        let output_shape = Shape::new(R, T, 2, 1);
 
         let matrix_f16 = vec![(); R * C]
             .into_iter()
@@ -2195,12 +2200,110 @@ mod tests {
             .map(|x| (x as f32) / 255.0)
             .collect_vec();
 
-        let output = [matrix_u8_host, mx_host, my_host, rx_host, ry_host].concat();
+        let output = [
+            matrix_u8_host.clone(),
+            mx_host.clone(),
+            my_host.clone(),
+            rx_host.clone(),
+            ry_host.clone(),
+        ]
+        .concat();
         let ans = [matrix_u8, mx, my, rx, ry].concat();
 
         for (index, (a, b)) in Iterator::zip(output.into_iter(), ans.into_iter()).enumerate() {
             assert!(
                 is_approx_eps(a, b, 0.005),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
+
+        let input_f32 = vec![(); C * T]
+            .into_iter()
+            .map(|_| 10.0 * (fastrand::f32() - 0.5))
+            .collect_vec();
+        let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
+
+        let input_f32_dev = TensorGpu::from_data(&context, input_shape, input_f32.clone())?;
+        let input_f16_dev: TensorGpu<f16, _> = context.tensor_init(input_shape);
+        let output_dev = TensorGpu::init(&context, output_shape);
+        let output_map = TensorGpu::init(&context, output_shape);
+
+        let ops = TensorOp::List(vec![
+            TensorOp::quantize_fp16(
+                input_f32_dev.view(.., .., .., ..)?,
+                input_f16_dev.view(.., .., .., ..)?,
+            )?,
+            TensorOp::matmul_vec_int8(
+                &matrix_u8_dev,
+                &mx_dev,
+                &rx_dev,
+                &my_dev,
+                &ry_dev,
+                input_f32_dev.view(.., .., .., ..)?,
+                output_dev.view(.., .., 0..1, ..)?,
+            )?,
+            TensorOp::matmul_mat_int8(
+                matrix_u8_dev.view(.., .., .., ..)?,
+                &mx_dev,
+                &rx_dev,
+                &my_dev,
+                &ry_dev,
+                input_f16_dev.view(.., .., .., ..)?,
+                output_dev.view(.., .., 1.., ..)?,
+            )?,
+        ]);
+
+        let mut encoder = context
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        pass.execute_tensor_op(&ops);
+        drop(pass);
+
+        encoder.copy_tensor(&output_dev, &output_map)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        let output_host = output_map.back();
+        let output_host = Vec::from(output_host);
+
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        let mut ans = vec![0.0; output_host.len()];
+        for token in 0..T {
+            for line in 0..R {
+                let matrix = &matrix_u8_host[(line * C)..(line + 1) * C];
+                let input = &input_f32[token * C..(token + 1) * C];
+                let product = itertools::multizip((matrix, &mx_host, &rx_host, input)).fold(
+                    0.0f32,
+                    |acc, (m, mx, rx, x)| {
+                        let my = my_host[line];
+                        let ry = ry_host[line];
+                        let m = m * rx * ry + mx + my;
+                        acc + m * x
+                    },
+                );
+                ans[token * R + line] = product;
+
+                let input = &input_f16[token * C..(token + 1) * C];
+                let product = itertools::multizip((matrix, &mx_host, &rx_host, input)).fold(
+                    0.0f32,
+                    |acc, (m, mx, rx, x)| {
+                        let my = my_host[line];
+                        let ry = ry_host[line];
+                        let m = m * rx * ry + mx + my;
+                        acc + m * x.to_f32()
+                    },
+                );
+                ans[(T + token) * R + line] = product;
+            }
+        }
+
+        for (index, (a, b)) in
+            itertools::zip_eq(output_host.into_iter(), ans.into_iter()).enumerate()
+        {
+            assert!(
+                is_approx_eps(a, b, 0.01),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }
