@@ -232,6 +232,11 @@ pub trait TensorReshape: Sized {
     ) -> Result<Self, TensorError>;
 }
 
+pub trait TensorTransfer: Sized {
+    /// Transfer the tensor to another (may be the same) context.
+    fn transfer(self, context: &Context) -> Result<Self, TensorError>;
+}
+
 #[derive(Debug)]
 pub struct Tensor<D: Device, T: Scalar> {
     context: Context,
@@ -342,6 +347,17 @@ impl<T: Scalar> TensorReshape for TensorCpu<'_, T> {
         Ok(Self {
             shape,
             ..self.clone()
+        })
+    }
+}
+
+impl<T: Scalar> TensorTransfer for TensorCpu<'_, T> {
+    fn transfer(self, context: &Context) -> Result<Self, TensorError> {
+        Ok(Self {
+            context: context.clone(),
+            shape: self.shape,
+            data: self.data,
+            phantom: PhantomData,
         })
     }
 }
