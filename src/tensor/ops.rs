@@ -1792,7 +1792,7 @@ mod tests {
     use anyhow::Result;
     use half::f16;
     use itertools::Itertools;
-    use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor, PowerPreference};
+    use wgpu::{CommandEncoderDescriptor, PowerPreference};
     // use wgpu_profiler::GpuProfiler;
 
     use super::{TensorOp, TensorPass};
@@ -1875,7 +1875,7 @@ mod tests {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&softmax);
         drop(pass);
 
@@ -1943,7 +1943,7 @@ mod tests {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&layer_norm);
         drop(pass);
 
@@ -2041,7 +2041,7 @@ mod tests {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
 
@@ -2257,7 +2257,7 @@ mod tests {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
 
@@ -2421,7 +2421,7 @@ mod tests {
         //     .device
         //     .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        // let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        // let mut pass = encoder.begin_compute_pass(&Default::default());
         // pass.execute_tensor_op(&ops);
         // drop(pass);
 
@@ -2446,7 +2446,7 @@ mod tests {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
 
@@ -2531,7 +2531,7 @@ mod tests {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
 
@@ -2574,7 +2574,7 @@ mod tests {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
 

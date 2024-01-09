@@ -3,7 +3,7 @@ use derive_getters::Getters;
 use half::f16;
 use itertools::Itertools;
 use safetensors::SafeTensors;
-use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
+use wgpu::CommandEncoderDescriptor;
 
 use super::{Lora, ModelError, ModelInfo, ModelVersion};
 use crate::{
@@ -179,7 +179,7 @@ impl<'a> Loader<'a> {
                         // )
                         // .ok()?;
                         // let mut pass =
-                        //     encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                        //     encoder.begin_compute_pass(&Default::default());
                         // pass.execute_tensor_op(&op);
                         // drop(pass);
 
@@ -225,7 +225,7 @@ impl<'a> Loader<'a> {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
         }
 
@@ -250,7 +250,7 @@ impl<'a> Loader<'a> {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
         }
 
@@ -279,7 +279,7 @@ impl<'a> Loader<'a> {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
         }
 
@@ -314,7 +314,7 @@ impl<'a> Loader<'a> {
                 let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
                 let op = TensorOp::blend(&factor, &lora.tensor, &tensor_f32)?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
             }
 
@@ -322,7 +322,7 @@ impl<'a> Loader<'a> {
                 tensor_f32.view(.., .., .., ..)?,
                 tensor_f16.view(.., .., .., ..)?,
             )?;
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
             drop(pass);
 
@@ -352,7 +352,7 @@ impl<'a> Loader<'a> {
                     lora.a.view(.., .., .., ..)?,
                     tensor.view(.., .., .., ..)?,
                 )?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
             }
             context.queue.submit(Some(encoder.finish()));
@@ -387,7 +387,7 @@ impl<'a> Loader<'a> {
                     lora.a.view(.., .., .., ..)?,
                     tensor.view(.., .., .., ..)?,
                 )?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
             }
             context.queue.submit(Some(encoder.finish()));
@@ -421,7 +421,7 @@ impl<'a> Loader<'a> {
                     lora.a.view(.., .., .., ..)?,
                     matrix.view(.., .., .., ..)?,
                 )?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
             }
             context.queue.submit(Some(encoder.finish()));
@@ -460,7 +460,7 @@ impl<'a> Loader<'a> {
                     lora.a.view(.., .., .., ..)?,
                     matrix.view(.., .., .., ..)?,
                 )?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
             }
             context.queue.submit(Some(encoder.finish()));

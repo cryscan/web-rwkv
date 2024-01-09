@@ -1,5 +1,5 @@
 use half::f16;
-use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
+use wgpu::CommandEncoderDescriptor;
 
 use crate::tensor::{
     ops::{TensorOp, TensorPass},
@@ -105,7 +105,7 @@ impl Matrix {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
         drop(pass);
 
@@ -156,7 +156,7 @@ impl Matrix {
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
         drop(pass);
 

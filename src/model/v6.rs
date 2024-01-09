@@ -4,7 +4,7 @@ use anyhow::Result;
 use half::f16;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use wgpu::{CommandEncoderDescriptor, ComputePassDescriptor};
+use wgpu::CommandEncoderDescriptor;
 
 use super::{
     matrix::Matrix,
@@ -470,7 +470,7 @@ impl super::ModelState for ModelState {
                 .device
                 .create_command_encoder(&CommandEncoderDescriptor::default());
 
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
             drop(pass);
 
@@ -915,7 +915,7 @@ impl ModelRunInternal for Model<'_> {
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
         let ops = TensorOp::List(ops);
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
 
@@ -1147,7 +1147,7 @@ impl ModelRunInternal for Model<'_> {
                 hook_op(Hook::PostAtt(index)),
             ]);
 
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&ops);
             drop(pass);
 
@@ -1218,13 +1218,13 @@ impl ModelRunInternal for Model<'_> {
                 hook_op(Hook::PostFfn(index)),
             ]);
 
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&ops);
             drop(pass);
 
             if self.rescale && (index + 1) % RESCALE_LAYER == 0 {
                 let op = TensorOp::half(&buffer.ffn_x)?;
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
                 drop(pass);
             }
@@ -1249,7 +1249,7 @@ impl ModelRunInternal for Model<'_> {
                 hook_op(Hook::PostHead),
             ]);
 
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&head_ops);
             pass.execute_tensor_op(&ops);
             drop(pass);
