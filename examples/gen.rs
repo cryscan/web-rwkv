@@ -20,31 +20,12 @@ use web_rwkv::{
 };
 
 fn sample(probs: &[f32], _top_p: f32) -> u16 {
-    let sorted = probs
+    probs
         .iter()
-        .copied()
         .enumerate()
-        .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(y).reverse())
-        // .scan((0, 0.0), |(_, cum), (id, x)| {
-        //     if *cum > top_p {
-        //         None
-        //     } else {
-        //         *cum += x;
-        //         Some((id, *cum))
-        //     }
-        // })
-        .collect_vec();
-    // let sum: f32 = sorted.iter().map(|(_, x)| x).sum();
-    // let sorted = sorted.into_iter().map(|(id, x)| (id, x / sum));
-
-    // let rand = fastrand::f32();
-    // let token = sorted
-    //     .into_iter()
-    //     .find_or_first(|&(_, cum)| rand <= cum)
-    //     .map(|(id, _)| id)
-    //     .unwrap_or_default();
-    let token = sorted[0].0;
-    token as u16
+        .max_by(|(_, x), (_, y)| x.total_cmp(y))
+        .unwrap()
+        .0 as u16
 }
 
 async fn create_context(info: &ModelInfo) -> Result<Context> {
