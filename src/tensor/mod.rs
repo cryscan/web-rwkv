@@ -4,8 +4,7 @@ use itertools::Itertools;
 use web_rwkv_derive::Kind;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindingResource, Buffer, BufferBinding, BufferDescriptor, BufferUsages,
-    CommandEncoderDescriptor, MapMode,
+    BindingResource, Buffer, BufferBinding, BufferDescriptor, BufferUsages, MapMode,
 };
 
 use crate::{context::Context, num::Scalar};
@@ -761,9 +760,7 @@ impl<T: Scalar> DeepClone for TensorGpu<T, ReadWrite> {
         let shape = self.shape;
         let cloned = context.tensor_init(shape);
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
         encoder
             .copy_tensor(self, &cloned)
             .expect("tensor deep clone");

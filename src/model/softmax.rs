@@ -2,7 +2,6 @@ use std::{future::Future, sync::Arc};
 
 use anyhow::Result;
 use itertools::Itertools;
-use wgpu::CommandEncoderDescriptor;
 
 use super::{ModelBase, ModelInfo};
 use crate::{
@@ -78,7 +77,7 @@ impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
         let mut encoder = self
             .context()
             .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+            .create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);

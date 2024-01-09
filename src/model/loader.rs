@@ -3,7 +3,6 @@ use derive_getters::Getters;
 use half::f16;
 use itertools::Itertools;
 use safetensors::SafeTensors;
-use wgpu::CommandEncoderDescriptor;
 
 use super::{Lora, ModelError, ModelInfo, ModelVersion};
 use crate::{
@@ -170,7 +169,7 @@ impl<'a> Loader<'a> {
 
                         // let mut encoder = context
                         //     .device
-                        //     .create_command_encoder(&CommandEncoderDescriptor::default());
+                        //     .create_command_encoder(&Default::default());
 
                         // let op = TensorOp::matmul_mat_fp16(
                         //     b.view(.., .., .., ..).ok()?,
@@ -219,7 +218,7 @@ impl<'a> Loader<'a> {
         let mut encoder = self
             .context
             .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+            .create_command_encoder(&Default::default());
 
         for lora in self.lora_vectors(name) {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
@@ -244,7 +243,7 @@ impl<'a> Loader<'a> {
         let mut encoder = self
             .context
             .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+            .create_command_encoder(&Default::default());
 
         for lora in self.lora_vectors(name) {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
@@ -273,7 +272,7 @@ impl<'a> Loader<'a> {
         let mut encoder = self
             .context
             .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+            .create_command_encoder(&Default::default());
 
         for lora in self.lora_vectors(name) {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
@@ -306,9 +305,7 @@ impl<'a> Loader<'a> {
             let tensor_f32 = TensorGpu::from(tensor_f32);
             let tensor_f16: TensorGpu<f16, _> = context.tensor_init(tensor_f32.shape());
 
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
+            let mut encoder = context.device.create_command_encoder(&Default::default());
 
             for lora in lora {
                 let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
@@ -340,9 +337,7 @@ impl<'a> Loader<'a> {
         let tensor = TensorGpu::from_safetensors(context, tensor)?;
 
         if !lora.is_empty() {
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
+            let mut encoder = context.device.create_command_encoder(&Default::default());
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
@@ -375,9 +370,7 @@ impl<'a> Loader<'a> {
         let tensor = TensorGpu::from(tensor);
 
         if !lora.is_empty() {
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
+            let mut encoder = context.device.create_command_encoder(&Default::default());
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
@@ -409,9 +402,7 @@ impl<'a> Loader<'a> {
         matrix.load(&tensor)?;
 
         if !lora.is_empty() {
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
+            let mut encoder = context.device.create_command_encoder(&Default::default());
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
@@ -448,9 +439,7 @@ impl<'a> Loader<'a> {
         matrix.load(&tensor)?;
 
         if !lora.is_empty() {
-            let mut encoder = context
-                .device
-                .create_command_encoder(&CommandEncoderDescriptor::default());
+            let mut encoder = context.device.create_command_encoder(&Default::default());
             for lora in lora {
                 let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;

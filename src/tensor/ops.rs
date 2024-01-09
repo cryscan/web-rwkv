@@ -1792,7 +1792,7 @@ mod tests {
     use anyhow::Result;
     use half::f16;
     use itertools::Itertools;
-    use wgpu::{CommandEncoderDescriptor, PowerPreference};
+    use wgpu::PowerPreference;
     // use wgpu_profiler::GpuProfiler;
 
     use super::{TensorOp, TensorPass};
@@ -1836,9 +1836,7 @@ mod tests {
         let x_device: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
         let x_map = context.tensor_init(x_device.shape());
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
         encoder.copy_tensor(&x_device, &x_map)?;
         context.queue.submit(Some(encoder.finish()));
 
@@ -1871,9 +1869,7 @@ mod tests {
 
         let softmax = TensorOp::softmax(&x_dev)?;
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&softmax);
@@ -1939,9 +1935,7 @@ mod tests {
 
         let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev)?;
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&layer_norm);
@@ -2037,9 +2031,7 @@ mod tests {
             )?,
         ]);
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
@@ -2177,9 +2169,7 @@ mod tests {
         let rx_map = context.tensor_init(Shape::new(C, 1, 1, 1));
         let ry_map = context.tensor_init(Shape::new(R, 1, 1, 1));
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         encoder.copy_tensor(&matrix_u8_dev, &matrix_u8_map)?;
         encoder.copy_tensor(&mx_dev, &mx_map)?;
@@ -2253,9 +2243,7 @@ mod tests {
             )?,
         ]);
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
@@ -2419,7 +2407,7 @@ mod tests {
 
         // let mut encoder = context
         //     .device
-        //     .create_command_encoder(&CommandEncoderDescriptor::default());
+        //     .create_command_encoder(&Default::default());
 
         // let mut pass = encoder.begin_compute_pass(&Default::default());
         // pass.execute_tensor_op(&ops);
@@ -2442,9 +2430,7 @@ mod tests {
             )?,
         ]);
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
@@ -2527,9 +2513,7 @@ mod tests {
 
         let ops = TensorOp::List(ops);
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
@@ -2570,9 +2554,7 @@ mod tests {
 
         let ops = TensorOp::transpose(input.view(.., .., .., ..)?, output.view(.., ..2, .., ..)?)?;
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);

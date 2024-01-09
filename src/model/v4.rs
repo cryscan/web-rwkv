@@ -5,7 +5,6 @@ use half::f16;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
-use wgpu::CommandEncoderDescriptor;
 
 use super::{
     matrix::Matrix,
@@ -295,7 +294,7 @@ impl super::ModelState for ModelState {
         let mut encoder = self
             .context
             .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+            .create_command_encoder(&Default::default());
         encoder.copy_tensor(self, &map).expect("back entire state");
         self.context.queue.submit(Some(encoder.finish()));
 
@@ -319,7 +318,7 @@ impl super::ModelState for ModelState {
         let mut encoder = self
             .context
             .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+            .create_command_encoder(&Default::default());
         encoder.copy_tensor_batch(self, &map, batch)?;
         self.context.queue.submit(Some(encoder.finish()));
 
@@ -331,7 +330,7 @@ impl super::ModelState for ModelState {
         let mut encoder = self
             .context
             .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+            .create_command_encoder(&Default::default());
         encoder.copy_tensor(self, other)?;
         self.context.queue.submit(Some(encoder.finish()));
         Ok(())
@@ -350,7 +349,7 @@ impl super::ModelState for ModelState {
         let mut encoder = self
             .context
             .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+            .create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
@@ -745,9 +744,7 @@ impl ModelRunInternal for Model<'_> {
             hook_op(Hook::PostEmbedLayerNorm),
         ]);
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let ops = TensorOp::List(ops);
         let mut pass = encoder.begin_compute_pass(&Default::default());

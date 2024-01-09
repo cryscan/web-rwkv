@@ -1,5 +1,4 @@
 use half::f16;
-use wgpu::CommandEncoderDescriptor;
 
 use crate::tensor::{
     ops::{TensorOp, TensorPass},
@@ -101,9 +100,7 @@ impl Matrix {
         // ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
         // ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
@@ -152,9 +149,7 @@ impl Matrix {
 
         let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
 
-        let mut encoder = context
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
