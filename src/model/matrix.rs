@@ -78,7 +78,7 @@ impl Matrix {
     }
 
     pub fn quant_u8(matrix: &TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
-        let context = &matrix.context;
+        let context = matrix.context();
         let shape = matrix.shape();
 
         // let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1, 1));
@@ -112,7 +112,7 @@ impl Matrix {
     }
 
     pub fn quant_nf4(matrix: &TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
-        let context = &matrix.context;
+        let context = matrix.context();
         let shape = matrix.shape();
 
         let matrix_shape = Shape::new(shape[0] / 2, shape[1], shape[2], shape[3]);

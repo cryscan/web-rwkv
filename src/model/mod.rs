@@ -97,7 +97,6 @@ pub trait ModelState:
 {
     type BackedState: BackedState;
 
-    fn context(&self) -> &Context;
     fn max_batch(&self) -> usize;
 
     /// Load the state from host. Their shapes must match.
@@ -119,7 +118,7 @@ pub trait ModelState:
     ) -> Result<(), TensorError>;
 }
 
-pub trait ModelBase: Sync {
+pub trait ModelBase {
     fn context(&self) -> &Context;
     fn info(&self) -> &ModelInfo;
 

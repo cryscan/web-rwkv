@@ -29,7 +29,7 @@ impl Softmax {
     }
 }
 
-pub(crate) trait ModelSoftmaxInternal: ModelBase {
+pub(crate) trait ModelSoftmaxInternal: ModelBase + Sync {
     fn request_softmax(&self, num_batch: usize) -> Arc<Softmax>;
 }
 

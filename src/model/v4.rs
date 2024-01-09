@@ -197,6 +197,11 @@ impl TensorOpHook for Hook {}
 pub struct ModelState(TensorGpu<f32, ReadWrite>);
 
 impl ModelState {
+    #[inline]
+    fn context(&self) -> &Context {
+        self.0.context()
+    }
+
     fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
         let start = 5 * layer;
         let end = start + 4;
@@ -258,11 +263,6 @@ impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
     #[inline]
-    fn context(&self) -> &Context {
-        &self.context
-    }
-
-    #[inline]
     fn max_batch(&self) -> usize {
         self.0.shape()[2]
     }
@@ -272,7 +272,8 @@ impl super::ModelState for ModelState {
         if backed.max_batch() != self.max_batch() {
             return Err(ModelError::BatchSize(backed.max_batch(), self.max_batch()).into());
         }
-        let host = self.context.tensor_from_data(self.shape(), &*backed.data)?;
+        let context = self.context();
+        let host = context.tensor_from_data(self.shape(), &*backed.data)?;
         self.0.load(&host).map_err(|err| err.into())
     }
 
@@ -281,22 +282,21 @@ impl super::ModelState for ModelState {
         if backed.max_batch() != 1 {
             return Err(ModelError::BatchSize(backed.max_batch(), 1).into());
         }
+        let context = self.context();
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
-        let host = self.context.tensor_from_data(shape, &*backed.data)?;
+        let host = context.tensor_from_data(shape, &*backed.data)?;
         self.0.load_batch(&host, batch).map_err(|err| err.into())
     }
 
     async fn back(&self) -> Self::BackedState {
+        let context = self.context();
         let shape = self.shape();
-        let map = self.context.tensor_init(shape);
+        let map = self.context().tensor_init(shape);
 
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&Default::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
         encoder.copy_tensor(self, &map).expect("back entire state");
-        self.context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(Some(encoder.finish()));
 
         let data = map.back_async().await.to_vec().into();
         BackedState { shape, data }
@@ -311,28 +311,24 @@ impl super::ModelState for ModelState {
             .into());
         }
 
+        let context = self.context();
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
-        let map = self.context.tensor_init(shape);
+        let map = context.tensor_init(shape);
 
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&Default::default());
+        let mut encoder = context.device.create_command_encoder(&Default::default());
         encoder.copy_tensor_batch(self, &map, batch)?;
-        self.context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(Some(encoder.finish()));
 
         let data = map.back_async().await.to_vec().into();
         Ok(BackedState { shape, data })
     }
 
     fn blit(&self, other: &Self) -> Result<(), TensorError> {
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&Default::default());
+        let context = self.context();
+        let mut encoder = context.device.create_command_encoder(&Default::default());
         encoder.copy_tensor(self, other)?;
-        self.context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(Some(encoder.finish()));
         Ok(())
     }
 
@@ -342,20 +338,19 @@ impl super::ModelState for ModelState {
         from_batch: usize,
         to_batch: usize,
     ) -> Result<(), TensorError> {
+        let context = self.context();
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+
         let op = TensorOp::blit(
             self.view(.., .., from_batch, ..)?,
             other.view(.., .., to_batch, ..)?,
         )?;
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&Default::default());
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
         drop(pass);
 
-        self.context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(Some(encoder.finish()));
         Ok(())
     }
 }

@@ -234,7 +234,7 @@ pub trait TensorReshape: Sized {
 
 #[derive(Debug)]
 pub struct Tensor<D: Device, T: Scalar> {
-    pub context: Context,
+    context: Context,
     shape: Shape,
     data: D::Data,
     phantom: PhantomData<T>,

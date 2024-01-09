@@ -204,7 +204,6 @@ impl TensorOpHook for Hook {}
 
 #[derive(Debug, Clone)]
 pub struct ModelState {
-    context: Context,
     info: ModelInfo,
     max_batch: usize,
     chunk_size: usize,
@@ -275,7 +274,6 @@ impl FromBuilder for ModelState {
             })
             .collect();
         Ok(Self {
-            context,
             info,
             max_batch,
             chunk_size,
@@ -289,11 +287,6 @@ impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
     #[inline]
-    fn context(&self) -> &Context {
-        &self.context
-    }
-
-    #[inline]
     fn max_batch(&self) -> usize {
         self.max_batch
     }
@@ -304,7 +297,8 @@ impl super::ModelState for ModelState {
             return Err(ModelError::BatchSize(backed.max_batch(), self.max_batch()).into());
         }
         for (state, (shape, backed)) in self.state.iter().zip(backed.data.iter()) {
-            let host = state.context.tensor_from_data(*shape, backed)?;
+            let context = state.context();
+            let host = context.tensor_from_data(*shape, backed)?;
             state.load(&host)?;
         }
         Ok(())
@@ -316,9 +310,10 @@ impl super::ModelState for ModelState {
             return Err(ModelError::BatchSize(backed.max_batch(), 1).into());
         }
         for (state, (_, backed)) in self.state.iter().zip(backed.data.iter()) {
+            let context = state.context();
             let shape = state.shape();
             let shape = Shape::new(shape[0], shape[1], 1, 1);
-            let host = state.context.tensor_from_data(shape, backed)?;
+            let host = context.tensor_from_data(shape, backed)?;
             state.load_batch(&host, batch)?;
         }
         Ok(())
@@ -331,15 +326,13 @@ impl super::ModelState for ModelState {
 
         let mut data = Vec::with_capacity(self.state.len());
         for state in self.state.iter() {
+            let context = state.context();
             let shape = state.shape();
-            let map = state.context.tensor_init(shape);
+            let map = context.tensor_init(shape);
 
-            let mut encoder = state
-                .context
-                .device
-                .create_command_encoder(&Default::default());
+            let mut encoder = context.device.create_command_encoder(&Default::default());
             encoder.copy_tensor(state, &map).expect("back entire state");
-            state.context.queue.submit(Some(encoder.finish()));
+            context.queue.submit(Some(encoder.finish()));
 
             let host = map.back_async().await;
             data.push((shape, host.to_vec()))
@@ -369,16 +362,14 @@ impl super::ModelState for ModelState {
 
         let mut data = Vec::with_capacity(self.state.len());
         for state in self.state.iter() {
+            let context = state.context();
             let shape = state.shape();
             let shape = Shape::new(shape[0], shape[1], 1, 1);
-            let map = state.context.tensor_init(shape);
+            let map = context.tensor_init(shape);
 
-            let mut encoder = state
-                .context
-                .device
-                .create_command_encoder(&Default::default());
+            let mut encoder = context.device.create_command_encoder(&Default::default());
             encoder.copy_tensor_batch(state, &map, batch)?;
-            state.context.queue.submit(Some(encoder.finish()));
+            context.queue.submit(Some(encoder.finish()));
 
             let host = map.back_async().await;
             data.push((shape, host.to_vec()));
@@ -395,13 +386,11 @@ impl super::ModelState for ModelState {
 
     fn blit(&self, other: &ModelState) -> Result<(), TensorError> {
         for (state, other) in self.state.iter().zip(other.state.iter()) {
+            let context = state.context();
             state.check_shape(other.shape())?;
-            let mut encoder = state
-                .context
-                .device
-                .create_command_encoder(&Default::default());
+            let mut encoder = context.device.create_command_encoder(&Default::default());
             encoder.copy_tensor(state, other)?;
-            state.context.queue.submit(Some(encoder.finish()));
+            context.queue.submit(Some(encoder.finish()));
         }
         Ok(())
     }
@@ -413,20 +402,18 @@ impl super::ModelState for ModelState {
         to_batch: usize,
     ) -> Result<(), TensorError> {
         for (state, other) in self.state.iter().zip(other.state.iter()) {
+            let context = state.context();
+            let mut encoder = context.device.create_command_encoder(&Default::default());
+
             let op = TensorOp::blit(
                 state.view(.., .., from_batch, ..)?,
                 other.view(.., .., to_batch, ..)?,
             )?;
-            let mut encoder = state
-                .context
-                .device
-                .create_command_encoder(&Default::default());
-
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
             drop(pass);
 
-            state.context.queue.submit(Some(encoder.finish()));
+            context.queue.submit(Some(encoder.finish()));
         }
         Ok(())
     }
