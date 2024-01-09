@@ -36,15 +36,21 @@ impl Output {
     }
 }
 
-pub type HookFn<ModelState, Runtime> = Box<dyn Fn(&ModelState, &Runtime) -> TensorOp + Send + Sync>;
-pub type HookMap<Hook, ModelState, Runtime> = HashMap<Hook, HookFn<ModelState, Runtime>>;
+pub type HookFn<M, S, R> = Box<dyn Fn(&M, &S, &R) -> Result<TensorOp, TensorError> + Send + Sync>;
+pub type HookMap<H, M, S, R> = HashMap<H, HookFn<M, S, R>>;
 
 pub(crate) trait ModelRunInternal: ModelBase + Sync {
     type Hook: TensorOpHook + Hash + Send;
     type Runtime;
     type ModelState: ModelState;
 
+    fn request_runtime(&self, num_batch: usize) -> Arc<Self::Runtime>;
     fn request_output(&self, num_batch: usize) -> Arc<Output>;
+
+    /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
+    fn token_chunk_size(&self) -> usize;
+    /// Whether to use fp16 GEMM for matmul computations, given a number of runtime tokens.
+    fn turbo(&self, num_token: usize) -> bool;
 
     /// Actual implementation of the model's inference.
     #[allow(clippy::type_complexity)]
@@ -53,7 +59,7 @@ pub(crate) trait ModelRunInternal: ModelBase + Sync {
         tokens: Vec<Vec<u16>>,
         state: &Self::ModelState,
         should_output: Vec<bool>,
-        hooks: &HookMap<Self::Hook, Self::ModelState, Self::Runtime>,
+        hooks: &HookMap<Self::Hook, Self, Self::ModelState, Self::Runtime>,
     ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)>;
 
     fn create_input<'a>(
@@ -107,7 +113,7 @@ pub trait ModelRun {
         &self,
         tokens: &mut Vec<Vec<u16>>,
         state: &Self::ModelState,
-        hooks: &HookMap<Self::Hook, Self::ModelState, Self::Runtime>,
+        hooks: &HookMap<Self::Hook, Self, Self::ModelState, Self::Runtime>,
     ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
 }
 
@@ -134,7 +140,7 @@ where
         &self,
         tokens: &mut Vec<Vec<u16>>,
         state: &Self::ModelState,
-        hooks: &HookMap<Self::Hook, Self::ModelState, Self::Runtime>,
+        hooks: &HookMap<Self::Hook, Self, Self::ModelState, Self::Runtime>,
     ) -> Result<Vec<Option<Vec<f32>>>> {
         let num_token: usize = tokens.iter().map(Vec::len).sum();
         let max_batch = state.max_batch();

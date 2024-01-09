@@ -6,6 +6,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use super::{
+    head::ModelHead,
     matrix::Matrix,
     run::{HookMap, ModelRunInternal, Output},
     softmax::{ModelSoftmaxInternal, Softmax},
@@ -534,13 +535,6 @@ impl super::BackedState for BackedState {
 impl<'a> Model<'a> {
     const TIME_MIX_ADAPTER_SIZE: usize = 32;
     const TIME_DECAY_ADAPTER_SIZE: usize = 64;
-
-    #[inline]
-    fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
-        self.runtime_cache.request(num_token, || {
-            Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
-        })
-    }
 }
 
 impl<'a> FromBuilder for Model<'a> {
@@ -753,10 +747,15 @@ impl ModelBase for Model<'_> {
     fn info(&self) -> &ModelInfo {
         &self.info
     }
+}
 
+impl ModelHead for Model<'_> {
     #[inline]
-    fn token_chunk_size(&self) -> usize {
-        self.token_chunk_size
+    fn head(&self) -> TensorGpu<f16, ReadWrite> {
+        match &self.tensor.head.w {
+            Matrix::Fp16(w) => w.clone(),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -775,10 +774,27 @@ impl ModelRunInternal for Model<'_> {
     type ModelState = ModelState;
 
     #[inline]
+    fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
+        self.runtime_cache.request(num_token, || {
+            Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
+        })
+    }
+
+    #[inline]
     fn request_output(&self, num_batch: usize) -> Arc<Output> {
         self.output_cache.request(num_batch, || {
             Output::new(&self.context, &self.info, num_batch)
         })
+    }
+
+    #[inline]
+    fn token_chunk_size(&self) -> usize {
+        self.token_chunk_size
+    }
+
+    #[inline]
+    fn turbo(&self, num_token: usize) -> bool {
+        self.turbo && num_token == self.token_chunk_size
     }
 
     fn run_internal(
@@ -786,7 +802,7 @@ impl ModelRunInternal for Model<'_> {
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
         should_output: Vec<bool>,
-        hooks: &HookMap<Hook, ModelState, Runtime>,
+        hooks: &HookMap<Hook, Self, ModelState, Runtime>,
     ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)> {
         let context = &self.context;
         let tensor = &self.tensor;
@@ -797,7 +813,7 @@ impl ModelRunInternal for Model<'_> {
         let head_size = self.info.num_emb / self.info.num_head;
         assert_ne!(num_token, 0);
 
-        let turbo = self.turbo && num_token == self.token_chunk_size;
+        let turbo = self.turbo(num_token);
 
         // collect batch output copy commands for later
         let mut redirect = vec![None; num_batch];
@@ -817,11 +833,11 @@ impl ModelRunInternal for Model<'_> {
         let buffer = self.request_runtime(num_token);
         let output = self.request_output(num_header.max(1));
 
-        let hook_op = |hook: Hook| -> TensorOp {
+        let hook_op = |hook: Hook| -> Result<TensorOp, TensorError> {
             hooks
                 .get(&hook)
-                .map(|f| f(state, &buffer))
-                .unwrap_or(TensorOp::List(vec![]))
+                .map(|f| f(self, state, &buffer))
+                .unwrap_or_else(|| Ok(TensorOp::List(vec![])))
         };
 
         // gather and group copy operations
@@ -887,13 +903,13 @@ impl ModelRunInternal for Model<'_> {
             None => buffer.input.load(&input.tensor)?,
         }
         ops.append(&mut vec![
-            hook_op(Hook::PostEmbedLoaded),
+            hook_op(Hook::PostEmbedLoaded)?,
             TensorOp::layer_norm(
                 &tensor.embed.layer_norm.w,
                 &tensor.embed.layer_norm.b,
                 &buffer.input,
             )?,
-            hook_op(Hook::PostEmbedLayerNorm),
+            hook_op(Hook::PostEmbedLayerNorm)?,
         ]);
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
@@ -951,14 +967,14 @@ impl ModelRunInternal for Model<'_> {
             encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
 
             let ops = TensorOp::List(vec![
-                hook_op(Hook::PreAtt(index)),
+                hook_op(Hook::PreAtt(index))?,
                 TensorOp::layer_norm(
                     &layer.att_layer_norm.w,
                     &layer.att_layer_norm.b,
                     &buffer.att_x,
                 )?,
-                hook_op(Hook::PostAttLayerNorm(index)),
-                hook_op(Hook::PreAttTokenShift(index)),
+                hook_op(Hook::PostAttLayerNorm(index))?,
+                hook_op(Hook::PreAttTokenShift(index))?,
                 TensorOp::token_shift_fp16(
                     &buffer.cursors,
                     layer.att.time_mix_x.view(.., .., .., ..)?,
@@ -967,28 +983,28 @@ impl ModelRunInternal for Model<'_> {
                     &buffer.att_xx,
                     true,
                 )?,
-                hook_op(Hook::PostAttTokenShift(index)),
-                hook_op(Hook::PreAttTokenShiftAdapt(index)),
+                hook_op(Hook::PostAttTokenShift(index))?,
+                hook_op(Hook::PreAttTokenShiftAdapt(index))?,
                 layer.att.time_mix_w1.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,
                     buffer.att_xx.view(.., .., .., ..)?,
                     time_mix_x.view(.., .., .., ..)?,
                     turbo,
                 )?,
-                hook_op(Hook::PreAttTokenShiftAdaptActivate(index)),
+                hook_op(Hook::PreAttTokenShiftAdaptActivate(index))?,
                 TensorOp::tanh(&time_mix_x)?,
                 TensorOp::transpose(
                     buffer.time_mix_x.view(.., .., .., ..)?,
                     buffer.time_mix_t.view(.., .., .., ..)?,
                 )?,
-                hook_op(Hook::PostAttTokenShiftAdaptActivate(index)),
+                hook_op(Hook::PostAttTokenShiftAdaptActivate(index))?,
                 layer.att.time_mix_w2.matmul_op(
                     buffer.half_t.view(.., .., .., ..)?,
                     buffer.time_mix_t.view(.., .., .., ..)?,
                     buffer.time_mix.view(.., .., .., ..)?,
                     turbo,
                 )?,
-                hook_op(Hook::PostAttTokenShiftAdapt(index)),
+                hook_op(Hook::PostAttTokenShiftAdapt(index))?,
                 TensorOp::add_fp16(
                     layer.att.time_mix_w.view(.., .., .., ..)?,
                     buffer.time_mix.view(.., .., 0, ..)?,
@@ -1009,7 +1025,7 @@ impl ModelRunInternal for Model<'_> {
                     layer.att.time_mix_g.view(.., .., .., ..)?,
                     buffer.time_mix.view(.., .., 4, ..)?,
                 )?,
-                hook_op(Hook::PreAttGatedTokenShift(index)),
+                hook_op(Hook::PreAttGatedTokenShift(index))?,
                 TensorOp::token_shift_fp32(
                     &buffer.cursors,
                     buffer.time_mix.view(.., .., 0, ..)?,
@@ -1050,8 +1066,8 @@ impl ModelRunInternal for Model<'_> {
                     &buffer.att_gx,
                     true,
                 )?,
-                hook_op(Hook::PostAttGatedTokenShift(index)),
-                hook_op(Hook::PreAttLinear(index)),
+                hook_op(Hook::PostAttGatedTokenShift(index))?,
+                hook_op(Hook::PreAttLinear(index))?,
                 layer.att.w_k.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,
                     buffer.att_kx.view(.., .., .., ..)?,
@@ -1076,32 +1092,32 @@ impl ModelRunInternal for Model<'_> {
                     buffer.att_g.view(.., .., .., ..)?,
                     turbo,
                 )?,
-                hook_op(Hook::PostAttLinear(index)),
-                hook_op(Hook::PreAttTimeDecayAdapt(index)),
+                hook_op(Hook::PostAttLinear(index))?,
+                hook_op(Hook::PreAttTimeDecayAdapt(index))?,
                 layer.att.time_decay_w1.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,
                     buffer.att_wx.view(.., .., .., ..)?,
                     buffer.att_w.view(.., .., .., ..)?,
                     turbo,
                 )?,
-                hook_op(Hook::PreAttTimeDecayAdaptActivate(index)),
+                hook_op(Hook::PreAttTimeDecayAdaptActivate(index))?,
                 TensorOp::tanh(&buffer.att_w)?,
-                hook_op(Hook::PostAttTimeDecayAdaptActivate(index)),
+                hook_op(Hook::PostAttTimeDecayAdaptActivate(index))?,
                 layer.att.time_decay_w2.matmul_op(
                     buffer.half_w.view(.., .., .., ..)?,
                     buffer.att_w.view(.., .., .., ..)?,
                     buffer.time_decay.view(.., .., .., ..)?,
                     turbo,
                 )?,
-                hook_op(Hook::PostAttTimeDecayAdapt(index)),
+                hook_op(Hook::PostAttTimeDecayAdapt(index))?,
                 TensorOp::add_fp16(
                     layer.att.time_decay.view(.., .., .., ..)?,
                     buffer.time_decay.view(.., .., .., ..)?,
                 )?,
-                hook_op(Hook::PreAttTimeDecayActivate(index)),
+                hook_op(Hook::PreAttTimeDecayActivate(index))?,
                 TensorOp::stable_exp(&buffer.time_decay)?,
-                hook_op(Hook::PostAttTimeDecayActivate(index)),
-                hook_op(Hook::PreAttTimeMix(index)),
+                hook_op(Hook::PostAttTimeDecayActivate(index))?,
+                hook_op(Hook::PreAttTimeMix(index))?,
                 TensorOp::time_mix_v6(
                     &buffer.cursors,
                     &time_decay,
@@ -1113,22 +1129,22 @@ impl ModelRunInternal for Model<'_> {
                     state.att(index)?,
                 )?,
                 TensorOp::group_norm(&layer.att.group_norm.w, &layer.att.group_norm.b, &att_x)?,
-                hook_op(Hook::PostAttTimeMix(index)),
-                hook_op(Hook::PreAttGate(index)),
+                hook_op(Hook::PostAttTimeMix(index))?,
+                hook_op(Hook::PreAttGate(index))?,
                 TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
-                hook_op(Hook::PostAttGate(index)),
-                hook_op(Hook::PreAttOut(index)),
+                hook_op(Hook::PostAttGate(index))?,
+                hook_op(Hook::PreAttOut(index))?,
                 layer.att.w_o.matmul_vec_op(
                     buffer.half_x.view(.., .., .., ..)?,
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
-                hook_op(Hook::PostAttOut(index)),
+                hook_op(Hook::PostAttOut(index))?,
                 TensorOp::add_fp32(
                     buffer.input.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
-                hook_op(Hook::PostAtt(index)),
+                hook_op(Hook::PostAtt(index))?,
             ]);
 
             let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -1138,14 +1154,14 @@ impl ModelRunInternal for Model<'_> {
             encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
 
             let ops = TensorOp::List(vec![
-                hook_op(Hook::PreFfn(index)),
+                hook_op(Hook::PreFfn(index))?,
                 TensorOp::layer_norm(
                     &layer.ffn_layer_norm.w,
                     &layer.ffn_layer_norm.b,
                     &buffer.ffn_x,
                 )?,
-                hook_op(Hook::PostFfnLayerNorm(index)),
-                hook_op(Hook::PreFfnTokenShift(index)),
+                hook_op(Hook::PostFfnLayerNorm(index))?,
+                hook_op(Hook::PreFfnTokenShift(index))?,
                 TensorOp::token_shift_fp16(
                     &buffer.cursors,
                     layer.ffn.time_mix_k.view(.., .., .., ..)?,
@@ -1162,17 +1178,17 @@ impl ModelRunInternal for Model<'_> {
                     &buffer.ffn_rx,
                     true,
                 )?,
-                hook_op(Hook::PostFfnTokenShift(index)),
-                hook_op(Hook::PreFfnLinear(index)),
+                hook_op(Hook::PostFfnTokenShift(index))?,
+                hook_op(Hook::PreFfnLinear(index))?,
                 layer.ffn.w_k.matmul_op(
                     buffer.half_x.view(.., .., .., ..)?,
                     buffer.ffn_kx.view(.., .., .., ..)?,
                     buffer.ffn_k.view(.., .., .., ..)?,
                     turbo,
                 )?,
-                hook_op(Hook::PreFfnActivate(index)),
+                hook_op(Hook::PreFfnActivate(index))?,
                 TensorOp::squared_relu(&buffer.ffn_k)?,
-                hook_op(Hook::PostFfnActivate(index)),
+                hook_op(Hook::PostFfnActivate(index))?,
                 layer.ffn.w_v.matmul_op(
                     buffer.half_k.view(.., .., .., ..)?,
                     buffer.ffn_k.view(.., .., .., ..)?,
@@ -1185,8 +1201,8 @@ impl ModelRunInternal for Model<'_> {
                     buffer.ffn_r.view(.., .., .., ..)?,
                     turbo,
                 )?,
-                hook_op(Hook::PostFfnLinear(index)),
-                hook_op(Hook::PreFfnChannelMix(index)),
+                hook_op(Hook::PostFfnLinear(index))?,
+                hook_op(Hook::PreFfnChannelMix(index))?,
                 TensorOp::channel_mix(
                     &buffer.cursors,
                     &buffer.ffn_r,
@@ -1194,12 +1210,12 @@ impl ModelRunInternal for Model<'_> {
                     &buffer.ffn_x,
                     state.ffn(index)?,
                 )?,
-                hook_op(Hook::PostFfnChannelMix(index)),
+                hook_op(Hook::PostFfnChannelMix(index))?,
                 TensorOp::add_fp32(
                     buffer.att_o.view(.., .., .., ..)?,
                     buffer.ffn_x.view(.., .., .., ..)?,
                 )?,
-                hook_op(Hook::PostFfn(index)),
+                hook_op(Hook::PostFfn(index))?,
             ]);
 
             let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -1219,18 +1235,17 @@ impl ModelRunInternal for Model<'_> {
         }
 
         if num_header > 0 {
-            let turbo = self.turbo && num_header == self.token_chunk_size;
             let ops = TensorOp::List(vec![
-                hook_op(Hook::PreHead),
+                hook_op(Hook::PreHead)?,
                 TensorOp::layer_norm(&tensor.head.layer_norm.w, &tensor.head.layer_norm.b, head_x)?,
-                hook_op(Hook::PostHeadLayerNorm),
+                hook_op(Hook::PostHeadLayerNorm)?,
                 tensor.head.w.matmul_op(
                     output.half_x.view(.., .., .., ..)?,
                     head_x.view(.., .., .., ..)?,
                     output.head_o.view(.., .., .., ..)?,
-                    turbo,
+                    self.turbo(num_header),
                 )?,
-                hook_op(Hook::PostHead),
+                hook_op(Hook::PostHead)?,
             ]);
 
             let mut pass = encoder.begin_compute_pass(&Default::default());

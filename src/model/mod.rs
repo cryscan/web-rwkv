@@ -10,6 +10,7 @@ use crate::{context::Context, num::Scalar, tensor::TensorError};
 
 use self::loader::Loader;
 
+pub mod head;
 pub mod loader;
 pub mod matrix;
 pub mod run;
@@ -121,9 +122,6 @@ pub trait ModelState:
 pub trait ModelBase {
     fn context(&self) -> &Context;
     fn info(&self) -> &ModelInfo;
-
-    /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
-    fn token_chunk_size(&self) -> usize;
 }
 
 pub trait Model:
