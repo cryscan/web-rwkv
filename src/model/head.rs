@@ -1,7 +1,14 @@
 use half::f16;
 
-use crate::tensor::{ReadWrite, TensorGpu};
+use crate::tensor::{ops::TensorOp, ReadWrite, TensorError, TensorGpu};
 
 pub trait ModelHead {
-    fn head(&self) -> TensorGpu<f16, ReadWrite>;
+    /// Tensor op that maps vectors from embed space into vocab space.
+    fn head_op(
+        &self,
+        input: &TensorGpu<f32, ReadWrite>,
+        half: &TensorGpu<f16, ReadWrite>,
+        output: &TensorGpu<f32, ReadWrite>,
+        turbo: bool,
+    ) -> Result<TensorOp, TensorError>;
 }

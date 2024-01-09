@@ -593,11 +593,23 @@ impl ModelBase for Model<'_> {
 
 impl ModelHead for Model<'_> {
     #[inline]
-    fn head(&self) -> TensorGpu<f16, ReadWrite> {
-        match &self.tensor.head.w {
-            Matrix::Fp16(w) => w.clone(),
-            _ => unreachable!(),
-        }
+    fn head_op(
+        &self,
+        input: &TensorGpu<f32, ReadWrite>,
+        half: &TensorGpu<f16, ReadWrite>,
+        output: &TensorGpu<f32, ReadWrite>,
+        turbo: bool,
+    ) -> Result<TensorOp, TensorError> {
+        let head = &self.tensor.head;
+        Ok(TensorOp::List(vec![
+            TensorOp::layer_norm(&head.layer_norm.w, &head.layer_norm.b, input)?,
+            head.w.matmul_op(
+                half.view(.., .., .., ..)?,
+                input.view(.., .., .., ..)?,
+                output.view(.., .., .., ..)?,
+                turbo,
+            )?,
+        ]))
     }
 }
 

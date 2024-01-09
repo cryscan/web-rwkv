@@ -192,7 +192,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
-    println!("{}", prompt);
+    println!("Prompt: {}", prompt);
 
     // run initial prompt
     let logits = loop {
@@ -207,7 +207,7 @@ async fn run(cli: Cli) -> Result<()> {
         let token = sample(probs, 0.5);
         let word = tokenizer.decode(&[token])?;
         let word = String::from_utf8_lossy(&word);
-        println!("{}", word);
+        println!("Predict: {}", word);
         // tokens[0] = vec![token];
     }
 
@@ -215,26 +215,9 @@ async fn run(cli: Cli) -> Result<()> {
 
     {
         // map the activations into vocab space
-        let head = model.head();
-
-        let ops = TensorOp::List(vec![
-            TensorOp::quantize_fp16(
-                buffer.ffn_x.view(.., .., .., ..)?,
-                buffer.half.view(.., .., .., ..)?,
-            )?,
-            TensorOp::matmul_mat_fp16(
-                head.view(.., .., .., ..)?,
-                buffer.half.view(.., .., .., ..)?,
-                buffer.out.view(.., .., .., ..)?,
-            )?,
-            // TensorOp::matmul_vec_fp16(
-            //     &head,
-            //     buffer.ffn_x.view(.., .., .., ..)?,
-            //     buffer.o.view(.., .., .., ..)?,
-            // )?,
-        ]);
-
         let mut encoder = context.device.create_command_encoder(&Default::default());
+
+        let ops = model.head_op(&buffer.ffn_x, &buffer.half, &buffer.out, true)?;
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
