@@ -6,9 +6,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
+use self::{head::ModelHead, loader::Loader, run::ModelRun, softmax::ModelSoftmax};
 use crate::{context::Context, num::Scalar, tensor::TensorError};
-
-use self::loader::Loader;
 
 pub mod head;
 pub mod loader;
@@ -126,16 +125,18 @@ pub trait ModelBase {
 
 pub trait Model:
     ModelBase
-    + softmax::ModelSoftmax
-    + run::ModelRun
+    + ModelSoftmax
+    + ModelRun
+    + ModelHead
     + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
 {
 }
 
 impl<S: ModelState, M> Model for M where
     M: ModelBase
-        + softmax::ModelSoftmax
-        + run::ModelRun<ModelState = S>
+        + ModelSoftmax
+        + ModelRun<State = S>
+        + ModelHead
         + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
 {
 }

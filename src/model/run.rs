@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future, hash::Hash, sync::Arc};
+use std::{collections::HashMap, future::Future, sync::Arc};
 
 use anyhow::Result;
 use half::f16;
@@ -36,13 +36,15 @@ impl Output {
     }
 }
 
-pub type HookFn<M, S, R> = Box<dyn Fn(&M, &S, &R) -> Result<TensorOp, TensorError> + Send + Sync>;
-pub type HookMap<H, M, S, R> = HashMap<H, HookFn<M, S, R>>;
+pub type HookMap<Hook, Model, State, Runtime> = HashMap<
+    Hook,
+    Box<dyn Fn(&Model, &State, &Runtime) -> Result<TensorOp, TensorError> + Send + Sync>,
+>;
 
 pub(crate) trait ModelRunInternal: ModelBase + Sync {
-    type Hook: TensorOpHook + Hash + Send;
+    type Hook: TensorOpHook;
+    type State: ModelState;
     type Runtime;
-    type ModelState: ModelState;
 
     fn request_runtime(&self, num_batch: usize) -> Arc<Self::Runtime>;
     fn request_output(&self, num_batch: usize) -> Arc<Output>;
@@ -57,9 +59,9 @@ pub(crate) trait ModelRunInternal: ModelBase + Sync {
     fn run_internal(
         &self,
         tokens: Vec<Vec<u16>>,
-        state: &Self::ModelState,
+        state: &Self::State,
         should_output: Vec<bool>,
-        hooks: &HookMap<Self::Hook, Self, Self::ModelState, Self::Runtime>,
+        hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
     ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)>;
 
     fn create_input<'a>(
@@ -93,9 +95,9 @@ pub(crate) trait ModelRunInternal: ModelBase + Sync {
 }
 
 pub trait ModelRun {
-    type Hook: TensorOpHook + Hash + Send;
+    type Hook: TensorOpHook;
+    type State: ModelState;
     type Runtime;
-    type ModelState: ModelState;
 
     /// Run the model for a batch of tokens as input.
     /// The length of `tokens` must match the number of batches in `state`.
@@ -103,7 +105,7 @@ pub trait ModelRun {
     fn run(
         &self,
         tokens: &mut Vec<Vec<u16>>,
-        state: &Self::ModelState,
+        state: &Self::State,
     ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
 
     /// Run the model for a batch of tokens as input, but with custom hooks.
@@ -112,25 +114,25 @@ pub trait ModelRun {
     fn run_with_hooks(
         &self,
         tokens: &mut Vec<Vec<u16>>,
-        state: &Self::ModelState,
-        hooks: &HookMap<Self::Hook, Self, Self::ModelState, Self::Runtime>,
+        state: &Self::State,
+        hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
     ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
 }
 
-impl<Hook, Runtime, Model, ModelState> ModelRun for Model
+impl<Hook, Runtime, Model, State> ModelRun for Model
 where
-    Hook: TensorOpHook + Hash + Send + Sync,
-    Model: ModelRunInternal<Hook = Hook, Runtime = Runtime, ModelState = ModelState>,
-    ModelState: super::ModelState,
+    Hook: TensorOpHook,
+    Model: ModelRunInternal<Hook = Hook, Runtime = Runtime, State = State>,
+    State: super::ModelState,
 {
     type Hook = Hook;
     type Runtime = Runtime;
-    type ModelState = ModelState;
+    type State = State;
 
     async fn run(
         &self,
         tokens: &mut Vec<Vec<u16>>,
-        state: &Self::ModelState,
+        state: &Self::State,
     ) -> Result<Vec<Option<Vec<f32>>>> {
         let hooks = Default::default();
         self.run_with_hooks(tokens, state, &hooks).await
@@ -139,8 +141,8 @@ where
     async fn run_with_hooks(
         &self,
         tokens: &mut Vec<Vec<u16>>,
-        state: &Self::ModelState,
-        hooks: &HookMap<Self::Hook, Self, Self::ModelState, Self::Runtime>,
+        state: &Self::State,
+        hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
     ) -> Result<Vec<Option<Vec<f32>>>> {
         let num_token: usize = tokens.iter().map(Vec::len).sum();
         let max_batch = state.max_batch();

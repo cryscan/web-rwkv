@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{hash::Hash, sync::Arc};
 
 use half::f16;
 use wgpu::{
@@ -80,7 +80,7 @@ impl<'b, 'a: 'b> TensorPass<'a> for ComputePass<'b> {
     }
 }
 
-pub trait TensorOpHook {}
+pub trait TensorOpHook: Hash + Send + Sync {}
 
 pub enum TensorOp {
     Atom {

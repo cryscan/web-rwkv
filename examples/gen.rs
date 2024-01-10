@@ -166,7 +166,7 @@ async fn run(cli: Cli) -> Result<()> {
 async fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer) -> Result<()>
 where
     S: ModelState,
-    M: Model<ModelState = S>,
+    M: Model<State = S>,
 {
     let prompt = "The Space Needle is located in downtown";
     let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];

@@ -783,7 +783,7 @@ impl ModelSoftmaxInternal for Model<'_> {
 impl ModelRunInternal for Model<'_> {
     type Hook = Hook;
     type Runtime = Runtime;
-    type ModelState = ModelState;
+    type State = ModelState;
 
     #[inline]
     fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
@@ -814,7 +814,7 @@ impl ModelRunInternal for Model<'_> {
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
         should_output: Vec<bool>,
-        hooks: &HookMap<Hook, Self, ModelState, Runtime>,
+        hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
     ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)> {
         let context = &self.context;
         let tensor = &self.tensor;

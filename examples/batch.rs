@@ -208,7 +208,7 @@ async fn run(cli: Cli) -> Result<()> {
 async fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer, batch: usize) -> Result<()>
 where
     S: ModelState,
-    M: Model<ModelState = S>,
+    M: Model<State = S>,
 {
     #[cfg(not(debug_assertions))]
     let mut terminal = setup_terminal()?;

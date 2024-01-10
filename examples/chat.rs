@@ -239,7 +239,7 @@ async fn run_internal<M, S>(
 ) -> Result<()>
 where
     S: ModelState,
-    M: Model<ModelState = S>,
+    M: Model<State = S>,
 {
     let user = &prompt.user;
     let bot = &prompt.bot;
