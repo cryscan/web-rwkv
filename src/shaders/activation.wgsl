@@ -33,7 +33,7 @@ fn squared_relu(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
-fn activation_tanh(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+fn act_tanh(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
     let token = invocation_id.y;

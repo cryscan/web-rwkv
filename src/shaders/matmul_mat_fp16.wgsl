@@ -17,7 +17,11 @@ struct Input {
 
 @group(0) @binding(3) var<storage, read> xa: array<vec2<u32>>;              // (B, M, K)
 @group(0) @binding(4) var<storage, read> xb: array<vec2<u32>>;              // (B, N, K)
+#ifdef OUT_FP16
+@group(0) @binding(5) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
+#else
 @group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
+#endif
 
 var<workgroup> sa: array<array<vec2<u32>, 32u>, 32u>;
 var<workgroup> sb: array<array<vec2<u32>, 32u>, 32u>;
@@ -32,7 +36,7 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(BLOCK_SIZE, BLOCK_SIZE, 1)
 fn matmul(in: Input) {
     let b = in.bid.xy * 32u;
     let u = in.uid.xy * 4u;
@@ -91,9 +95,29 @@ fn matmul(in: Input) {
     }
 
     if all(u < vec2<u32>(ra.y, rb.y)) {
-        output[compute_index(destination, in.uid.z, u.y, in.uid.x)] = local_sum[0];
-        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x)] = local_sum[1];
-        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x)] = local_sum[2];
-        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x)] = local_sum[3];
+#ifdef ACT_SQUARED_RELU
+        local_sum[0] = squared_relu(local_sum[0]);
+        local_sum[1] = squared_relu(local_sum[1]);
+        local_sum[2] = squared_relu(local_sum[2]);
+        local_sum[3] = squared_relu(local_sum[3]);
+#else
+#ifdef ACT_TANH
+        local_sum[0] = tanh(local_sum[0]);
+        local_sum[1] = tanh(local_sum[1]);
+        local_sum[2] = tanh(local_sum[2]);
+        local_sum[3] = tanh(local_sum[3]);
+#endif
+#endif
+#ifdef OUT_FP16
+        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 4u)] = pack4x16float(local_sum[0]);
+        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x, 4u)] = pack4x16float(local_sum[1]);
+        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x, 4u)] = pack4x16float(local_sum[2]);
+        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x, 4u)] = pack4x16float(local_sum[3]);
+#else
+        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 4u)] = local_sum[0];
+        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x, 4u)] = local_sum[1];
+        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x, 4u)] = local_sum[2];
+        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x, 4u)] = local_sum[3];
+#endif
     }
 }

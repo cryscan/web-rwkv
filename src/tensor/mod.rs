@@ -4,18 +4,22 @@ use itertools::Itertools;
 use web_rwkv_derive::Kind;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    BindingResource, Buffer, BufferBinding, BufferDescriptor, BufferUsages, MapMode,
+    BindingResource, Buffer, BufferBinding, BufferDescriptor, MapMode,
 };
 
-use crate::{context::Context, num::Scalar};
-use shape::{IntoBytes, Shape, TensorDimension, TensorSlice};
-
-use self::{ops::TensorCommand, shape::TensorAxis};
+use self::{
+    kind::{Kind, ReadBack, ReadWrite, Uniform},
+    ops::TensorCommand,
+    shape::{IntoBytes, Shape, TensorAxis, TensorDimension, TensorSlice},
+};
+use crate::{
+    context::Context,
+    num::{Float, Scalar},
+};
 
 pub mod cache;
 pub mod ops;
 pub mod shape;
-pub mod variant;
 
 #[derive(Debug, Clone)]
 pub struct TensorBuffer {
@@ -43,6 +47,32 @@ impl TensorBuffer {
     }
 }
 
+pub mod kind {
+    use web_rwkv_derive::Kind;
+    use wgpu::BufferUsages;
+
+    use super::sealed;
+
+    pub trait Kind: sealed::Sealed {
+        fn buffer_usages() -> BufferUsages;
+    }
+
+    /// Tensor is a uniform buffer.
+    #[derive(Debug, Kind)]
+    #[usage(UNIFORM, COPY_DST)]
+    pub struct Uniform;
+
+    /// Tensor is a storage buffer with can be copied to other buffers.
+    #[derive(Debug, Kind)]
+    #[usage(STORAGE, COPY_DST, COPY_SRC)]
+    pub struct ReadWrite;
+
+    /// Tensor is served as a read-back buffer.
+    #[derive(Debug, Kind)]
+    #[usage(MAP_READ, COPY_DST)]
+    pub struct ReadBack;
+}
+
 pub trait Device: sealed::Sealed {
     type Data: Clone;
 }
@@ -60,25 +90,6 @@ impl<'a, T: Scalar> Device for Cpu<'a, T> {
 impl<K: Kind> Device for Gpu<K> {
     type Data = TensorBuffer;
 }
-
-pub trait Kind: sealed::Sealed {
-    fn buffer_usages() -> BufferUsages;
-}
-
-/// Tensor is a uniform buffer.
-#[derive(Debug, Kind)]
-#[usage(UNIFORM, COPY_DST)]
-pub struct Uniform;
-
-/// Tensor is a storage buffer with can be copied to other buffers.
-#[derive(Debug, Kind)]
-#[usage(STORAGE, COPY_DST, COPY_SRC)]
-pub struct ReadWrite;
-
-/// Tensor is served as a read-back buffer.
-#[derive(Debug, Kind)]
-#[usage(MAP_READ, COPY_DST)]
-pub struct ReadBack;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TensorError {
@@ -295,6 +306,13 @@ impl<D: Device, T: Scalar> Tensor<D, T> {
     #[inline]
     pub fn data(&self) -> &D::Data {
         &self.data
+    }
+}
+
+impl<D: Device, F: Float> Tensor<D, F> {
+    #[inline]
+    pub const fn def(&self) -> &'static str {
+        F::DEF
     }
 }
 
@@ -723,12 +741,12 @@ impl<T: Scalar> TensorShape for TensorView<'_, T> {
 
 impl<T: Scalar> TensorView<'_, T> {
     #[inline]
-    fn tensor(&self) -> &TensorGpu<T, ReadWrite> {
+    pub fn tensor(&self) -> &TensorGpu<T, ReadWrite> {
         &self.tensor
     }
 
     #[inline]
-    fn context(&self) -> &Context {
+    pub fn context(&self) -> &Context {
         self.tensor.context()
     }
 
@@ -749,6 +767,13 @@ impl<T: Scalar> TensorView<'_, T> {
     #[inline]
     pub fn binding(&self) -> BindingResource {
         self.data().binding()
+    }
+}
+
+impl<F: Float> TensorView<'_, F> {
+    #[inline]
+    pub const fn def(&self) -> &'static str {
+        F::DEF
     }
 }
 

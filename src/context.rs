@@ -537,32 +537,21 @@ impl Context {
     //         .cloned()
     // }
 
-    pub fn request_pipeline<'a, 'b>(
+    pub fn request_pipeline(
         &self,
         name: impl Into<String>,
         source: impl AsRef<str>,
         entry_point: impl AsRef<str>,
         layout: Option<&[BindGroupLayoutEntry]>,
-        macros: Vec<(Cow<'a, [u8]>, Cow<'b, [u8]>)>,
+        macros: Vec<(Cow<'_, [u8]>, Cow<'_, [u8]>)>,
     ) -> Arc<ComputePipeline> {
         let name = name.into();
-        let entry_point = entry_point.as_ref();
-        let key = (
-            name.clone(),
-            macros
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .sorted_by_key(|x| x.0)
-                .collect(),
-        );
+        let key = (name.clone(), macros.iter().sorted().collect());
 
         self.pipeline_cache.request(key, move || {
             let mut context = gpp::Context::new();
-            context.macros = macros
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
-            let shader = gpp::process_str(source.as_ref(), &mut context).unwrap();
+            context.macros = macros.into_iter().collect();
+            let shader = gpp::process_str(&source, &mut context).expect("preprocess");
 
             let module = &self.device.create_shader_module(ShaderModuleDescriptor {
                 label: Some(&name),
