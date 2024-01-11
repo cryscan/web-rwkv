@@ -10,16 +10,16 @@ use crate::tensor::{
 pub enum Matrix {
     Fp16(TensorGpu<f16, ReadWrite>),
     Int8 {
-        w: Box<TensorGpu<u8, ReadWrite>>,
-        mx: Box<TensorGpu<f32, ReadWrite>>,
-        rx: Box<TensorGpu<f32, ReadWrite>>,
-        my: Box<TensorGpu<f32, ReadWrite>>,
-        ry: Box<TensorGpu<f32, ReadWrite>>,
+        w: TensorGpu<u8, ReadWrite>,
+        mx: TensorGpu<f32, ReadWrite>,
+        rx: TensorGpu<f32, ReadWrite>,
+        my: TensorGpu<f32, ReadWrite>,
+        ry: TensorGpu<f32, ReadWrite>,
     },
     NF4 {
-        w: Box<TensorGpu<u8, ReadWrite>>,
-        q: Box<TensorGpu<f32, Uniform>>,
-        m: Box<TensorGpu<f16, ReadWrite>>,
+        w: TensorGpu<u8, ReadWrite>,
+        q: TensorGpu<f32, Uniform>,
+        m: TensorGpu<f16, ReadWrite>,
     },
 }
 
@@ -86,12 +86,12 @@ impl Matrix {
         // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
         // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
 
-        let w = Box::new(context.tensor_init(matrix.shape()));
+        let w = context.tensor_init(matrix.shape());
 
-        let mx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1, 1)));
-        let rx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1, 1)));
-        let my = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
-        let ry = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
+        let mx = context.tensor_init(Shape::new(shape[0], 1, 1, 1));
+        let rx = context.tensor_init(Shape::new(shape[0], 1, 1, 1));
+        let my = context.tensor_init(Shape::new(shape[1], 1, 1, 1));
+        let ry = context.tensor_init(Shape::new(shape[1], 1, 1, 1));
 
         let op = TensorOp::quantize_mat_int8(matrix, &mx, &rx, &my, &ry, &w)?;
 
@@ -142,10 +142,10 @@ impl Matrix {
             0.7229568362236023,
             1.0,
         ];
-        let q = Box::new(context.tensor_from_data(Shape::new(quant.len(), 1, 1, 1), quant)?);
+        let q = context.tensor_from_data(Shape::new(quant.len(), 1, 1, 1), quant)?;
 
-        let w = Box::new(context.tensor_init(matrix_shape));
-        let m = Box::new(context.tensor_init(absmax_shape));
+        let w = context.tensor_init(matrix_shape);
+        let m = context.tensor_init(absmax_shape);
 
         let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
 

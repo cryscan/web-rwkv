@@ -40,15 +40,15 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let batch = invocation_id.z;
 
     if index < stride {
-        let _token = select(token, 0u, source.shape.y == 1u);
 #ifdef IN_FP16
-        let x = unpack4x16float(input[compute_index(source, batch, _token, index)]);
+        let x = unpack4x16float(input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)]);
 #else
-        let x = input[compute_index(source, batch, _token, index)];
+        let x = input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)];
 #endif
         let bti = compute_index(destination, batch, token, index);
 #ifdef OUT_FP16
-        output[bti] = pack4x16float(x + output[bti]);
+        let y = unpack4x16float(output[bti]);
+        output[bti] = pack4x16float(x + y);
 #else
         output[bti] = x + output[bti];
 #endif

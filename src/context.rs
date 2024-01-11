@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use itertools::Itertools;
 use web_rwkv_derive::{Deref, DerefMut, Id};
@@ -537,53 +537,61 @@ impl Context {
     //         .cloned()
     // }
 
-    pub fn request_pipeline(
+    pub fn request_pipeline<'a, 'b>(
         &self,
         name: impl Into<String>,
         source: impl AsRef<str>,
         entry_point: impl AsRef<str>,
         layout: Option<&[BindGroupLayoutEntry]>,
-        macros: HashMap<String, String>,
+        macros: Vec<(Cow<'a, [u8]>, Cow<'b, [u8]>)>,
     ) -> Arc<ComputePipeline> {
         let name = name.into();
         let entry_point = entry_point.as_ref();
+        let key = (
+            name.clone(),
+            macros
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .sorted_by_key(|x| x.0)
+                .collect(),
+        );
 
-        self.pipeline_cache.request(
-            (name.clone(), macros.clone().into_iter().sorted().collect()),
-            || {
-                let mut context = gpp::Context::new();
-                context.macros = macros;
-                let shader = gpp::process_str(source.as_ref(), &mut context).unwrap();
+        self.pipeline_cache.request(key, move || {
+            let mut context = gpp::Context::new();
+            context.macros = macros
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let shader = gpp::process_str(source.as_ref(), &mut context).unwrap();
 
-                let module = &self.device.create_shader_module(ShaderModuleDescriptor {
+            let module = &self.device.create_shader_module(ShaderModuleDescriptor {
+                label: Some(&name),
+                source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
+            });
+            let layout = layout
+                .map(|entries| {
+                    let layout = self
+                        .device
+                        .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                            label: None,
+                            entries,
+                        });
+                    self.device
+                        .create_pipeline_layout(&PipelineLayoutDescriptor {
+                            label: None,
+                            bind_group_layouts: &[&layout],
+                            push_constant_ranges: &[],
+                        })
+                })
+                .as_ref();
+            self.device
+                .create_compute_pipeline(&ComputePipelineDescriptor {
                     label: Some(&name),
-                    source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
-                });
-                let layout = layout
-                    .map(|entries| {
-                        let layout =
-                            self.device
-                                .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                                    label: None,
-                                    entries,
-                                });
-                        self.device
-                            .create_pipeline_layout(&PipelineLayoutDescriptor {
-                                label: None,
-                                bind_group_layouts: &[&layout],
-                                push_constant_ranges: &[],
-                            })
-                    })
-                    .as_ref();
-                self.device
-                    .create_compute_pipeline(&ComputePipelineDescriptor {
-                        label: Some(&name),
-                        layout,
-                        module,
-                        entry_point,
-                    })
-            },
-        )
+                    layout,
+                    module,
+                    entry_point,
+                })
+        })
     }
 
     pub fn request_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {

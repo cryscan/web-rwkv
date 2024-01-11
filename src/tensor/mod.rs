@@ -15,6 +15,7 @@ use self::{ops::TensorCommand, shape::TensorAxis};
 pub mod cache;
 pub mod ops;
 pub mod shape;
+pub mod variant;
 
 #[derive(Debug, Clone)]
 pub struct TensorBuffer {
@@ -708,7 +709,7 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
 
 #[derive(Debug, Clone)]
 pub struct TensorView<'a, T: Scalar> {
-    pub tensor: &'a TensorGpu<T, ReadWrite>,
+    tensor: &'a TensorGpu<T, ReadWrite>,
     meta: Arc<Buffer>,
     view: View,
 }
@@ -721,6 +722,11 @@ impl<T: Scalar> TensorShape for TensorView<'_, T> {
 }
 
 impl<T: Scalar> TensorView<'_, T> {
+    #[inline]
+    fn tensor(&self) -> &TensorGpu<T, ReadWrite> {
+        &self.tensor
+    }
+
     #[inline]
     fn context(&self) -> &Context {
         self.tensor.context()
