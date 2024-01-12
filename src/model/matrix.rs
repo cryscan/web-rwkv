@@ -1,9 +1,10 @@
 use half::f16;
 
 use crate::tensor::{
+    kind::{ReadWrite, Uniform},
     ops::{TensorOp, TensorPass},
     shape::Shape,
-    ReadWrite, TensorError, TensorGpu, TensorShape, TensorView, Uniform,
+    TensorError, TensorGpu, TensorShape, TensorView,
 };
 
 #[derive(Debug)]

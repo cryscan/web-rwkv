@@ -2075,7 +2075,10 @@ mod tests {
     use crate::{
         context::{Context, ContextBuilder, Instance},
         model::matrix::Matrix,
-        tensor::{ops::TensorCommand, Shape, TensorGpu, TensorInit, TensorShape},
+        tensor::{
+            ops::{Activation, TensorCommand},
+            Shape, TensorGpu, TensorInit, TensorShape,
+        },
     };
 
     fn is_approx(a: f32, b: f32) -> bool {
@@ -2299,11 +2302,13 @@ mod tests {
                 &matrix_dev,
                 input_f32_dev.view(.., .., .., ..)?,
                 output_dev.view(.., .., 0..B, ..)?,
+                Activation::None,
             )?,
             TensorOp::matmul_mat_fp16(
                 matrix_dev.view(.., .., .., ..)?,
                 input_f16_dev.view(.., .., .., ..)?,
                 output_dev.view(.., .., B.., ..)?,
+                Activation::None,
             )?,
         ]);
 
@@ -2507,6 +2512,7 @@ mod tests {
                 &ry_dev,
                 input_f32_dev.view(.., .., .., ..)?,
                 output_dev.view(.., .., 0..1, ..)?,
+                Activation::None,
             )?,
             TensorOp::matmul_mat_int8(
                 matrix_u8_dev.view(.., .., .., ..)?,
@@ -2516,6 +2522,7 @@ mod tests {
                 &ry_dev,
                 input_f16_dev.view(.., .., .., ..)?,
                 output_dev.view(.., .., 1.., ..)?,
+                Activation::None,
             )?,
         ]);
 
@@ -2703,6 +2710,7 @@ mod tests {
                 &absmax_dev,
                 input_dev.view(.., .., .., ..)?,
                 output_dev.view(.., .., .., ..)?,
+                Activation::None,
             )?,
         ]);
 
