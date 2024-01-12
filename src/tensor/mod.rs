@@ -197,6 +197,10 @@ pub trait DeepClone: Sized {
     fn deep_clone(&self) -> Self;
 }
 
+pub trait TensorScalar {
+    type T: Scalar;
+}
+
 pub trait TensorInit<'a, T: Scalar>: Sized {
     fn from_data(
         context: &Context,
@@ -278,6 +282,10 @@ impl<D: Device, T: Scalar> std::ops::Deref for Tensor<D, T> {
     fn deref(&self) -> &Self::Target {
         &self.data
     }
+}
+
+impl<D: Device, T: Scalar> TensorScalar for Tensor<D, T> {
+    type T = T;
 }
 
 impl<D: Device, T: Scalar> Tensor<D, T> {
@@ -768,6 +776,10 @@ impl<T: Scalar> TensorView<'_, T> {
     pub fn binding(&self) -> BindingResource {
         self.data().binding()
     }
+}
+
+impl<T: Scalar> TensorScalar for TensorView<'_, T> {
+    type T = T;
 }
 
 impl<F: Float> TensorView<'_, F> {

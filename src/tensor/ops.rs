@@ -1,15 +1,19 @@
-use std::{borrow::Cow, hash::Hash, sync::Arc};
+use std::{hash::Hash, sync::Arc};
 
 use half::f16;
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, CommandEncoder, ComputePass, ComputePipeline,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutEntry, BindingType,
+    BufferBindingType, CommandEncoder, ComputePass, ComputePipeline, ShaderStages,
 };
 
 use super::{
     kind::{Kind, ReadWrite, Uniform},
-    Shape, TensorError, TensorGpu, TensorShape, TensorView,
+    Shape, TensorError, TensorGpu, TensorScalar, TensorShape, TensorView,
 };
-use crate::num::{Float, Scalar};
+use crate::{
+    context::Macros,
+    num::{Float, Scalar},
+};
 
 pub trait TensorCommand<T: Scalar, K: Kind> {
     fn copy_tensor(
@@ -101,6 +105,45 @@ impl std::fmt::Display for Activation {
     }
 }
 
+impl Macros<'_> {
+    pub fn nf4(mut self, block_size: u32) -> Self {
+        self.push(("NF4_BLOCK_SIZE", format!("{}u", block_size)));
+        self
+    }
+
+    pub fn float(mut self, value: f32, name: impl AsRef<str>) -> Self {
+        self.push((name, format!("{}", value)));
+        self
+    }
+
+    pub fn bool(self, value: bool, name: impl AsRef<str>) -> Self {
+        match value {
+            true => {
+                self.push((name, ""));
+                self
+            }
+            false => self,
+        }
+    }
+
+    pub fn tensor<T: Float>(
+        mut self,
+        tensor: &impl TensorScalar<T = T>,
+        prefix: Option<impl AsRef<str>>,
+    ) -> Self {
+        match prefix {
+            None => self.push((T::DEF, "")),
+            Some(prefix) => self.push((format!("{}_{}", prefix, T::DEF), "")),
+        }
+        self
+    }
+
+    pub fn active(mut self, active: Activation) -> Self {
+        self.push((format!("ACT_{}", active), ""));
+        self
+    }
+}
+
 pub trait TensorOpHook: Hash + Send + Sync {}
 
 pub enum TensorOp {
@@ -132,7 +175,7 @@ impl TensorOp {
             include_str!("../shaders/softmax.wgsl"),
             "softmax",
             None,
-            vec![("BLOCK_SIZE", format!("{BLOCK_SIZE}u")), (x.def(), "")],
+            Macros::new(BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -177,7 +220,7 @@ impl TensorOp {
             include_str!("../shaders/embed.wgsl"),
             "embed",
             None,
-            vec![("BLOCK_SIZE", format!("{BLOCK_SIZE}u")), (output.def(), "")],
+            Macros::new(BLOCK_SIZE).tensor(output, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -235,11 +278,7 @@ impl TensorOp {
             include_str!("../shaders/layer_norm.wgsl"),
             "layer_norm",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                ("EPS", format!("{EPS}")),
-                (x.def(), ""),
-            ],
+            Macros::new(BLOCK_SIZE).float(EPS, "EPS").tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -293,11 +332,7 @@ impl TensorOp {
             include_str!("../shaders/layer_norm.wgsl"),
             "group_norm",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                ("EPS", format!("{EPS}")),
-                (x.def(), ""),
-            ],
+            Macros::new(BLOCK_SIZE).float(EPS, "EPS").tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -333,10 +368,11 @@ impl TensorOp {
     /// - `matrix` shape: `[C, R, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn matmul_vec_fp16<const ACT: Activation>(
+    pub fn matmul_vec_fp16(
         matrix: &TensorGpu<f16, ReadWrite>,
         input: TensorView<impl Float>,
         output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -350,12 +386,10 @@ impl TensorOp {
             include_str!("../shaders/matmul_vec_fp16.wgsl"),
             "matmul",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                (format!("IN_{}", input.def()), ""),
-                (format!("OUT_{}", output.def()), ""),
-                (format!("ACT_{}", ACT), ""),
-            ],
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .active(active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -401,7 +435,7 @@ impl TensorOp {
     /// - `my` and `ry` shape: `[R, 1, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn matmul_vec_int8<const ACT: Activation>(
+    pub fn matmul_vec_int8(
         matrix: &TensorGpu<u8, ReadWrite>,
         mx: &TensorGpu<f32, ReadWrite>,
         rx: &TensorGpu<f32, ReadWrite>,
@@ -409,6 +443,7 @@ impl TensorOp {
         ry: &TensorGpu<f32, ReadWrite>,
         input: TensorView<impl Float>,
         output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -426,12 +461,10 @@ impl TensorOp {
             include_str!("../shaders/matmul_vec_int8.wgsl"),
             "matmul",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                (format!("IN_{}", input.def()), ""),
-                (format!("OUT_{}", output.def()), ""),
-                (format!("ACT_{}", ACT), ""),
-            ],
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .active(active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -492,12 +525,13 @@ impl TensorOp {
     /// - `absmax` shape: `[C / S, R, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn matmul_vec_nf4<const ACT: Activation>(
+    pub fn matmul_vec_nf4(
         matrix: &TensorGpu<u8, ReadWrite>,
         quant: &TensorGpu<f32, Uniform>,
         absmax: &TensorGpu<f16, ReadWrite>,
         input: TensorView<f16>,
         output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -517,12 +551,11 @@ impl TensorOp {
             include_str!("../shaders/matmul_vec_nf4.wgsl"),
             "matmul",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                ("NF4_BLOCK_SIZE", format!("{}u", Self::NF4_BLOCK_SIZE)),
-                (format!("OUT_{}", output.def()), ""),
-                (format!("ACT_{}", ACT), ""),
-            ],
+            Macros::new(BLOCK_SIZE)
+                .nf4(Self::NF4_BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .active(active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -576,10 +609,11 @@ impl TensorOp {
     /// - `output` shape: `[M, N, B]`.
     ///
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
-    pub fn matmul_mat_fp16<const ACT: Activation>(
+    pub fn matmul_mat_fp16(
         matrix: TensorView<f16>,
         input: TensorView<f16>,
         output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
@@ -593,11 +627,10 @@ impl TensorOp {
             include_str!("../shaders/matmul_mat_fp16.wgsl"),
             "matmul",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                (format!("OUT_{}", output.def()), ""),
-                (format!("ACT_{}", ACT), ""),
-            ],
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .active(active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -647,7 +680,7 @@ impl TensorOp {
     /// - `output` shape: `[M, N, B]`.
     ///
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
-    pub fn matmul_mat_int8<const ACT: Activation>(
+    pub fn matmul_mat_int8(
         matrix: TensorView<u8>,
         mx: &TensorGpu<f32, ReadWrite>,
         rx: &TensorGpu<f32, ReadWrite>,
@@ -655,6 +688,7 @@ impl TensorOp {
         ry: &TensorGpu<f32, ReadWrite>,
         input: TensorView<f16>,
         output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
@@ -672,11 +706,10 @@ impl TensorOp {
             include_str!("../shaders/matmul_mat_int8.wgsl"),
             "matmul",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                (format!("OUT_{}", output.def()), ""),
-                (format!("ACT_{}", ACT), ""),
-            ],
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .active(active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -742,12 +775,13 @@ impl TensorOp {
     /// - `output` shape: `[M, N, B]`.
     ///
     /// Note: `K` must be multiples of 256; `M` and `N` must be multiples of 8.
-    pub fn matmul_mat_nf4<const ACT: Activation>(
+    pub fn matmul_mat_nf4(
         matrix: TensorView<u8>,
         quant: &TensorGpu<f32, Uniform>,
         absmax: &TensorGpu<f16, ReadWrite>,
         input: TensorView<f16>,
         output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
@@ -761,12 +795,11 @@ impl TensorOp {
             include_str!("../shaders/matmul_mat_int8.wgsl"),
             "matmul",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                ("NF4_BLOCK_SIZE", format!("{}", Self::NF4_BLOCK_SIZE)),
-                (format!("OUT_{}", output.def()), ""),
-                (format!("ACT_{}", ACT), ""),
-            ],
+            Macros::new(BLOCK_SIZE)
+                .nf4(Self::NF4_BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .active(active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -835,11 +868,9 @@ impl TensorOp {
             include_str!("../shaders/add.wgsl"),
             "add",
             None,
-            vec![
-                ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-                (format!("IN_{}", input.def()), ""),
-                (format!("OUT_{}", output.def()), ""),
-            ],
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -878,30 +909,19 @@ impl TensorOp {
     pub fn token_shift(
         cursors: &TensorGpu<u32, ReadWrite>,
         time_mix: TensorView<impl Float>,
-        x: &TensorGpu<impl Float, ReadWrite>,
         sx: TensorView<f32>,
+        input: &TensorGpu<impl Float, ReadWrite>,
         output: &TensorGpu<impl Float, ReadWrite>,
         reversed: bool,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = output.shape();
-        let num_batch = sx.shape()[2];
+        input.check_shape(shape)?;
         time_mix
             .check_shape(Shape::new(shape[0], 1, 1, 1))
             .or(time_mix.check_shape(shape))?;
-        x.check_shape(shape)?;
-        sx.check_shape(Shape::new(shape[0], sx.shape()[1], num_batch, 1))?;
-
-        let mut macros: Vec<(Cow<'_, _>, Cow<'_, _>)> = vec![
-            ("BLOCK_SIZE", format!("{BLOCK_SIZE}u")),
-            (format!("TIME_MIX_{}", time_mix.def()), ""),
-            (format!("IN_{}", x.def()), ""),
-            (format!("OUT_{}", output.def()), ""),
-        ];
-        if reversed {
-            macros.push(("REVERSED", ""));
-        }
+        sx.check_shape(Shape::new(shape[0], sx.shape()[1], sx.shape()[2], 1))?;
 
         let context = output.context();
         let pipeline = context.request_pipeline(
@@ -909,7 +929,11 @@ impl TensorOp {
             include_str!("../shaders/token_shift.wgsl"),
             "token_shift",
             None,
-            macros,
+            Macros::new(BLOCK_SIZE)
+                .tensor(&time_mix, Some("TIME_MIX"))
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .bool(reversed, "REVERSED"),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -933,11 +957,11 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: x.binding(),
+                    resource: sx.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: sx.binding(),
+                    resource: input.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
@@ -958,28 +982,34 @@ impl TensorOp {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn time_mix_v4(
+    pub fn time_mix_v4<T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        k: &TensorGpu<f32, ReadWrite>,
-        v: &TensorGpu<f32, ReadWrite>,
-        r: &TensorGpu<f32, ReadWrite>,
-        x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
+        k: &TensorGpu<T, ReadWrite>,
+        v: &TensorGpu<T, ReadWrite>,
+        r: &TensorGpu<T, ReadWrite>,
+        x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        let shape = x.shape();
-        let num_batch = state.shape()[2];
+        const BLOCK_SIZE: u32 = 128;
 
+        let shape = x.shape();
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         time_decay.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         time_first.check_shape(Shape::new(shape[0], 1, 1, 1))?;
-        state.check_shape(Shape::new(shape[0], 4, num_batch, 1))?;
+        state.check_shape(Shape::new(shape[0], 4, state.shape()[2], 1))?;
 
         let context = x.context();
-        let pipeline = context.pipeline("time_mix_v4")?;
+        let pipeline = context.request_pipeline(
+            "time_mix_v4",
+            include_str!("../shaders/time_mix_v4.wgsl"),
+            "time_mix",
+            None,
+            Macros::new(BLOCK_SIZE).tensor(&x, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1006,23 +1036,23 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: k.binding(),
+                    resource: state.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
-                    resource: v.binding(),
+                    resource: k.binding(),
                 },
                 BindGroupEntry {
                     binding: 7,
-                    resource: r.binding(),
+                    resource: v.binding(),
                 },
                 BindGroupEntry {
                     binding: 8,
-                    resource: x.binding(),
+                    resource: r.binding(),
                 },
                 BindGroupEntry {
                     binding: 9,
-                    resource: state.binding(),
+                    resource: x.binding(),
                 },
             ],
         })];
@@ -1030,34 +1060,41 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::block_count(shape[0] as u32 / 4), 1, 1],
+            dispatch: [Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE), 1, 1],
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn time_mix_v5(
+    pub fn time_mix_v5<T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        k: &TensorGpu<f32, ReadWrite>,
-        v: &TensorGpu<f32, ReadWrite>,
-        r: &TensorGpu<f32, ReadWrite>,
-        x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
+        k: &TensorGpu<T, ReadWrite>,
+        v: &TensorGpu<T, ReadWrite>,
+        r: &TensorGpu<T, ReadWrite>,
+        x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 32;
+
         let shape = x.shape();
         let dim = shape[0] * shape[1];
-        let num_batch = state.shape()[2];
 
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         time_decay.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
         time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
-        state.check_shape(Shape::new(dim, shape[0] + 1, num_batch, 1))?;
+        state.check_shape(Shape::new(dim, shape[0] + 1, state.shape()[2], 1))?;
 
         let context = x.context();
-        let pipeline = context.pipeline("time_mix_v5")?;
+        let pipeline = context.request_pipeline(
+            "time_mix_v5",
+            include_str!("../shaders/time_mix_v5.wgsl"),
+            "time_mix",
+            None,
+            Macros::new(BLOCK_SIZE).tensor(&x, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1084,23 +1121,23 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: k.binding(),
+                    resource: state.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
-                    resource: v.binding(),
+                    resource: k.binding(),
                 },
                 BindGroupEntry {
                     binding: 7,
-                    resource: r.binding(),
+                    resource: v.binding(),
                 },
                 BindGroupEntry {
                     binding: 8,
-                    resource: x.binding(),
+                    resource: r.binding(),
                 },
                 BindGroupEntry {
                     binding: 9,
-                    resource: state.binding(),
+                    resource: x.binding(),
                 },
             ],
         })];
@@ -1108,34 +1145,41 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::ceil(dim as u32 / 4, 32), 1, 1],
+            dispatch: [Self::block_count(dim as u32 / 4, BLOCK_SIZE), 1, 1],
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn time_mix_v6(
+    pub fn time_mix_v6<T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        k: &TensorGpu<f32, ReadWrite>,
-        v: &TensorGpu<f32, ReadWrite>,
-        r: &TensorGpu<f32, ReadWrite>,
-        x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
+        k: &TensorGpu<T, ReadWrite>,
+        v: &TensorGpu<T, ReadWrite>,
+        r: &TensorGpu<T, ReadWrite>,
+        x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 32;
+
         let shape = x.shape();
         let dim = shape[0] * shape[1];
-        let num_batch = state.shape()[2];
 
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         time_decay.check_shape(shape)?;
         time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
-        state.check_shape(Shape::new(dim, shape[0] + 1, num_batch, 1))?;
+        state.check_shape(Shape::new(dim, shape[0] + 1, state.shape()[2], 1))?;
 
         let context = x.context();
-        let pipeline = context.pipeline("time_mix_v6")?;
+        let pipeline = context.request_pipeline(
+            "time_mix_v6",
+            include_str!("../shaders/time_mix_v6.wgsl"),
+            "time_mix",
+            None,
+            Macros::new(BLOCK_SIZE).tensor(&x, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1162,23 +1206,23 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: k.binding(),
+                    resource: state.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
-                    resource: v.binding(),
+                    resource: k.binding(),
                 },
                 BindGroupEntry {
                     binding: 7,
-                    resource: r.binding(),
+                    resource: v.binding(),
                 },
                 BindGroupEntry {
                     binding: 8,
-                    resource: x.binding(),
+                    resource: r.binding(),
                 },
                 BindGroupEntry {
                     binding: 9,
-                    resource: state.binding(),
+                    resource: x.binding(),
                 },
             ],
         })];
@@ -1186,19 +1230,29 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::ceil(dim as u32 / 4, 32), 1, 1],
+            dispatch: [Self::block_count(dim as u32 / 4, BLOCK_SIZE), 1, 1],
         })
     }
 
     pub fn silu(
-        input: &TensorGpu<f32, ReadWrite>,
-        output: &TensorGpu<f32, ReadWrite>,
+        input: &TensorGpu<impl Float, ReadWrite>,
+        output: &TensorGpu<impl Float, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let shape = output.shape();
         input.check_shape(shape)?;
 
         let context = output.context();
-        let pipeline = context.pipeline("silu")?;
+        let pipeline = context.request_pipeline(
+            "silu",
+            include_str!("../shaders/silu.wgsl"),
+            "silu",
+            None,
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT")),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1222,18 +1276,25 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
         })
     }
 
-    pub fn tanh(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        let shape = x.shape();
+    pub fn tanh(x: &TensorGpu<impl Float, ReadWrite>) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
 
+        let shape = x.shape();
         let context = x.context();
-        let pipeline = context.pipeline("tanh")?;
+        let pipeline = context.request_pipeline(
+            "tanh",
+            include_str!("../shaders/activation.wgsl"),
+            "act_tanh",
+            None,
+            Macros::new(BLOCK_SIZE).tensor(&x, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1253,7 +1314,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1261,10 +1322,17 @@ impl TensorOp {
     }
 
     pub fn stable_exp(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        let shape = x.shape();
+        const BLOCK_SIZE: u32 = 128;
 
+        let shape = x.shape();
         let context = x.context();
-        let pipeline = context.pipeline("stable_exp")?;
+        let pipeline = context.request_pipeline(
+            "stable_exp",
+            include_str!("../shaders/activation.wgsl"),
+            "stable_exp",
+            None,
+            Macros::new(BLOCK_SIZE).tensor(&x, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1284,7 +1352,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1292,9 +1360,17 @@ impl TensorOp {
     }
 
     pub fn squared_relu(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let shape = x.shape();
         let context = x.context();
-        let pipeline = context.pipeline("squared_relu")?;
+        let pipeline = context.request_pipeline(
+            "squared_relu",
+            include_str!("../shaders/activation.wgsl"),
+            "squared_relu",
+            None,
+            Macros::new(BLOCK_SIZE).tensor(&x, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1314,29 +1390,35 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
         })
     }
 
-    pub fn channel_mix(
+    pub fn channel_mix<T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
-        r: &TensorGpu<f32, ReadWrite>,
-        v: &TensorGpu<f32, ReadWrite>,
-        x: &TensorGpu<f32, ReadWrite>,
         state: TensorView<f32>,
+        r: &TensorGpu<T, ReadWrite>,
+        v: &TensorGpu<T, ReadWrite>,
+        x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let shape = x.shape();
-        let num_batch = state.shape()[2];
-        // cursors.check_shape(Shape::new(shape[1], 1, 1, 1))?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
-        state.check_shape(Shape::new(shape[0], 1, num_batch, 1))?;
+        state.check_shape(Shape::new(shape[0], 1, state.shape()[2], 1))?;
 
         let context = x.context();
-        let pipeline = context.pipeline("channel_mix")?;
+        let pipeline = context.request_pipeline(
+            "channel_mix",
+            include_str!("../shaders/channel_mix.wgsl"),
+            "channel_mix",
+            None,
+            Macros::new(BLOCK_SIZE).tensor(&x, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1355,19 +1437,19 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: r.binding(),
+                    resource: state.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: v.binding(),
+                    resource: r.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: x.binding(),
+                    resource: v.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
-                    resource: state.binding(),
+                    resource: x.binding(),
                 },
             ],
         })];
@@ -1375,17 +1457,34 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::block_count(shape[0] as u32 / 4), shape[1] as u32, 1],
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                1,
+            ],
         })
     }
 
     /// Copy the content of `input` into `output`, given an `offset`.
-    pub fn blit(input: TensorView<f32>, output: TensorView<f32>) -> Result<Self, TensorError> {
+    pub fn blit(
+        input: TensorView<impl Float>,
+        output: TensorView<impl Float>,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let shape = output.shape();
         input.check_shape(shape)?;
 
         let context = input.context();
-        let pipeline = context.pipeline("blit")?;
+        let pipeline = context.request_pipeline(
+            "blit",
+            include_str!("../shaders/blit.wgsl"),
+            "blit",
+            None,
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, None)
+                .tensor(&output, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1413,7 +1512,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1421,12 +1520,25 @@ impl TensorOp {
     }
 
     /// Swap the `token` and `batch` axes.
-    pub fn transpose(input: TensorView<f32>, output: TensorView<f32>) -> Result<Self, TensorError> {
+    pub fn transpose(
+        input: TensorView<impl Float>,
+        output: TensorView<impl Float>,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let shape = input.shape();
         output.check_shape(Shape::new(shape[0], shape[2], shape[1], 1))?;
 
         let context = input.context();
-        let pipeline = context.pipeline("transpose")?;
+        let pipeline = context.request_pipeline(
+            "transpose",
+            include_str!("../shaders/blit.wgsl"),
+            "transpose",
+            None,
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, None)
+                .tensor(&output, None),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1454,7 +1566,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1463,26 +1575,36 @@ impl TensorOp {
 
     pub fn blend(
         factor: &TensorGpu<f32, Uniform>,
-        input: &TensorGpu<f32, ReadWrite>,
-        output: &TensorGpu<f32, ReadWrite>,
+        input: &TensorGpu<impl Float, ReadWrite>,
+        output: &TensorGpu<impl Float, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let shape = output.shape();
         input.check_shape(shape)?;
         factor.check_shape(Shape::new(4, 1, 1, 1))?;
 
         let context = output.context();
-        let pipeline = context.pipeline("blend")?;
+        let pipeline = context.request_pipeline(
+            "blend",
+            include_str!("../shaders/blit.wgsl"),
+            "blend",
+            None,
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT")),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: output.meta_binding(),
+                    resource: input.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: factor.binding(),
+                    resource: output.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
@@ -1492,6 +1614,10 @@ impl TensorOp {
                     binding: 3,
                     resource: output.binding(),
                 },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: factor.binding(),
+                },
             ],
         })];
 
@@ -1499,7 +1625,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1512,13 +1638,21 @@ impl TensorOp {
         xb: TensorView<f16>,
         output: TensorView<f16>,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 8;
+
         let shape = output.shape();
         factor.check_shape(Shape::new(4, 1, 1, 1))?;
         xa.check_shape(Shape::new(xa.shape()[0], shape[0], shape[2], 1))?;
         xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2], 1))?;
 
         let context = output.context();
-        let pipeline = context.pipeline("blend_lora")?;
+        let pipeline = context.request_pipeline(
+            "blend_lora",
+            include_str!("../shaders/blend_lora.wgsl"),
+            "blend_lora",
+            None,
+            Macros::new(BLOCK_SIZE),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1558,86 +1692,86 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::ceil(Self::ceil(shape[0] as u32, 4), 8),
-                Self::ceil(Self::ceil(shape[1] as u32, 4), 8),
+                Self::block_count(Self::block_count(shape[0] as u32, 4), BLOCK_SIZE),
+                Self::block_count(Self::block_count(shape[1] as u32, 4), BLOCK_SIZE),
                 shape[2] as u32,
             ],
         })
     }
 
-    pub fn half(output: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        let shape = output.shape();
+    // pub fn half(output: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+    //     let shape = output.shape();
 
-        let context = output.context();
-        let pipeline = context.pipeline("half")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.binding(),
-                },
-            ],
-        })];
+    //     let context = output.context();
+    //     let pipeline = context.pipeline("half")?;
+    //     let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+    //         label: None,
+    //         layout: &pipeline.get_bind_group_layout(0),
+    //         entries: &[
+    //             BindGroupEntry {
+    //                 binding: 0,
+    //                 resource: output.meta_binding(),
+    //             },
+    //             BindGroupEntry {
+    //                 binding: 2,
+    //                 resource: output.binding(),
+    //             },
+    //         ],
+    //     })];
 
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
+    //     Ok(Self::Atom {
+    //         pipeline,
+    //         bindings,
+    //         dispatch: [
+    //             Self::block_count(shape[0] as u32 / 4),
+    //             shape[1] as u32,
+    //             shape[2] as u32,
+    //         ],
+    //     })
+    // }
 
-    pub fn quantize_fp16(
-        input: TensorView<f32>,
-        output: TensorView<f16>,
-    ) -> Result<Self, TensorError> {
-        let shape = output.shape();
-        input.check_shape(shape)?;
+    // pub fn quantize_fp16(
+    //     input: TensorView<f32>,
+    //     output: TensorView<f16>,
+    // ) -> Result<Self, TensorError> {
+    //     let shape = output.shape();
+    //     input.check_shape(shape)?;
 
-        let context = output.context();
-        let pipeline = context.pipeline("quant_fp16")?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
-            ],
-        })];
+    //     let context = output.context();
+    //     let pipeline = context.pipeline("quant_fp16")?;
+    //     let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+    //         label: None,
+    //         layout: &pipeline.get_bind_group_layout(0),
+    //         entries: &[
+    //             BindGroupEntry {
+    //                 binding: 0,
+    //                 resource: input.meta_binding(),
+    //             },
+    //             BindGroupEntry {
+    //                 binding: 1,
+    //                 resource: output.meta_binding(),
+    //             },
+    //             BindGroupEntry {
+    //                 binding: 2,
+    //                 resource: input.binding(),
+    //             },
+    //             BindGroupEntry {
+    //                 binding: 3,
+    //                 resource: output.binding(),
+    //             },
+    //         ],
+    //     })];
 
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(shape[0] as u32 / 4),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
+    //     Ok(Self::Atom {
+    //         pipeline,
+    //         bindings,
+    //         dispatch: [
+    //             Self::block_count(shape[0] as u32 / 4),
+    //             shape[1] as u32,
+    //             shape[2] as u32,
+    //         ],
+    //     })
+    // }
 
     pub fn quantize_mat_int8(
         input: &TensorGpu<f16, ReadWrite>,
@@ -1647,6 +1781,8 @@ impl TensorOp {
         ry: &TensorGpu<f32, ReadWrite>,
         output: &TensorGpu<u8, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let shape = output.shape();
         input.check_shape(shape)?;
         mx.check_shape(Shape::new(shape[0], 1, 1, 1))?;
@@ -1685,8 +1821,91 @@ impl TensorOp {
                 resource: output.binding(),
             },
         ];
-        let create_op = |name: &'static str, dispatch| -> Result<Self, TensorError> {
-            let pipeline = context.pipeline(name)?;
+        let create_op = |name: &'static str,
+                         entry_point: &'static str,
+                         dispatch|
+         -> Result<Self, TensorError> {
+            let entries = &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ];
+            let layout: Option<&[BindGroupLayoutEntry]> = Some(entries);
+            let pipeline = context.request_pipeline(
+                name,
+                include_str!("../shaders/quant_mat_int8.wgsl"),
+                entry_point,
+                layout,
+                Macros::new(BLOCK_SIZE),
+            );
+
             let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
                 label: None,
                 layout: &pipeline.get_bind_group_layout(0),
@@ -1699,11 +1918,23 @@ impl TensorOp {
             })
         };
 
-        let my = create_op("quant_mat_int8_my", [1, shape[1] as u32, 1])?;
-        let ry = create_op("quant_mat_int8_ry", [1, shape[1] as u32, 1])?;
-        let mx = create_op("quant_mat_int8_mx", [1, shape[0] as u32 / 4, 1])?;
-        let rx = create_op("quant_mat_int8_rx", [1, shape[0] as u32 / 4, 1])?;
-        let quantize = create_op("quant_mat_int8", [shape[0] as u32 / 4, shape[1] as u32, 1])?;
+        let my = create_op("quant_mat_int8_my", "compute_my", [1, shape[1] as u32, 1])?;
+        let ry = create_op("quant_mat_int8_ry", "compute_ry", [1, shape[1] as u32, 1])?;
+        let mx = create_op(
+            "quant_mat_int8_mx",
+            "compute_mx",
+            [1, shape[0] as u32 / 4, 1],
+        )?;
+        let rx = create_op(
+            "quant_mat_int8_rx",
+            "compute_rx",
+            [1, shape[0] as u32 / 4, 1],
+        )?;
+        let quantize = create_op(
+            "quant_mat_int8",
+            "quantize",
+            [shape[0] as u32 / 4, shape[1] as u32, 1],
+        )?;
 
         if shape[1] > shape[0] {
             Ok(Self::List(vec![my, mx, rx, ry, quantize]))
@@ -1718,6 +1949,8 @@ impl TensorOp {
         absmax: &TensorGpu<f16, ReadWrite>,
         output: &TensorGpu<u8, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let context = output.context();
         let shape = output.shape();
         let input_shape = Shape::new(shape[0] << 1, shape[1], shape[2], shape[3]);
@@ -1733,7 +1966,13 @@ impl TensorOp {
 
         let absmax_f32: TensorGpu<f32, ReadWrite> = context.tensor_init(absmax_shape);
 
-        let pipeline = context.pipeline("quant_mat_nf4_absmax")?;
+        let pipeline = context.request_pipeline(
+            "quant_mat_nf4_absmax",
+            include_str!("../shaders/quant_mat_nf4.wgsl"),
+            "compute_absmax",
+            None,
+            Macros::new(BLOCK_SIZE).nf4(Self::NF4_BLOCK_SIZE),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1764,13 +2003,19 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(absmax_shape[0] as u32),
+                Self::block_count(absmax_shape[0] as u32, BLOCK_SIZE),
                 absmax_shape[1] as u32,
                 absmax_shape[2] as u32,
             ],
         };
 
-        let pipeline = context.pipeline("quant_mat_nf4")?;
+        let pipeline = context.request_pipeline(
+            "quant_mat_nf4",
+            include_str!("../shaders/quant_mat_nf4.wgsl"),
+            "quantize",
+            None,
+            Macros::new(BLOCK_SIZE).nf4(Self::NF4_BLOCK_SIZE),
+        );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1801,46 +2046,16 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32),
+                Self::block_count(shape[0] as u32, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
         };
 
-        let pipeline = context.pipeline("quant_fp16")?;
-        let absmax = absmax.view(.., .., .., ..)?;
-        let absmax_f32 = absmax_f32.view(.., .., .., ..)?;
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: absmax_f32.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: absmax.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: absmax_f32.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: absmax.binding(),
-                },
-            ],
-        })];
-        let quantize_absmax = Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                Self::block_count(absmax_shape[0] as u32 / 4),
-                absmax_shape[1] as u32,
-                absmax_shape[2] as u32,
-            ],
-        };
+        let quantize_absmax = Self::blit(
+            absmax_f32.view(.., .., .., ..)?,
+            absmax.view(.., .., .., ..)?,
+        )?;
 
         Ok(Self::List(vec![compute_absmax, quantize, quantize_absmax]))
     }

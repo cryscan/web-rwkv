@@ -47,8 +47,7 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 #endif
         let bti = compute_index(destination, batch, token, index);
 #ifdef OUT_FP16
-        let y = unpack4x16float(output[bti]);
-        output[bti] = pack4x16float(x + y);
+        output[bti] = pack4x16float(x + unpack4x16float(output[bti]));
 #else
         output[bti] = x + output[bti];
 #endif

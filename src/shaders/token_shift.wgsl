@@ -20,12 +20,12 @@ struct Cursor {
 @group(0) @binding(3) var<storage, read> time_mix: array<vec4<f32>>;        // (C) | (A, C)
 #endif
 
+@group(0) @binding(4) var<storage, read> sx: array<vec4<f32>>;              // (B, 1, C)
 #ifdef IN_FP16
-@group(0) @binding(4) var<storage, read> x: array<vec2<u32>>;               // (1, A, C)
+@group(0) @binding(5) var<storage, read> x: array<vec2<u32>>;               // (1, A, C)
 #else
-@group(0) @binding(4) var<storage, read> x: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(5) var<storage, read> x: array<vec4<f32>>;               // (1, A, C)
 #endif
-@group(0) @binding(5) var<storage, read> sx: array<vec4<f32>>;              // (B, 1, C)
 #ifdef OUT_FP16
 @group(0) @binding(6) var<storage, read_write> output: array<vec2<u32>>;    // (1, A, C)
 #else

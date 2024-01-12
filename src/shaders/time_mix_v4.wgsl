@@ -17,14 +17,19 @@ struct Cursor {
 @group(0) @binding(3) var<storage, read> time_decay: array<vec4<f32>>;      // (C)
 @group(0) @binding(4) var<storage, read> time_first: array<vec4<f32>>;      // (C)
 
-@group(0) @binding(5) var<storage, read> k: array<vec4<f32>>;               // (1, A, C)
-@group(0) @binding(6) var<storage, read> v: array<vec4<f32>>;               // (1, A, C)
-@group(0) @binding(7) var<storage, read> r: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(5) var<storage, read_write> state: array<vec4<f32>>;     // (B, 4, C)
 
-@group(0) @binding(8) var<storage, read_write> x: array<vec4<f32>>;         // (1, A, C)
-@group(0) @binding(9) var<storage, read_write> state: array<vec4<f32>>;     // (B, 4, C)
-
-const BLOCK_SIZE: u32 = 128u;
+#ifdef FP16
+@group(0) @binding(6) var<storage, read> k: array<vec2<u32>>;               // (1, A, C)
+@group(0) @binding(7) var<storage, read> v: array<vec2<u32>>;               // (1, A, C)
+@group(0) @binding(8) var<storage, read> r: array<vec2<u32>>;               // (1, A, C)
+@group(0) @binding(9) var<storage, read_write> x: array<vec2<u32>>;         // (1, A, C)
+#else
+@group(0) @binding(6) var<storage, read> k: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(7) var<storage, read> v: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(8) var<storage, read> r: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(9) var<storage, read_write> x: array<vec4<f32>>;         // (1, A, C)
+#endif
 
 fn compute_index(batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x / 4u;
@@ -41,7 +46,15 @@ fn compute_cursor(x: u32) -> Cursor {
     return cursor;
 }
 
-@compute @workgroup_size(128, 1, 1)
+fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
+    return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
+}
+
+fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
+    return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
+}
+
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
@@ -60,23 +73,36 @@ fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let bi = compute_index(cursor.batch, 2u, index);
         let pi = compute_index(cursor.batch, 3u, index);
 
+        let bti = t * stride + index;
+
         var aa = state[ai];
         var bb = state[bi];
         var pp = state[pi];
-        state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
 
-        let bti = t * stride + index;
+#ifdef FP16
+        state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[(cursor.token + cursor.len - 1u) * stride + index]);
+
+        let kk = unpack4x16float(k[bti]);
+        let vv = unpack4x16float(v[bti]);
+        let rr = 1.0 / (1.0 + exp(-unpack4x16float(r[bti])));
+#else
+        state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
 
         let kk = k[bti];
         let vv = v[bti];
+        let rr = 1.0 / (1.0 + exp(-r[bti]));
+#endif
 
         var ww = u + kk;
         var q = max(pp, ww);
         var e1 = exp(pp - q);
         var e2 = exp(ww - q);
 
-        let rr = 1.0 / (1.0 + exp(-r[bti]));
+#ifdef FP16
+        x[bti] = pack4x16float(rr * (e1 * aa + e2 * vv) / (e1 * bb + e2));
+#else
         x[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
+#endif
 
         ww = w + pp;
         q = max(ww, kk);
