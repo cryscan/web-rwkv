@@ -133,10 +133,10 @@ pub trait Model:
 {
 }
 
-impl<S: ModelState, M> Model for M where
+impl<M> Model for M where
     M: ModelBase
         + ModelSoftmax
-        + ModelRun<State = S>
+        + ModelRun
         + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
 {
 }
