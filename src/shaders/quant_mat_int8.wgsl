@@ -8,8 +8,6 @@
 
 @group(0) @binding(6) var<storage, read_write> output: array<u32>;          // (R, C)
 
-const BLOCK_SIZE: u32 = 128u;
-
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> rmx: vec4<f32>;
 var<workgroup> rmy: f32;
@@ -36,7 +34,7 @@ fn reduce_max(index: u32, stride: u32) {
     workgroupBarrier();
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_my(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
@@ -72,7 +70,7 @@ fn compute_my(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     }
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_mx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
@@ -105,7 +103,7 @@ fn compute_mx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     }
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_ry(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
@@ -141,7 +139,7 @@ fn compute_ry(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     }
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_rx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;
@@ -174,7 +172,7 @@ fn compute_rx(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     }
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn quantize(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let index = invocation_id.x;
     let batch = invocation_id.y;

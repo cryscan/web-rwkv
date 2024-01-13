@@ -6,9 +6,6 @@
 @group(0) @binding(3) var<storage, read_write> absmax: array<f32>;          // (R, C / S)
 @group(0) @binding(4) var<storage, read_write> output: array<u32>;          // (R, C / 2)
 
-const BLOCK_SIZE: u32 = 128u;
-const NF4_BLOCK_SIZE: u32 = 64u;
-
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
@@ -18,7 +15,7 @@ struct Input {
     @builtin(num_workgroups) nb: vec3<u32>,
 };
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_absmax(in: Input) {
     let step = NF4_BLOCK_SIZE / 8u;
     let bti = in.uid.x + (BLOCK_SIZE * in.nb.x) * in.uid.y + (BLOCK_SIZE * in.nb.x * in.nb.y) * in.uid.z;
@@ -35,7 +32,7 @@ fn compute_absmax(in: Input) {
     absmax[bti] = max(max(maximum[0], maximum[1]), max(maximum[2], maximum[3]));
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn quantize(in: Input) {
     let step = NF4_BLOCK_SIZE / 8u;
     let bti = in.uid.x + (BLOCK_SIZE * in.nb.x) * in.uid.y + (BLOCK_SIZE * in.nb.x * in.nb.y) * in.uid.z;

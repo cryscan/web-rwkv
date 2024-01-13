@@ -95,6 +95,18 @@ impl Scalar for u32 {
     const DATA_TYPE: Dtype = Dtype::U32;
 }
 
+pub trait Float: Scalar {
+    const DEF: &'static str;
+}
+
+impl Float for f32 {
+    const DEF: &'static str = "FP32";
+}
+
+impl Float for f16 {
+    const DEF: &'static str = "FP16";
+}
+
 mod sealed {
     use half::f16;
 

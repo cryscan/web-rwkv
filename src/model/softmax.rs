@@ -7,9 +7,10 @@ use super::{ModelBase, ModelInfo};
 use crate::{
     context::Context,
     tensor::{
+        kind::{ReadBack, ReadWrite},
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::Shape,
-        ReadBack, ReadWrite, TensorCpu, TensorGpu, TensorInit, TensorShape,
+        TensorCpu, TensorGpu, TensorInit, TensorShape,
     },
 };
 

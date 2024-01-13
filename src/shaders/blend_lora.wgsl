@@ -42,7 +42,7 @@ fn blend(v: vec4<f32>, z: u32, y: u32, x: u32) {
     output[compute_index(destination, z, y, x)] = pack4x16float(factor.x * v + factor.y * u);
 }
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(BLOCK_SIZE, BLOCK_SIZE, 1)
 fn blend_lora(in: Input) {
     let b = in.bid.xy * 32u;
     let u = in.uid.xy * 4u;

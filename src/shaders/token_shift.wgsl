@@ -14,14 +14,23 @@ struct Cursor {
 @group(0) @binding(1) var<uniform> vx: View;                                // [C, _, B] / [C, 5L, B]
 @group(0) @binding(2) var<storage, read> cursors: array<u32>;               // [A]
 
-@group(0) @binding(3) var<storage, read> time_mix_fp16: array<vec2<u32>>;   // (C) | (A, C)
-@group(0) @binding(4) var<storage, read> time_mix_fp32: array<vec4<f32>>;   // (C) | (A, C)
+#ifdef TIME_MIX_FP16
+@group(0) @binding(3) var<storage, read> time_mix: array<vec2<u32>>;        // (C) | (A, C)
+#else
+@group(0) @binding(3) var<storage, read> time_mix: array<vec4<f32>>;        // (C) | (A, C)
+#endif
 
+@group(0) @binding(4) var<storage, read> sx: array<vec4<f32>>;              // (B, 1, C)
+#ifdef IN_FP16
+@group(0) @binding(5) var<storage, read> x: array<vec2<u32>>;               // (1, A, C)
+#else
 @group(0) @binding(5) var<storage, read> x: array<vec4<f32>>;               // (1, A, C)
-@group(0) @binding(6) var<storage, read> sx: array<vec4<f32>>;              // (B, 1, C)
-@group(0) @binding(7) var<storage, read_write> output: array<vec4<f32>>;    // (1, A, C)
-
-const BLOCK_SIZE: u32 = 128u;
+#endif
+#ifdef OUT_FP16
+@group(0) @binding(6) var<storage, read_write> output: array<vec2<u32>>;    // (1, A, C)
+#else
+@group(0) @binding(6) var<storage, read_write> output: array<vec4<f32>>;    // (1, A, C)
+#endif
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x / 4u;
@@ -38,64 +47,42 @@ fn compute_cursor(x: u32) -> Cursor {
     return cursor;
 }
 
+fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
+    return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
+}
+
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-fn fetch_time_mix_fp16(stack: u32, index: u32) -> vec4<f32> {
+fn load_time_mix(stack: u32, index: u32) -> vec4<f32> {
+#ifdef TIME_MIX_FP16
     let token = select(stack, 0u, vt.shape.y == 1u);
-    return unpack4x16float(time_mix_fp16[compute_index(vt, 0u, token, index)]);
-}
-
-@compute @workgroup_size(128, 1, 1)
-fn token_shift_fp16(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
-    let stride = vx.shape.x / 4u;
-    let index = invocation_id.x;
-    let stack = invocation_id.y;
-    let cursor = compute_cursor(cursors[stack]);
-    let token = stack - cursor.token;
-
-    if index >= stride {
-        return;
-    }
-
-    let bti = stack * stride + index;
-    let factor = fetch_time_mix_fp16(stack, index);
-    if token == 0u {
-        output[bti] = mix(sx[compute_index(vx, cursor.batch, 0u, index)], x[bti], factor);
-    } else {
-        output[bti] = mix(x[bti - stride], x[bti], factor);
-    }
-}
-
-@compute @workgroup_size(128, 1, 1)
-fn token_shift_rev_fp16(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
-    let stride = vx.shape.x / 4u;
-    let index = invocation_id.x;
-    let stack = invocation_id.y;
-    let cursor = compute_cursor(cursors[stack]);
-    let token = stack - cursor.token;
-
-    if index >= stride {
-        return;
-    }
-
-    let bti = stack * stride + index;
-    let factor = fetch_time_mix_fp16(stack, index);
-    if token == 0u {
-        output[bti] = mix(x[bti], sx[compute_index(vx, cursor.batch, 0u, index)], factor);
-    } else {
-        output[bti] = mix(x[bti], x[bti - stride], factor);
-    }
-}
-
-fn fetch_time_mix_fp32(stack: u32, index: u32) -> vec4<f32> {
+    return unpack4x16float(time_mix[compute_index(vt, 0u, token, index)]);
+#else
     let token = select(stack, 0u, vt.shape.y == 1u);
-    return time_mix_fp32[compute_index(vt, 0u, token, index)];
+    return time_mix[compute_index(vt, 0u, token, index)];
+#endif
 }
 
-@compute @workgroup_size(128, 1, 1)
-fn token_shift_fp32(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
+fn load_input(index: u32) -> vec4<f32> {
+#ifdef IN_FP16
+    return unpack4x16float(x[index]);
+#else
+    return x[index];
+#endif
+}
+
+fn store_output(index: u32, value: vec4<f32>) {
+#ifdef OUT_FP16
+    output[index] = pack4x16float(value);
+#else
+    output[index] = value;
+#endif
+}
+
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
+fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
     let stride = vx.shape.x / 4u;
     let index = invocation_id.x;
     let stack = invocation_id.y;
@@ -107,31 +94,23 @@ fn token_shift_fp32(@builtin(global_invocation_id) invocation_id: vec3<u32>, @bu
     }
 
     let bti = stack * stride + index;
-    let factor = fetch_time_mix_fp32(stack, index);
+    let factor = load_time_mix(stack, index);
+
+#ifdef REVERSED
     if token == 0u {
-        output[bti] = mix(sx[compute_index(vx, cursor.batch, 0u, index)], x[bti], factor);
+        let out = mix(load_input(bti), sx[compute_index(vx, cursor.batch, 0u, index)], factor);
+        store_output(bti, out);
     } else {
-        output[bti] = mix(x[bti - stride], x[bti], factor);
+        let out = mix(load_input(bti), load_input(bti - stride), factor);
+        store_output(bti, out);
     }
-}
-
-@compute @workgroup_size(128, 1, 1)
-fn token_shift_rev_fp32(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
-    let stride = vx.shape.x / 4u;
-    let index = invocation_id.x;
-    let stack = invocation_id.y;
-    let cursor = compute_cursor(cursors[stack]);
-    let token = stack - cursor.token;
-
-    if index >= stride {
-        return;
-    }
-
-    let bti = stack * stride + index;
-    let factor = fetch_time_mix_fp32(stack, index);
+#else
     if token == 0u {
-        output[bti] = mix(x[bti], sx[compute_index(vx, cursor.batch, 0u, index)], factor);
+        let out = mix(sx[compute_index(vx, cursor.batch, 0u, index)], load_input(bti), factor);
+        store_output(bti, out);
     } else {
-        output[bti] = mix(x[bti], x[bti - stride], factor);
+        let out = mix(load_input(bti - stride), load_input(bti), factor);
+        store_output(bti, out);
     }
+#endif
 }

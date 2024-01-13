@@ -8,9 +8,10 @@ use super::{Lora, ModelError, ModelInfo, ModelVersion};
 use crate::{
     context::Context,
     tensor::{
+        kind::ReadWrite,
         ops::{TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
-        ReadWrite, TensorCpu, TensorError, TensorGpu, TensorInit, TensorReshape, TensorShape,
+        TensorCpu, TensorError, TensorGpu, TensorInit, TensorReshape, TensorShape,
     },
 };
 
@@ -315,7 +316,7 @@ impl<'a> Loader<'a> {
                 pass.execute_tensor_op(&op);
             }
 
-            let op = TensorOp::quantize_fp16(
+            let op = TensorOp::blit(
                 tensor_f32.view(.., .., .., ..)?,
                 tensor_f16.view(.., .., .., ..)?,
             )?;

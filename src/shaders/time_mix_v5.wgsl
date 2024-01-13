@@ -21,15 +21,19 @@ struct Input {
 
 @group(0) @binding(3) var<storage, read> time_decay: array<vec4<f32>>;  // (H, S)
 @group(0) @binding(4) var<storage, read> time_first: array<vec4<f32>>;  // (H, S)
+@group(0) @binding(5) var<storage, read_write> state: array<vec4<f32>>; // (B, S + 1, C)
 
-@group(0) @binding(5) var<storage, read> k: array<vec4<f32>>;           // (A, H, S)
-@group(0) @binding(6) var<storage, read> v: array<vec4<f32>>;           // (A, H, S)
-@group(0) @binding(7) var<storage, read> r: array<vec4<f32>>;           // (A, H, S)
-
-@group(0) @binding(8) var<storage, read_write> x: array<vec4<f32>>;     // (A, H, S)
-@group(0) @binding(9) var<storage, read_write> state: array<vec4<f32>>; // (B, S + 1, C)
-
-const BLOCK_SIZE: u32 = 32u;
+#ifdef FP16
+@group(0) @binding(6) var<storage, read> k: array<vec2<u32>>;           // (A, H, S)
+@group(0) @binding(7) var<storage, read> v: array<vec2<u32>>;           // (A, H, S)
+@group(0) @binding(8) var<storage, read> r: array<vec2<u32>>;           // (A, H, S)
+@group(0) @binding(9) var<storage, read_write> x: array<vec2<u32>>;     // (A, H, S)
+#else
+@group(0) @binding(6) var<storage, read> k: array<vec4<f32>>;           // (A, H, S)
+@group(0) @binding(7) var<storage, read> v: array<vec4<f32>>;           // (A, H, S)
+@group(0) @binding(8) var<storage, read> r: array<vec4<f32>>;           // (A, H, S)
+@group(0) @binding(9) var<storage, read_write> x: array<vec4<f32>>;     // (A, H, S)
+#endif
 
 var<workgroup> shared_k: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> shared_r: array<vec4<f32>, BLOCK_SIZE>;
@@ -51,7 +55,15 @@ fn compute_cursor(x: u32) -> Cursor {
     return cursor;
 }
 
-@compute @workgroup_size(32, 1, 1)
+fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
+    return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
+}
+
+fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
+    return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
+}
+
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn time_mix(in: Input) {
     let stride_head = shape[0] / 4u;
     let stride = shape[1] * stride_head;
@@ -64,17 +76,29 @@ fn time_mix(in: Input) {
     shared_w[in.tid.x] = time_decay[index];
 
     for (var t = 0u; t < shape[2]; t += 1u) {
-        let cursor = compute_cursor(cursors[t]);
-        state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
-
         let bti = t * stride + index;
+        let cursor = compute_cursor(cursors[t]);
+#ifdef FP16
+        state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[(cursor.token + cursor.len - 1u) * stride + index]);
+#else
+        state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
+#endif
 
         workgroupBarrier();
+#ifdef FP16
+        shared_k[in.tid.x] = unpack4x16float(k[bti]);
+        shared_r[in.tid.x] = unpack4x16float(r[bti]);
+#else
         shared_k[in.tid.x] = k[bti];
         shared_r[in.tid.x] = r[bti];
+#endif
         workgroupBarrier();
 
+#ifdef FP16
+        let vv = unpack4x16float(v[bti]);
+#else
         let vv = v[bti];
+#endif
         var y = vec4<f32>(0.0);
         for (var j = 0u; j < stride_head; j += 1u) {
             let kk = shared_k[h + j];
@@ -107,6 +131,10 @@ fn time_mix(in: Input) {
             state[bji + stride * 2u] = fma(vec4<f32>(ww[2]), ss[2], kv[2]);
             state[bji + stride * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
         }
+#ifdef FP16
+        x[bti] = pack4x16float(y);
+#else
         x[bti] = y;
+#endif
     }
 }

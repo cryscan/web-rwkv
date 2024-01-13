@@ -6,12 +6,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
-use self::{head::ModelHead, loader::Loader, run::ModelRun, softmax::ModelSoftmax};
+use self::{loader::Loader, run::ModelRun, softmax::ModelSoftmax};
 use crate::{context::Context, num::Scalar, tensor::TensorError};
 
-pub mod head;
 pub mod loader;
-pub mod matrix;
 pub mod run;
 pub mod softmax;
 pub mod v4;
@@ -119,24 +117,26 @@ pub trait ModelState:
 }
 
 pub trait ModelBase {
+    type ModelTensor;
+
     fn context(&self) -> &Context;
     fn info(&self) -> &ModelInfo;
+
+    fn tensor(&self) -> &Self::ModelTensor;
 }
 
 pub trait Model:
     ModelBase
     + ModelSoftmax
     + ModelRun
-    + ModelHead
     + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
 {
 }
 
-impl<S: ModelState, M> Model for M where
+impl<M> Model for M where
     M: ModelBase
         + ModelSoftmax
-        + ModelRun<State = S>
-        + ModelHead
+        + ModelRun
         + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
 {
 }
@@ -230,7 +230,6 @@ struct PreparedModelBuilder<'a> {
     quant: HashMap<usize, Quant>,
     embed_device: EmbedDevice,
     turbo: bool,
-    rescale: bool,
     token_chunk_size: usize,
 }
 
@@ -266,8 +265,6 @@ impl<'a> ModelBuilder<'a> {
             .next_power_of_two();
         log::info!("token chunk size: {token_chunk_size}");
 
-        let rescale = turbo || quant.iter().any(|(_, quant)| matches!(quant, Quant::NF4));
-
         Ok(PreparedModelBuilder {
             context,
             info,
@@ -275,7 +272,6 @@ impl<'a> ModelBuilder<'a> {
             quant,
             embed_device,
             turbo,
-            rescale,
             token_chunk_size,
         })
     }

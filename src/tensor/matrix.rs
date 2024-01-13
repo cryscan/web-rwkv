@@ -1,79 +1,85 @@
 use half::f16;
 
-use crate::tensor::{
-    ops::{TensorOp, TensorPass},
-    shape::Shape,
-    ReadWrite, TensorError, TensorGpu, TensorShape, TensorView, Uniform,
+use super::ops::Activation;
+use crate::{
+    num::Float,
+    tensor::{
+        kind::{ReadWrite, Uniform},
+        ops::{TensorOp, TensorPass},
+        shape::Shape,
+        TensorError, TensorGpu, TensorShape, TensorView,
+    },
 };
 
 #[derive(Debug)]
 pub enum Matrix {
     Fp16(TensorGpu<f16, ReadWrite>),
     Int8 {
-        w: Box<TensorGpu<u8, ReadWrite>>,
-        mx: Box<TensorGpu<f32, ReadWrite>>,
-        rx: Box<TensorGpu<f32, ReadWrite>>,
-        my: Box<TensorGpu<f32, ReadWrite>>,
-        ry: Box<TensorGpu<f32, ReadWrite>>,
+        w: TensorGpu<u8, ReadWrite>,
+        mx: TensorGpu<f32, ReadWrite>,
+        rx: TensorGpu<f32, ReadWrite>,
+        my: TensorGpu<f32, ReadWrite>,
+        ry: TensorGpu<f32, ReadWrite>,
     },
     NF4 {
-        w: Box<TensorGpu<u8, ReadWrite>>,
-        q: Box<TensorGpu<f32, Uniform>>,
-        m: Box<TensorGpu<f16, ReadWrite>>,
+        w: TensorGpu<u8, ReadWrite>,
+        q: TensorGpu<f32, Uniform>,
+        m: TensorGpu<f16, ReadWrite>,
     },
 }
 
 impl Matrix {
     pub fn matmul_vec_op(
         &self,
-        half: TensorView<f16>,
-        input: TensorView<f32>,
-        output: TensorView<f32>,
+        input: TensorView<f16>,
+        output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output),
+            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, active),
             Matrix::Int8 { w, mx, rx, my, ry } => {
-                TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
+                TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output, active)
             }
-            Matrix::NF4 { w, q, m } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input, half.clone())?,
-                TensorOp::matmul_vec_nf4(w, q, m, half, output)?,
-            ])),
+            Matrix::NF4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, active),
         }
     }
 
     pub fn matmul_mat_op(
         &self,
-        half: TensorView<f16>,
-        input: TensorView<f32>,
-        output: TensorView<f32>,
+        input: TensorView<f16>,
+        output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input, half.clone())?,
-                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, half, output)?,
-            ])),
-            Matrix::Int8 { w, mx, rx, my, ry } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input, half.clone())?,
-                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, half, output)?,
-            ])),
-            Matrix::NF4 { w, q, m } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input, half.clone())?,
-                TensorOp::matmul_mat_nf4(w.view(.., .., .., ..)?, q, m, half, output)?,
-            ])),
+            Matrix::Fp16(matrix) => {
+                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, input, output, active)
+            }
+            Matrix::Int8 { w, mx, rx, my, ry } => TensorOp::matmul_mat_int8(
+                w.view(.., .., .., ..)?,
+                mx,
+                rx,
+                my,
+                ry,
+                input,
+                output,
+                active,
+            ),
+            Matrix::NF4 { w, q, m } => {
+                TensorOp::matmul_mat_nf4(w.view(.., .., .., ..)?, q, m, input, output, active)
+            }
         }
     }
 
     pub fn matmul_op(
         &self,
-        half: TensorView<f16>,
-        input: TensorView<f32>,
-        output: TensorView<f32>,
+        input: TensorView<f16>,
+        output: TensorView<impl Float>,
+        active: Activation,
         turbo: bool,
     ) -> Result<TensorOp, TensorError> {
         match turbo {
-            true => self.matmul_mat_op(half, input, output),
-            false => self.matmul_vec_op(half, input, output),
+            true => self.matmul_mat_op(input, output, active),
+            false => self.matmul_vec_op(input, output, active),
         }
     }
 
@@ -86,12 +92,12 @@ impl Matrix {
         // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
         // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
 
-        let w = Box::new(context.tensor_init(matrix.shape()));
+        let w = context.tensor_init(matrix.shape());
 
-        let mx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1, 1)));
-        let rx = Box::new(context.tensor_init(Shape::new(shape[0], 1, 1, 1)));
-        let my = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
-        let ry = Box::new(context.tensor_init(Shape::new(shape[1], 1, 1, 1)));
+        let mx = context.tensor_init(Shape::new(shape[0], 1, 1, 1));
+        let rx = context.tensor_init(Shape::new(shape[0], 1, 1, 1));
+        let my = context.tensor_init(Shape::new(shape[1], 1, 1, 1));
+        let ry = context.tensor_init(Shape::new(shape[1], 1, 1, 1));
 
         let op = TensorOp::quantize_mat_int8(matrix, &mx, &rx, &my, &ry, &w)?;
 
@@ -117,7 +123,7 @@ impl Matrix {
 
         let matrix_shape = Shape::new(shape[0] / 2, shape[1], shape[2], shape[3]);
         let absmax_shape = Shape::new(
-            shape[0] / TensorOp::NF4_BLOCK_SIZE,
+            shape[0] / TensorOp::NF4_BLOCK_SIZE as usize,
             shape[1],
             shape[2],
             shape[3],
@@ -142,10 +148,10 @@ impl Matrix {
             0.7229568362236023,
             1.0,
         ];
-        let q = Box::new(context.tensor_from_data(Shape::new(quant.len(), 1, 1, 1), quant)?);
+        let q = context.tensor_from_data(Shape::new(quant.len(), 1, 1, 1), quant)?;
 
-        let w = Box::new(context.tensor_init(matrix_shape));
-        let m = Box::new(context.tensor_init(absmax_shape));
+        let w = context.tensor_init(matrix_shape);
+        let m = context.tensor_init(absmax_shape);
 
         let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
 

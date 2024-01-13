@@ -8,16 +8,16 @@ use super::{ModelBase, ModelError, ModelInfo, ModelState};
 use crate::{
     context::Context,
     tensor::{
+        kind::{ReadBack, ReadWrite},
         ops::{TensorOp, TensorOpHook},
         shape::{Shape, TensorDimension},
-        ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu, TensorReshape, TensorStack,
+        TensorCpu, TensorError, TensorGpu, TensorReshape, TensorStack,
     },
 };
 
 #[derive(Debug)]
 pub struct Output {
-    pub half_x: TensorGpu<f16, ReadWrite>,
-    pub head_x: TensorGpu<f32, ReadWrite>,
+    pub head_x: TensorGpu<f16, ReadWrite>,
     pub head_o: TensorGpu<f32, ReadWrite>,
     pub map: TensorGpu<f32, ReadBack>,
 }
@@ -28,7 +28,6 @@ impl Output {
         let output_shape = Shape::new(info.num_vocab, num_batch, 1, 1);
 
         Self {
-            half_x: context.tensor_init(head_shape),
             head_x: context.tensor_init(head_shape),
             head_o: context.tensor_init(output_shape),
             map: context.tensor_init(output_shape),
@@ -68,7 +67,7 @@ pub(crate) trait ModelRunInternal: ModelBase + Sync {
         &self,
         embed: &TensorCpu<'a, f16>,
         tokens: &[Vec<u16>],
-    ) -> Result<TensorStack<'a, f32>, TensorError> {
+    ) -> Result<TensorStack<'a, f16>, TensorError> {
         let info = self.info();
         let context = self.context();
 
@@ -82,7 +81,7 @@ pub(crate) trait ModelRunInternal: ModelBase + Sync {
                         .try_collect()?,
                 )
                 .unwrap_or_else(|_| context.zeros(Shape::new(info.num_emb, 1, 0, 1)));
-                stack.map(|x| x.to_f32()).reshape(
+                stack.reshape(
                     TensorDimension::Full,
                     TensorDimension::Auto,
                     TensorDimension::Dimension(1),
