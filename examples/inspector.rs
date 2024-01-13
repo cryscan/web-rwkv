@@ -13,7 +13,6 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        head::ModelHead,
         loader::Loader,
         run::{HookMap, ModelRun},
         softmax::ModelSoftmax,
@@ -206,47 +205,55 @@ async fn run(cli: Cli) -> Result<()> {
         let word = tokenizer.decode(&[token])?;
         let word = String::from_utf8_lossy(&word);
         println!("Predict: {}", word);
-        // tokens[0] = vec![token];
     }
 
-    // tokens[0].clear();
+    // map the activations into vocab space
+    let mut encoder = context.device.create_command_encoder(&Default::default());
 
-    {
-        // map the activations into vocab space
-        let mut encoder = context.device.create_command_encoder(&Default::default());
+    let tensor = model.tensor();
+    let ops = TensorOp::List(vec![
+        TensorOp::layer_norm(
+            &tensor.head.layer_norm.w,
+            &tensor.head.layer_norm.b,
+            &buffer.ffn_x,
+            v5::Model::LN_EPS,
+        )?,
+        tensor.head.w.matmul_mat_op(
+            buffer.ffn_x.view(.., .., .., ..)?,
+            buffer.out.view(.., .., .., ..)?,
+            Default::default(),
+        )?,
+    ]);
 
-        let ops = model.head_op(&buffer.ffn_x, &buffer.out, true)?;
+    let mut pass = encoder.begin_compute_pass(&Default::default());
+    pass.execute_tensor_op(&ops);
+    drop(pass);
 
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
+    encoder.copy_tensor(&buffer.out, &buffer.map)?;
 
-        encoder.copy_tensor(&buffer.out, &buffer.map)?;
+    context.queue.submit(Some(encoder.finish()));
 
-        context.queue.submit(Some(encoder.finish()));
+    // for each layer, choose the top 5 tokens
+    let backed = buffer.map.back_async().await.to_vec();
+    for layer in 0..info.num_layer {
+        let start = layer * info.num_vocab;
+        let end = start + info.num_vocab;
+        let slice = &backed[start..end];
 
-        // for each layer, choose the top 5 tokens
-        let backed = buffer.map.back_async().await.to_vec();
-        for layer in 0..info.num_layer {
-            let start = layer * info.num_vocab;
-            let end = start + info.num_vocab;
-            let slice = &backed[start..end];
+        let sorted = slice
+            .iter()
+            .enumerate()
+            .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(y).reverse())
+            .take(5)
+            .collect_vec();
 
-            let sorted = slice
-                .iter()
-                .enumerate()
-                .sorted_unstable_by(|(_, x), (_, y)| x.total_cmp(y).reverse())
-                .take(5)
-                .collect_vec();
-
-            print!("layer {layer}:\t");
-            for (index, (token, score)) in sorted.into_iter().enumerate() {
-                let word = tokenizer.decode(&[token as u16]).unwrap_or_default();
-                let word = String::from_utf8_lossy(&word);
-                print!("{index}: {token} {word} ({score})\t");
-            }
-            println!()
+        print!("layer {layer}:\t");
+        for (index, (token, score)) in sorted.into_iter().enumerate() {
+            let word = tokenizer.decode(&[token as u16]).unwrap_or_default();
+            let word = String::from_utf8_lossy(&word);
+            print!("{index}: {token} {word} ({score})\t");
         }
+        println!()
     }
 
     Ok(())

@@ -6,7 +6,6 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    head::ModelHead,
     run::{HookMap, ModelRunInternal, Output},
     softmax::{ModelSoftmaxInternal, Softmax},
     FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, PreparedModelBuilder, Quant,
@@ -15,7 +14,6 @@ use super::{
 use crate::{
     context::Context,
     model::RESCALE_LAYER,
-    num::Float,
     tensor::{
         cache::ResourceCache,
         kind::{ReadBack, ReadWrite},
@@ -44,66 +42,66 @@ pub struct Model<'a> {
 }
 
 #[derive(Debug)]
-struct ModelTensor<'a> {
-    embed: Embed<'a>,
-    head: Head,
-    layers: Vec<Layer>,
+pub struct ModelTensor<'a> {
+    pub embed: Embed<'a>,
+    pub head: Head,
+    pub layers: Vec<Layer>,
 }
 
 #[derive(Debug)]
-struct LayerNorm {
-    w: TensorGpu<f16, ReadWrite>,
-    b: TensorGpu<f16, ReadWrite>,
+pub struct LayerNorm {
+    pub w: TensorGpu<f16, ReadWrite>,
+    pub b: TensorGpu<f16, ReadWrite>,
 }
 
 #[derive(Debug)]
-struct Att {
-    time_decay: TensorGpu<f32, ReadWrite>,
-    time_first: TensorGpu<f32, ReadWrite>,
+pub struct Att {
+    pub time_decay: TensorGpu<f32, ReadWrite>,
+    pub time_first: TensorGpu<f32, ReadWrite>,
 
-    time_mix_k: TensorGpu<f16, ReadWrite>,
-    time_mix_v: TensorGpu<f16, ReadWrite>,
-    time_mix_r: TensorGpu<f16, ReadWrite>,
-    time_mix_g: TensorGpu<f16, ReadWrite>,
+    pub time_mix_k: TensorGpu<f16, ReadWrite>,
+    pub time_mix_v: TensorGpu<f16, ReadWrite>,
+    pub time_mix_r: TensorGpu<f16, ReadWrite>,
+    pub time_mix_g: TensorGpu<f16, ReadWrite>,
 
-    w_k: Matrix,
-    w_v: Matrix,
-    w_r: Matrix,
-    w_g: Matrix,
-    w_o: Matrix,
+    pub w_k: Matrix,
+    pub w_v: Matrix,
+    pub w_r: Matrix,
+    pub w_g: Matrix,
+    pub w_o: Matrix,
 
-    group_norm: LayerNorm,
+    pub group_norm: LayerNorm,
 }
 
 #[derive(Debug)]
-struct Ffn {
-    time_mix_k: TensorGpu<f16, ReadWrite>,
-    time_mix_r: TensorGpu<f16, ReadWrite>,
+pub struct Ffn {
+    pub time_mix_k: TensorGpu<f16, ReadWrite>,
+    pub time_mix_r: TensorGpu<f16, ReadWrite>,
 
-    w_k: Matrix,
-    w_v: Matrix,
-    w_r: Matrix,
+    pub w_k: Matrix,
+    pub w_v: Matrix,
+    pub w_r: Matrix,
 }
 
 #[derive(Debug)]
-struct Layer {
-    att_layer_norm: LayerNorm,
-    ffn_layer_norm: LayerNorm,
-    att: Att,
-    ffn: Ffn,
+pub struct Layer {
+    pub att_layer_norm: LayerNorm,
+    pub ffn_layer_norm: LayerNorm,
+    pub att: Att,
+    pub ffn: Ffn,
 }
 
 #[derive(Debug)]
-struct Embed<'a> {
-    layer_norm: LayerNorm,
-    w: TensorCpu<'a, f16>,
-    u: Option<TensorGpu<f16, ReadWrite>>,
+pub struct Embed<'a> {
+    pub layer_norm: LayerNorm,
+    pub w: TensorCpu<'a, f16>,
+    pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
 #[derive(Debug)]
-struct Head {
-    layer_norm: LayerNorm,
-    w: Matrix,
+pub struct Head {
+    pub layer_norm: LayerNorm,
+    pub w: Matrix,
 }
 
 /// Runtime buffers.
@@ -668,7 +666,9 @@ impl<'a> FromBuilder for Model<'a> {
     }
 }
 
-impl ModelBase for Model<'_> {
+impl<'a> ModelBase for Model<'a> {
+    type ModelTensor = ModelTensor<'a>;
+
     #[inline]
     fn context(&self) -> &Context {
         &self.context
@@ -678,26 +678,10 @@ impl ModelBase for Model<'_> {
     fn info(&self) -> &ModelInfo {
         &self.info
     }
-}
 
-impl ModelHead for Model<'_> {
     #[inline]
-    fn head_op(
-        &self,
-        input: &TensorGpu<f16, ReadWrite>,
-        output: &TensorGpu<impl Float, ReadWrite>,
-        turbo: bool,
-    ) -> Result<TensorOp, TensorError> {
-        let head = &self.tensor.head;
-        Ok(TensorOp::List(vec![
-            TensorOp::layer_norm(&head.layer_norm.w, &head.layer_norm.b, input, Self::LN_EPS)?,
-            head.w.matmul_op(
-                input.view(.., .., .., ..)?,
-                output.view(.., .., .., ..)?,
-                Activation::None,
-                turbo,
-            )?,
-        ]))
+    fn tensor(&self) -> &Self::ModelTensor {
+        &self.tensor
     }
 }
 
