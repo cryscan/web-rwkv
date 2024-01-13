@@ -23,9 +23,9 @@ struct Input {
 @group(0) @binding(7) var<storage, read> xa: array<u32>;                    // (B, M, K)
 @group(0) @binding(8) var<storage, read> xb: array<vec2<u32>>;              // (B, N, K)
 #ifdef OUT_FP16
-@group(0) @binding(5) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
+@group(0) @binding(9) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
 #else
-@group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
+@group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
 #endif
 
 var<workgroup> smx: array<vec4<f32>, 32u>;
@@ -42,6 +42,15 @@ fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
 
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
+}
+
+fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
+    return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
+}
+
+fn squared_relu(x: vec4<f32>) -> vec4<f32> {
+    let p = max(x, vec4<f32>(0.0));
+    return p * p;
 }
 
 @compute @workgroup_size(BLOCK_SIZE, BLOCK_SIZE, 1)
@@ -139,15 +148,15 @@ fn matmul(in: Input) {
 #endif
 #endif
 #ifdef OUT_FP16
-        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 4u)] = pack4x16float(local_sum[0]);
-        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x, 4u)] = pack4x16float(local_sum[1]);
-        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x, 4u)] = pack4x16float(local_sum[2]);
-        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x, 4u)] = pack4x16float(local_sum[3]);
+        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x)] = pack4x16float(local_sum[0]);
+        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x)] = pack4x16float(local_sum[1]);
+        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x)] = pack4x16float(local_sum[2]);
+        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x)] = pack4x16float(local_sum[3]);
 #else
-        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 4u)] = local_sum[0];
-        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x, 4u)] = local_sum[1];
-        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x, 4u)] = local_sum[2];
-        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x, 4u)] = local_sum[3];
+        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x)] = local_sum[0];
+        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x)] = local_sum[1];
+        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x)] = local_sum[2];
+        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x)] = local_sum[3];
 #endif
     }
 }

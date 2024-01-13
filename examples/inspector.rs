@@ -20,17 +20,17 @@ use web_rwkv::{
         v5, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelVersion, Quant, StateBuilder,
     },
     tensor::{
+        kind::{ReadBack, ReadWrite},
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::Shape,
-        ReadBack, ReadWrite, TensorError, TensorGpu, TensorShape,
+        TensorError, TensorGpu, TensorShape,
     },
     tokenizer::Tokenizer,
 };
 
 #[derive(Debug, Clone)]
 struct Buffer {
-    ffn_x: TensorGpu<f32, ReadWrite>,
-    half: TensorGpu<f16, ReadWrite>,
+    ffn_x: TensorGpu<f16, ReadWrite>,
     out: TensorGpu<f32, ReadWrite>,
     map: TensorGpu<f32, ReadBack>,
 }
@@ -39,7 +39,6 @@ impl Buffer {
     fn new(context: &Context, info: &ModelInfo) -> Self {
         Self {
             ffn_x: context.tensor_init(Shape::new(info.num_emb, info.num_layer, 1, 1)),
-            half: context.tensor_init(Shape::new(info.num_emb, info.num_layer, 1, 1)),
             out: context.tensor_init(Shape::new(info.num_vocab, info.num_layer, 1, 1)),
             map: context.tensor_init(Shape::new(info.num_vocab, info.num_layer, 1, 1)),
         }
@@ -77,7 +76,6 @@ async fn create_context(info: &ModelInfo) -> Result<Context> {
         .adapter(wgpu::PowerPreference::HighPerformance)
         .await?;
     let context = ContextBuilder::new(adapter)
-        .with_default_pipelines()
         .with_auto_limits(info)
         .build()
         .await?;
@@ -217,7 +215,7 @@ async fn run(cli: Cli) -> Result<()> {
         // map the activations into vocab space
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
-        let ops = model.head_op(&buffer.ffn_x, &buffer.half, &buffer.out, true)?;
+        let ops = model.head_op(&buffer.ffn_x, &buffer.out, true)?;
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);

@@ -18,6 +18,7 @@ use crate::{
 };
 
 pub mod cache;
+pub mod matrix;
 pub mod ops;
 pub mod shape;
 
@@ -750,7 +751,7 @@ impl<T: Scalar> TensorShape for TensorView<'_, T> {
 impl<T: Scalar> TensorView<'_, T> {
     #[inline]
     pub fn tensor(&self) -> &TensorGpu<T, ReadWrite> {
-        &self.tensor
+        self.tensor
     }
 
     #[inline]
@@ -971,7 +972,6 @@ mod tests {
         let instance = Instance::new();
         let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
         let context = ContextBuilder::new(adapter)
-            .with_default_pipelines()
             // .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
             .build()
             .await?;

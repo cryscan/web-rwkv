@@ -105,21 +105,21 @@ impl std::fmt::Display for Activation {
     }
 }
 
-impl Macros<'_> {
+impl Macros {
     pub fn nf4(mut self, block_size: u32) -> Self {
-        self.push(("NF4_BLOCK_SIZE", format!("{}u", block_size)));
+        self.push(("NF4_BLOCK_SIZE".into(), format!("{}u", block_size)));
         self
     }
 
-    pub fn float(mut self, value: f32, name: impl AsRef<str>) -> Self {
-        self.push((name, format!("{}", value)));
+    pub fn float(mut self, value: f32, name: impl Into<String>) -> Self {
+        self.push((name.into(), format!("{}", value)));
         self
     }
 
-    pub fn bool(self, value: bool, name: impl AsRef<str>) -> Self {
+    pub fn bool(mut self, value: bool, name: impl Into<String>) -> Self {
         match value {
             true => {
-                self.push((name, ""));
+                self.push((name.into(), Default::default()));
                 self
             }
             false => self,
@@ -128,18 +128,21 @@ impl Macros<'_> {
 
     pub fn tensor<T: Float>(
         mut self,
-        tensor: &impl TensorScalar<T = T>,
-        prefix: Option<impl AsRef<str>>,
+        _tensor: &impl TensorScalar<T = T>,
+        prefix: Option<&'_ str>,
     ) -> Self {
         match prefix {
-            None => self.push((T::DEF, "")),
-            Some(prefix) => self.push((format!("{}_{}", prefix, T::DEF), "")),
+            None => self.push((T::DEF.into(), Default::default())),
+            Some(prefix) => self.push((format!("{}_{}", prefix, T::DEF), Default::default())),
         }
         self
     }
 
-    pub fn active(mut self, active: Activation) -> Self {
-        self.push((format!("ACT_{}", active), ""));
+    pub fn custom(mut self, value: impl std::fmt::Display, prefix: Option<&'_ str>) -> Self {
+        match prefix {
+            None => self.push((format!("{}", value), Default::default())),
+            Some(prefix) => self.push((format!("{}_{}", prefix, value), Default::default())),
+        }
         self
     }
 }
@@ -156,8 +159,7 @@ pub enum TensorOp {
 }
 
 impl TensorOp {
-    // pub const BLOCK_SIZE: u32 = 128;
-    pub const NF4_BLOCK_SIZE: usize = 64;
+    pub const NF4_BLOCK_SIZE: u32 = 64;
 
     #[inline]
     fn block_count(count: u32, block_size: u32) -> u32 {
@@ -264,9 +266,9 @@ impl TensorOp {
         w: &TensorGpu<f16, ReadWrite>,
         b: &TensorGpu<f16, ReadWrite>,
         x: &TensorGpu<impl Float, ReadWrite>,
+        eps: f32,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
-        const EPS: f32 = 1.0e-5;
 
         let shape = x.shape();
         w.check_shape(Shape::new(shape[0], 1, 1, 1))?;
@@ -278,7 +280,7 @@ impl TensorOp {
             include_str!("../shaders/layer_norm.wgsl"),
             "layer_norm",
             None,
-            Macros::new(BLOCK_SIZE).float(EPS, "EPS").tensor(x, None),
+            Macros::new(BLOCK_SIZE).float(eps, "EPS").tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -318,9 +320,9 @@ impl TensorOp {
         w: &TensorGpu<f16, ReadWrite>,
         b: &TensorGpu<f16, ReadWrite>,
         x: &TensorGpu<impl Float, ReadWrite>,
+        eps: f32,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 32;
-        const EPS: f32 = 64.0e-5;
 
         let shape = x.shape();
         w.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
@@ -332,7 +334,7 @@ impl TensorOp {
             include_str!("../shaders/layer_norm.wgsl"),
             "group_norm",
             None,
-            Macros::new(BLOCK_SIZE).float(EPS, "EPS").tensor(x, None),
+            Macros::new(BLOCK_SIZE).float(eps, "EPS").tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -389,7 +391,7 @@ impl TensorOp {
             Macros::new(BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .active(active),
+                .custom(active, Some("ACT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -435,6 +437,7 @@ impl TensorOp {
     /// - `my` and `ry` shape: `[R, 1, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
+    #[allow(clippy::too_many_arguments)]
     pub fn matmul_vec_int8(
         matrix: &TensorGpu<u8, ReadWrite>,
         mx: &TensorGpu<f32, ReadWrite>,
@@ -464,7 +467,7 @@ impl TensorOp {
             Macros::new(BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .active(active),
+                .custom(active, Some("ACT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -539,7 +542,7 @@ impl TensorOp {
         matrix.check_shape(Shape::new(input.shape()[0] / 2, shape[0], shape[2], 1))?;
         input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
         absmax.check_shape(Shape::new(
-            input.shape()[0] / Self::NF4_BLOCK_SIZE,
+            input.shape()[0] / Self::NF4_BLOCK_SIZE as usize,
             shape[0],
             shape[2],
             1,
@@ -555,7 +558,7 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .active(active),
+                .custom(active, Some("ACT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -630,7 +633,7 @@ impl TensorOp {
             Macros::new(BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .active(active),
+                .custom(active, Some("ACT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -680,6 +683,7 @@ impl TensorOp {
     /// - `output` shape: `[M, N, B]`.
     ///
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
+    #[allow(clippy::too_many_arguments)]
     pub fn matmul_mat_int8(
         matrix: TensorView<u8>,
         mx: &TensorGpu<f32, ReadWrite>,
@@ -709,7 +713,7 @@ impl TensorOp {
             Macros::new(BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .active(active),
+                .custom(active, Some("ACT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -792,14 +796,14 @@ impl TensorOp {
         let context = output.context();
         let pipeline = context.request_pipeline(
             "matmul_mat_nf4",
-            include_str!("../shaders/matmul_mat_int8.wgsl"),
+            include_str!("../shaders/matmul_mat_nf4.wgsl"),
             "matmul",
             None,
             Macros::new(BLOCK_SIZE)
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .active(active),
+                .custom(active, Some("ACT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -931,8 +935,8 @@ impl TensorOp {
             None,
             Macros::new(BLOCK_SIZE)
                 .tensor(&time_mix, Some("TIME_MIX"))
-                .tensor(&input, Some("IN"))
-                .tensor(&output, Some("OUT"))
+                .tensor(input, Some("IN"))
+                .tensor(output, Some("OUT"))
                 .bool(reversed, "REVERSED"),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
@@ -1008,7 +1012,7 @@ impl TensorOp {
             include_str!("../shaders/time_mix_v4.wgsl"),
             "time_mix",
             None,
-            Macros::new(BLOCK_SIZE).tensor(&x, None),
+            Macros::new(BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1093,7 +1097,7 @@ impl TensorOp {
             include_str!("../shaders/time_mix_v5.wgsl"),
             "time_mix",
             None,
-            Macros::new(BLOCK_SIZE).tensor(&x, None),
+            Macros::new(BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1178,7 +1182,7 @@ impl TensorOp {
             include_str!("../shaders/time_mix_v6.wgsl"),
             "time_mix",
             None,
-            Macros::new(BLOCK_SIZE).tensor(&x, None),
+            Macros::new(BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1250,8 +1254,8 @@ impl TensorOp {
             "silu",
             None,
             Macros::new(BLOCK_SIZE)
-                .tensor(&input, Some("IN"))
-                .tensor(&output, Some("OUT")),
+                .tensor(input, Some("IN"))
+                .tensor(output, Some("OUT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1293,7 +1297,7 @@ impl TensorOp {
             include_str!("../shaders/activation.wgsl"),
             "act_tanh",
             None,
-            Macros::new(BLOCK_SIZE).tensor(&x, None),
+            Macros::new(BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1331,7 +1335,7 @@ impl TensorOp {
             include_str!("../shaders/activation.wgsl"),
             "stable_exp",
             None,
-            Macros::new(BLOCK_SIZE).tensor(&x, None),
+            Macros::new(BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1369,7 +1373,7 @@ impl TensorOp {
             include_str!("../shaders/activation.wgsl"),
             "squared_relu",
             None,
-            Macros::new(BLOCK_SIZE).tensor(&x, None),
+            Macros::new(BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1417,7 +1421,7 @@ impl TensorOp {
             include_str!("../shaders/channel_mix.wgsl"),
             "channel_mix",
             None,
-            Macros::new(BLOCK_SIZE).tensor(&x, None),
+            Macros::new(BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1482,8 +1486,8 @@ impl TensorOp {
             "blit",
             None,
             Macros::new(BLOCK_SIZE)
-                .tensor(&input, None)
-                .tensor(&output, None),
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1536,8 +1540,8 @@ impl TensorOp {
             "transpose",
             None,
             Macros::new(BLOCK_SIZE)
-                .tensor(&input, None)
-                .tensor(&output, None),
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1587,12 +1591,12 @@ impl TensorOp {
         let context = output.context();
         let pipeline = context.request_pipeline(
             "blend",
-            include_str!("../shaders/blit.wgsl"),
+            include_str!("../shaders/blend.wgsl"),
             "blend",
             None,
             Macros::new(BLOCK_SIZE)
-                .tensor(&input, Some("IN"))
-                .tensor(&output, Some("OUT")),
+                .tensor(input, Some("IN"))
+                .tensor(output, Some("OUT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1699,79 +1703,48 @@ impl TensorOp {
         })
     }
 
-    // pub fn half(output: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-    //     let shape = output.shape();
+    pub fn discount(
+        x: &TensorGpu<impl Float, ReadWrite>,
+        factor: f32,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
 
-    //     let context = output.context();
-    //     let pipeline = context.pipeline("half")?;
-    //     let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-    //         label: None,
-    //         layout: &pipeline.get_bind_group_layout(0),
-    //         entries: &[
-    //             BindGroupEntry {
-    //                 binding: 0,
-    //                 resource: output.meta_binding(),
-    //             },
-    //             BindGroupEntry {
-    //                 binding: 2,
-    //                 resource: output.binding(),
-    //             },
-    //         ],
-    //     })];
+        let shape = x.shape();
+        let context = x.context();
+        let pipeline = context.request_pipeline(
+            "discount",
+            include_str!("../shaders/discount.wgsl"),
+            "discount",
+            None,
+            Macros::new(BLOCK_SIZE)
+                .tensor(x, None)
+                .float(factor, "FACTOR"),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+            ],
+        })];
 
-    //     Ok(Self::Atom {
-    //         pipeline,
-    //         bindings,
-    //         dispatch: [
-    //             Self::block_count(shape[0] as u32 / 4),
-    //             shape[1] as u32,
-    //             shape[2] as u32,
-    //         ],
-    //     })
-    // }
-
-    // pub fn quantize_fp16(
-    //     input: TensorView<f32>,
-    //     output: TensorView<f16>,
-    // ) -> Result<Self, TensorError> {
-    //     let shape = output.shape();
-    //     input.check_shape(shape)?;
-
-    //     let context = output.context();
-    //     let pipeline = context.pipeline("quant_fp16")?;
-    //     let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-    //         label: None,
-    //         layout: &pipeline.get_bind_group_layout(0),
-    //         entries: &[
-    //             BindGroupEntry {
-    //                 binding: 0,
-    //                 resource: input.meta_binding(),
-    //             },
-    //             BindGroupEntry {
-    //                 binding: 1,
-    //                 resource: output.meta_binding(),
-    //             },
-    //             BindGroupEntry {
-    //                 binding: 2,
-    //                 resource: input.binding(),
-    //             },
-    //             BindGroupEntry {
-    //                 binding: 3,
-    //                 resource: output.binding(),
-    //             },
-    //         ],
-    //     })];
-
-    //     Ok(Self::Atom {
-    //         pipeline,
-    //         bindings,
-    //         dispatch: [
-    //             Self::block_count(shape[0] as u32 / 4),
-    //             shape[1] as u32,
-    //             shape[2] as u32,
-    //         ],
-    //     })
-    // }
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
 
     pub fn quantize_mat_int8(
         input: &TensorGpu<f16, ReadWrite>,
@@ -1791,7 +1764,81 @@ impl TensorOp {
         ry.check_shape(Shape::new(shape[1], 1, 1, 1))?;
 
         let context = output.context();
-        let entries = &[
+
+        let layout: Option<&[BindGroupLayoutEntry]> = Some(&[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 6,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ]);
+
+        let entries: &[BindGroupEntry] = &[
             BindGroupEntry {
                 binding: 0,
                 resource: output.meta_binding(),
@@ -1821,91 +1868,15 @@ impl TensorOp {
                 resource: output.binding(),
             },
         ];
-        let create_op = |name: &'static str,
-                         entry_point: &'static str,
-                         dispatch|
-         -> Result<Self, TensorError> {
-            let entries = &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ];
-            let layout: Option<&[BindGroupLayoutEntry]> = Some(entries);
+
+        let op = |entry_point: &'static str, dispatch| -> Result<Self, TensorError> {
             let pipeline = context.request_pipeline(
-                name,
+                format!("quant_mat_int8_{}", entry_point),
                 include_str!("../shaders/quant_mat_int8.wgsl"),
                 entry_point,
                 layout,
                 Macros::new(BLOCK_SIZE),
             );
-
             let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
                 label: None,
                 layout: &pipeline.get_bind_group_layout(0),
@@ -1918,23 +1889,11 @@ impl TensorOp {
             })
         };
 
-        let my = create_op("quant_mat_int8_my", "compute_my", [1, shape[1] as u32, 1])?;
-        let ry = create_op("quant_mat_int8_ry", "compute_ry", [1, shape[1] as u32, 1])?;
-        let mx = create_op(
-            "quant_mat_int8_mx",
-            "compute_mx",
-            [1, shape[0] as u32 / 4, 1],
-        )?;
-        let rx = create_op(
-            "quant_mat_int8_rx",
-            "compute_rx",
-            [1, shape[0] as u32 / 4, 1],
-        )?;
-        let quantize = create_op(
-            "quant_mat_int8",
-            "quantize",
-            [shape[0] as u32 / 4, shape[1] as u32, 1],
-        )?;
+        let my = op("compute_my", [1, shape[1] as u32, 1])?;
+        let ry = op("compute_ry", [1, shape[1] as u32, 1])?;
+        let mx = op("compute_mx", [1, shape[0] as u32 / 4, 1])?;
+        let rx = op("compute_rx", [1, shape[0] as u32 / 4, 1])?;
+        let quantize = op("quantize", [shape[0] as u32 / 4, shape[1] as u32, 1])?;
 
         if shape[1] > shape[0] {
             Ok(Self::List(vec![my, mx, rx, ry, quantize]))
@@ -1955,7 +1914,7 @@ impl TensorOp {
         let shape = output.shape();
         let input_shape = Shape::new(shape[0] << 1, shape[1], shape[2], shape[3]);
         let absmax_shape = Shape::new(
-            input_shape[0] / Self::NF4_BLOCK_SIZE,
+            input_shape[0] / Self::NF4_BLOCK_SIZE as usize,
             shape[1],
             shape[2],
             shape[3],
@@ -1977,14 +1936,14 @@ impl TensorOp {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: absmax_f32.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: quant.binding(),
-                },
+                // BindGroupEntry {
+                //     binding: 0,
+                //     resource: absmax_f32.meta_binding(),
+                // },
+                // BindGroupEntry {
+                //     binding: 1,
+                //     resource: quant.binding(),
+                // },
                 BindGroupEntry {
                     binding: 2,
                     resource: input.binding(),
@@ -1993,10 +1952,10 @@ impl TensorOp {
                     binding: 3,
                     resource: absmax_f32.binding(),
                 },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: output.binding(),
-                },
+                // BindGroupEntry {
+                //     binding: 4,
+                //     resource: output.binding(),
+                // },
             ],
         })];
         let compute_absmax = Self::Atom {
@@ -2020,10 +1979,10 @@ impl TensorOp {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
+                // BindGroupEntry {
+                //     binding: 0,
+                //     resource: output.meta_binding(),
+                // },
                 BindGroupEntry {
                     binding: 1,
                     resource: quant.binding(),
@@ -2074,8 +2033,9 @@ mod tests {
     use super::{TensorOp, TensorPass};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        model::matrix::Matrix,
+        // model::matrix::Matrix,
         tensor::{
+            matrix::Matrix,
             ops::{Activation, TensorCommand},
             Shape, TensorGpu, TensorInit, TensorShape,
         },
@@ -2094,7 +2054,6 @@ mod tests {
         let instance = Instance::new();
         let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
         let context = ContextBuilder::new(adapter)
-            .with_default_pipelines()
             // .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
             .build()
             .await?;
@@ -2212,7 +2171,7 @@ mod tests {
         let w_dev = TensorGpu::from_data(&context, shape, &w[..1000])?;
         let b_dev = TensorGpu::from_data(&context, shape, &b[..1000])?;
 
-        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev)?;
+        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, 1.0e-5)?;
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
@@ -2294,7 +2253,7 @@ mod tests {
         let output_map = TensorGpu::init(&context, output_shape);
 
         let ops = TensorOp::List(vec![
-            TensorOp::quantize_fp16(
+            TensorOp::blit(
                 input_f32_dev.view(.., .., .., ..)?,
                 input_f16_dev.view(.., .., .., ..)?,
             )?,
@@ -2432,11 +2391,6 @@ mod tests {
             (0..C).for_each(|j| matrix_u8[C * i + j] /= ry[i]);
         }
 
-        // let matrix_u8 = matrix_u8
-        //     .into_iter()
-        //     .map(|x| (0.5 + 255.0 * x.clamp(0.0, 1.0)) as u8)
-        //     .collect_vec();
-
         let matrix_f16_dev = context.tensor_from_data(Shape::new(C, R, 1, 1), &matrix_f16)?;
         let matrix_quant = Matrix::quant_u8(&matrix_f16_dev)?;
         let (matrix_u8_dev, mx_dev, my_dev, rx_dev, ry_dev) = match matrix_quant {
@@ -2500,7 +2454,7 @@ mod tests {
         let output_map = TensorGpu::init(&context, output_shape);
 
         let ops = TensorOp::List(vec![
-            TensorOp::quantize_fp16(
+            TensorOp::blit(
                 input_f32_dev.view(.., .., .., ..)?,
                 input_f16_dev.view(.., .., .., ..)?,
             )?,
@@ -2593,6 +2547,7 @@ mod tests {
         const C: usize = 2560;
         const R: usize = 2048;
         const T: usize = 64;
+        const NF4_BLOCK_SIZE: usize = TensorOp::NF4_BLOCK_SIZE as usize;
 
         fn normal() -> f32 {
             let u = fastrand::f32();
@@ -2630,15 +2585,17 @@ mod tests {
             0.7229568362236023,
             1.0,
         ];
-        let (matrix_u8, absmax) = {
+        let (matrix_u8, matrix_u4, absmax) = {
             let mut matrix_u8: Vec<u8> = vec![];
+            let mut matrix_u4: Vec<u8> = vec![];
             let mut absmax = vec![];
             matrix_u8.resize(matrix.len(), 0);
-            absmax.resize(matrix.len() / TensorOp::NF4_BLOCK_SIZE, f16::ZERO);
+            matrix_u4.resize(matrix.len() / 2, 0);
+            absmax.resize(matrix.len() / NF4_BLOCK_SIZE, f16::ZERO);
 
             for (i, absmax) in absmax.iter_mut().enumerate() {
-                let start = i * TensorOp::NF4_BLOCK_SIZE;
-                let end = start + TensorOp::NF4_BLOCK_SIZE;
+                let start = i * NF4_BLOCK_SIZE;
+                let end = start + NF4_BLOCK_SIZE;
                 let chunk = &matrix[start..end];
                 *absmax = chunk
                     .iter()
@@ -2656,26 +2613,31 @@ mod tests {
                 }
             }
 
-            (matrix_u8, absmax)
+            for (i, x) in matrix_u4.iter_mut().enumerate() {
+                *x = matrix_u8[2 * i] | matrix_u8[2 * i + 1] << 4;
+            }
+
+            (matrix_u8, matrix_u4, absmax)
         };
 
         let quant_shape = Shape::new(quant.len(), 1, 1, 1);
-        let absmax_shape = Shape::new(C / TensorOp::NF4_BLOCK_SIZE, R, 1, 1);
+        let absmax_shape = Shape::new(C / NF4_BLOCK_SIZE, R, 1, 1);
         let matrix_f16_shape = Shape::new(C, R, 1, 1);
         let matrix_u4_shape = Shape::new(C / 2, R, 1, 1);
         let input_shape = Shape::new(C, T, 1, 1);
         let output_shape = Shape::new(R, T, 1, 1);
 
         let quant_dev = context.tensor_from_data(quant_shape, quant.to_vec())?;
-        // let absmax_dev = context.tensor_from_data(absmax_shape, absmax.clone())?;
         let absmax_dev = context.tensor_init(absmax_shape);
         let matrix_f16_dev = context.tensor_from_data(matrix_f16_shape, matrix.clone())?;
 
         let matrix_u4_dev = context.tensor_init(matrix_u4_shape);
-        // let matrix_dev = context.tensor_from_data(matrix_shape, matrix_u4)?;
         let input_dev = TensorGpu::from_data(&context, input_shape, input_f16.clone())?;
-        let output_dev: TensorGpu<f32, _> = TensorGpu::init(&context, output_shape);
+        let output_dev = TensorGpu::init(&context, output_shape);
         let output_map = TensorGpu::init(&context, output_shape);
+
+        let matrix_u4_map = TensorGpu::init(&context, matrix_u4_shape);
+        let absmax_map = TensorGpu::init(&context, absmax_shape);
 
         // let ops = TensorOp::List(vec![
         //     TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
@@ -2685,22 +2647,9 @@ mod tests {
         //         &absmax_dev,
         //         input_dev.view(.., .., .., ..)?,
         //         output_dev.view(.., .., .., ..)?,
+        //         Activation::None,
         //     )?,
         // ]);
-
-        // let mut encoder = context
-        //     .device
-        //     .create_command_encoder(&Default::default());
-
-        // let mut pass = encoder.begin_compute_pass(&Default::default());
-        // pass.execute_tensor_op(&ops);
-        // drop(pass);
-
-        // encoder.copy_tensor(&output_dev, &output_map)?;
-        // context.queue.submit(Some(encoder.finish()));
-
-        // let output_host = TensorCpu::from(output_map);
-        // let output_host = Vec::from(output_host);
 
         let ops = TensorOp::List(vec![
             TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
@@ -2720,13 +2669,14 @@ mod tests {
         pass.execute_tensor_op(&ops);
         drop(pass);
 
+        encoder.copy_tensor(&matrix_u4_dev, &matrix_u4_map)?;
+        encoder.copy_tensor(&absmax_dev, &absmax_map)?;
         encoder.copy_tensor(&output_dev, &output_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = output_map.back();
-        let output_host = Vec::from(output_host);
-
-        context.device.poll(wgpu::MaintainBase::Wait);
+        let matrix_u4_host = matrix_u4_map.back().to_vec();
+        let absmax_host = absmax_map.back().to_vec();
+        let output_host = output_map.back().to_vec();
 
         let mut truth = vec![0.0; output_host.len()];
         for token in 0..T {
@@ -2752,11 +2702,29 @@ mod tests {
                         .zip(input.iter())
                         .enumerate()
                         .fold(0.0f32, |acc, (i, x)| {
-                            let amp = absmax[(line * C + i) / TensorOp::NF4_BLOCK_SIZE];
+                            let amp = absmax[(line * C + i) / NF4_BLOCK_SIZE];
                             acc + quant[*x.0 as usize] * amp.to_f32() * x.1.to_f32()
                         });
                 ans[token * R + line] = product;
             }
+        }
+
+        for (index, (a, b)) in
+            Iterator::zip(matrix_u4_host.into_iter(), matrix_u4.into_iter()).enumerate()
+        {
+            assert!(
+                a == b,
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
+
+        for (index, (a, b)) in
+            Iterator::zip(absmax_host.into_iter(), absmax.into_iter()).enumerate()
+        {
+            assert!(
+                is_approx_eps(a.to_f32(), b.to_f32(), 0.01),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
         }
 
         for (index, (a, b)) in Iterator::zip(output_host.into_iter(), ans.into_iter()).enumerate() {

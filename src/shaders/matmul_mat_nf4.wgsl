@@ -20,9 +20,9 @@ struct Input {
 @group(0) @binding(5) var<storage, read> xa: array<u32>;                    // (B, M, K)
 @group(0) @binding(6) var<storage, read> xb: array<vec4<u32>>;              // (B, N, K)
 #ifdef OUT_FP16
-@group(0) @binding(5) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
+@group(0) @binding(7) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
 #else
-@group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
+@group(0) @binding(7) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
 #endif
 
 var<workgroup> sa: array<array<u32, 32u>, 32u>;

@@ -67,7 +67,7 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     }
 
 #ifdef FP16
-    let rr = unpack4x16float(1.0 / (1.0 + exp(-r[bti])));
+    let rr = 1.0 / (1.0 + exp(-unpack4x16float(r[bti])));
     let vv = unpack4x16float(v[bti]);
     x[bti] = pack4x16float(rr * vv);
 #else

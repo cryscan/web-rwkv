@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     head::ModelHead,
-    matrix::Matrix,
     run::{HookMap, ModelRunInternal, Output},
     softmax::{ModelSoftmaxInternal, Softmax},
     FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, PreparedModelBuilder, Quant,
@@ -16,12 +15,15 @@ use super::{
 use crate::{
     context::Context,
     model::RESCALE_LAYER,
+    num::Float,
     tensor::{
         cache::ResourceCache,
-        ops::{TensorCommand, TensorOp, TensorOpHook, TensorPass},
+        kind::{ReadBack, ReadWrite},
+        matrix::Matrix,
+        ops::{Activation, TensorCommand, TensorOp, TensorOpHook, TensorPass},
         shape::{Shape, TensorDimension},
-        DeepClone, IntoPackedCursors, ReadBack, ReadWrite, TensorCpu, TensorError, TensorGpu,
-        TensorReshape, TensorShape, TensorView,
+        DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorReshape,
+        TensorShape, TensorView,
     },
 };
 
@@ -30,8 +32,6 @@ pub struct Model<'a> {
     context: Context,
     info: ModelInfo,
 
-    /// Whether to half the activations every [`RESCALE_LAYER`] layers.
-    rescale: bool,
     /// Whether to use fp16 GEMM for matmul computations.
     turbo: bool,
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
@@ -111,28 +111,27 @@ struct Head {
 pub struct Runtime {
     pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
-    pub input: TensorGpu<f32, ReadWrite>,
+    pub input: TensorGpu<f16, ReadWrite>,
 
-    pub att_x: TensorGpu<f32, ReadWrite>,
-    pub att_kx: TensorGpu<f32, ReadWrite>,
-    pub att_vx: TensorGpu<f32, ReadWrite>,
-    pub att_rx: TensorGpu<f32, ReadWrite>,
-    pub att_gx: TensorGpu<f32, ReadWrite>,
+    pub att_x: TensorGpu<f16, ReadWrite>,
+    pub att_kx: TensorGpu<f16, ReadWrite>,
+    pub att_vx: TensorGpu<f16, ReadWrite>,
+    pub att_rx: TensorGpu<f16, ReadWrite>,
+    pub att_gx: TensorGpu<f16, ReadWrite>,
     pub att_k: TensorGpu<f32, ReadWrite>,
     pub att_v: TensorGpu<f32, ReadWrite>,
     pub att_r: TensorGpu<f32, ReadWrite>,
-    pub att_g: TensorGpu<f32, ReadWrite>,
-    pub att_o: TensorGpu<f32, ReadWrite>,
+    pub att_g: TensorGpu<f16, ReadWrite>,
+    pub att_o: TensorGpu<f16, ReadWrite>,
 
-    pub ffn_x: TensorGpu<f32, ReadWrite>,
-    pub ffn_kx: TensorGpu<f32, ReadWrite>,
-    pub ffn_rx: TensorGpu<f32, ReadWrite>,
-    pub ffn_k: TensorGpu<f32, ReadWrite>,
-    pub ffn_v: TensorGpu<f32, ReadWrite>,
-    pub ffn_r: TensorGpu<f32, ReadWrite>,
+    pub ffn_x: TensorGpu<f16, ReadWrite>,
+    pub ffn_kx: TensorGpu<f16, ReadWrite>,
+    pub ffn_rx: TensorGpu<f16, ReadWrite>,
+    pub ffn_k: TensorGpu<f16, ReadWrite>,
+    pub ffn_v: TensorGpu<f16, ReadWrite>,
+    pub ffn_r: TensorGpu<f16, ReadWrite>,
 
-    pub half_x: TensorGpu<f16, ReadWrite>,
-    pub half_k: TensorGpu<f16, ReadWrite>,
+    pub aux_x: TensorGpu<f32, ReadWrite>,
 }
 
 impl Runtime {
@@ -162,8 +161,7 @@ impl Runtime {
             ffn_k: context.tensor_init(hidden_shape),
             ffn_v: context.tensor_init(shape),
             ffn_r: context.tensor_init(shape),
-            half_x: context.tensor_init(shape),
-            half_k: context.tensor_init(hidden_shape),
+            aux_x: context.tensor_init(shape),
         }
     }
 }
@@ -191,7 +189,6 @@ pub enum Hook {
     PostFfnTokenShift(usize),
     PreFfnLinear(usize),
     PostFfnLinear(usize),
-    PreFfnActivate(usize),
     PostFfnActivate(usize),
     PreFfnChannelMix(usize),
     PostFfnChannelMix(usize),
@@ -485,6 +482,11 @@ impl super::BackedState for BackedState {
     }
 }
 
+impl<'a> Model<'a> {
+    pub const LN_EPS: f32 = 1.0e-5;
+    pub const GN_EPS: f32 = 64.0e-5;
+}
+
 impl<'a> FromBuilder for Model<'a> {
     type Builder<'b> = ModelBuilder<'b>;
     type Error = anyhow::Error;
@@ -497,7 +499,6 @@ impl<'a> FromBuilder for Model<'a> {
             quant,
             embed_device,
             turbo,
-            rescale,
             token_chunk_size,
         } = builder.prepare()?;
 
@@ -565,10 +566,7 @@ impl<'a> FromBuilder for Model<'a> {
         let layers = (0..info.num_layer)
             .map(|layer| {
                 let quant = quant.get(&layer).copied().unwrap_or_default();
-                let discount = match rescale {
-                    true => 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32)),
-                    false => 1.0,
-                };
+                let discount = 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32));
                 if matches!(quant, Quant::None) {
                     matrix_f16_cache.clear();
                 }
@@ -660,7 +658,6 @@ impl<'a> FromBuilder for Model<'a> {
         Ok(Self {
             context,
             info,
-            rescale,
             turbo,
             token_chunk_size,
             tensor,
@@ -687,18 +684,17 @@ impl ModelHead for Model<'_> {
     #[inline]
     fn head_op(
         &self,
-        input: &TensorGpu<f32, ReadWrite>,
-        half: &TensorGpu<f16, ReadWrite>,
-        output: &TensorGpu<f32, ReadWrite>,
+        input: &TensorGpu<f16, ReadWrite>,
+        output: &TensorGpu<impl Float, ReadWrite>,
         turbo: bool,
     ) -> Result<TensorOp, TensorError> {
         let head = &self.tensor.head;
         Ok(TensorOp::List(vec![
-            TensorOp::layer_norm(&head.layer_norm.w, &head.layer_norm.b, input)?,
+            TensorOp::layer_norm(&head.layer_norm.w, &head.layer_norm.b, input, Self::LN_EPS)?,
             head.w.matmul_op(
-                half.view(.., .., .., ..)?,
                 input.view(.., .., .., ..)?,
                 output.view(.., .., .., ..)?,
+                Activation::None,
                 turbo,
             )?,
         ]))
@@ -854,6 +850,7 @@ impl ModelRunInternal for Model<'_> {
                 &tensor.embed.layer_norm.w,
                 &tensor.embed.layer_norm.b,
                 &buffer.input,
+                Self::LN_EPS,
             )?,
             hook_op(Hook::PostEmbedLayerNorm)?,
         ]);
@@ -879,7 +876,7 @@ impl ModelRunInternal for Model<'_> {
                 Dimension(1),
                 Dimension(1),
             )?;
-            let att_x = buffer.att_x.reshape(
+            let aux_x = buffer.aux_x.reshape(
                 Dimension(head_size),
                 Auto,
                 Dimension(num_token),
@@ -912,92 +909,107 @@ impl ModelRunInternal for Model<'_> {
                     &layer.att_layer_norm.w,
                     &layer.att_layer_norm.b,
                     &buffer.att_x,
+                    Self::LN_EPS,
                 )?,
                 hook_op(Hook::PostAttLayerNorm(index))?,
                 hook_op(Hook::PreAttTokenShift(index))?,
-                TensorOp::token_shift_fp16(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     layer.att.time_mix_k.view(.., .., .., ..)?,
-                    &buffer.att_x,
                     state.att(index)?,
+                    &buffer.att_x,
                     &buffer.att_kx,
                     false,
                 )?,
-                TensorOp::token_shift_fp16(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     layer.att.time_mix_v.view(.., .., .., ..)?,
-                    &buffer.att_x,
                     state.att(index)?,
+                    &buffer.att_x,
                     &buffer.att_vx,
                     false,
                 )?,
-                TensorOp::token_shift_fp16(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     layer.att.time_mix_r.view(.., .., .., ..)?,
-                    &buffer.att_x,
                     state.att(index)?,
+                    &buffer.att_x,
                     &buffer.att_rx,
                     false,
                 )?,
-                TensorOp::token_shift_fp16(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     layer.att.time_mix_g.view(.., .., .., ..)?,
-                    &buffer.att_x,
                     state.att(index)?,
+                    &buffer.att_x,
                     &buffer.att_gx,
                     false,
                 )?,
                 hook_op(Hook::PostAttTokenShift(index))?,
                 hook_op(Hook::PreAttLinear(index))?,
                 layer.att.w_k.matmul_op(
-                    buffer.half_x.view(.., .., .., ..)?,
                     buffer.att_kx.view(.., .., .., ..)?,
                     buffer.att_k.view(.., .., .., ..)?,
+                    Activation::None,
                     turbo,
                 )?,
                 layer.att.w_v.matmul_op(
-                    buffer.half_x.view(.., .., .., ..)?,
                     buffer.att_vx.view(.., .., .., ..)?,
                     buffer.att_v.view(.., .., .., ..)?,
+                    Activation::None,
                     turbo,
                 )?,
                 layer.att.w_r.matmul_op(
-                    buffer.half_x.view(.., .., .., ..)?,
                     buffer.att_rx.view(.., .., .., ..)?,
                     buffer.att_r.view(.., .., .., ..)?,
+                    Activation::None,
                     turbo,
                 )?,
                 layer.att.w_g.matmul_op(
-                    buffer.half_x.view(.., .., .., ..)?,
                     buffer.att_gx.view(.., .., .., ..)?,
                     buffer.att_g.view(.., .., .., ..)?,
+                    Activation::None,
                     turbo,
                 )?,
                 hook_op(Hook::PostAttLinear(index))?,
                 hook_op(Hook::PreAttTimeMix(index))?,
+                TensorOp::blit(
+                    buffer.att_x.view(.., .., .., ..)?,
+                    buffer.aux_x.view(.., .., .., ..)?,
+                )?,
                 TensorOp::time_mix_v5(
                     &buffer.cursors,
                     &time_decay,
                     &time_first,
+                    state.att(index)?,
                     &att_k,
                     &att_v,
                     &att_r,
-                    &att_x,
-                    state.att(index)?,
+                    &aux_x,
                 )?,
-                TensorOp::group_norm(&layer.att.group_norm.w, &layer.att.group_norm.b, &att_x)?,
+                TensorOp::group_norm(
+                    &layer.att.group_norm.w,
+                    &layer.att.group_norm.b,
+                    &aux_x,
+                    Self::GN_EPS,
+                )?,
+                TensorOp::blit(
+                    buffer.aux_x.view(.., .., .., ..)?,
+                    buffer.att_x.view(.., .., .., ..)?,
+                )?,
                 hook_op(Hook::PostAttTimeMix(index))?,
                 hook_op(Hook::PreAttGate(index))?,
                 TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
                 hook_op(Hook::PostAttGate(index))?,
                 hook_op(Hook::PreAttOut(index))?,
-                layer.att.w_o.matmul_vec_op(
-                    buffer.half_x.view(.., .., .., ..)?,
+                layer.att.w_o.matmul_op(
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
+                    Activation::None,
+                    turbo,
                 )?,
                 hook_op(Hook::PostAttOut(index))?,
-                TensorOp::add_fp32(
+                TensorOp::add(
                     buffer.input.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                 )?,
@@ -1016,59 +1028,58 @@ impl ModelRunInternal for Model<'_> {
                     &layer.ffn_layer_norm.w,
                     &layer.ffn_layer_norm.b,
                     &buffer.ffn_x,
+                    Self::LN_EPS,
                 )?,
                 hook_op(Hook::PostFfnLayerNorm(index))?,
                 hook_op(Hook::PreFfnTokenShift(index))?,
-                TensorOp::token_shift_fp16(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     layer.ffn.time_mix_k.view(.., .., .., ..)?,
-                    &buffer.ffn_x,
                     state.ffn(index)?,
+                    &buffer.ffn_x,
                     &buffer.ffn_kx,
                     false,
                 )?,
-                TensorOp::token_shift_fp16(
+                TensorOp::token_shift(
                     &buffer.cursors,
                     layer.ffn.time_mix_r.view(.., .., .., ..)?,
-                    &buffer.ffn_x,
                     state.ffn(index)?,
+                    &buffer.ffn_x,
                     &buffer.ffn_rx,
                     false,
                 )?,
                 hook_op(Hook::PostFfnTokenShift(index))?,
                 hook_op(Hook::PreFfnLinear(index))?,
                 layer.ffn.w_k.matmul_op(
-                    buffer.half_x.view(.., .., .., ..)?,
                     buffer.ffn_kx.view(.., .., .., ..)?,
                     buffer.ffn_k.view(.., .., .., ..)?,
+                    Activation::SquaredRelu,
                     turbo,
                 )?,
-                hook_op(Hook::PreFfnActivate(index))?,
-                TensorOp::squared_relu(&buffer.ffn_k)?,
                 hook_op(Hook::PostFfnActivate(index))?,
                 layer.ffn.w_v.matmul_op(
-                    buffer.half_k.view(.., .., .., ..)?,
                     buffer.ffn_k.view(.., .., .., ..)?,
                     buffer.ffn_v.view(.., .., .., ..)?,
+                    Activation::None,
                     turbo,
                 )?,
                 layer.ffn.w_r.matmul_op(
-                    buffer.half_x.view(.., .., .., ..)?,
                     buffer.ffn_rx.view(.., .., .., ..)?,
                     buffer.ffn_r.view(.., .., .., ..)?,
+                    Activation::None,
                     turbo,
                 )?,
                 hook_op(Hook::PostFfnLinear(index))?,
                 hook_op(Hook::PreFfnChannelMix(index))?,
                 TensorOp::channel_mix(
                     &buffer.cursors,
+                    state.ffn(index)?,
                     &buffer.ffn_r,
                     &buffer.ffn_v,
                     &buffer.ffn_x,
-                    state.ffn(index)?,
                 )?,
                 hook_op(Hook::PostFfnChannelMix(index))?,
-                TensorOp::add_fp32(
+                TensorOp::add(
                     buffer.att_o.view(.., .., .., ..)?,
                     buffer.ffn_x.view(.., .., .., ..)?,
                 )?,
@@ -1079,8 +1090,8 @@ impl ModelRunInternal for Model<'_> {
             pass.execute_tensor_op(&ops);
             drop(pass);
 
-            if self.rescale && (index + 1) % RESCALE_LAYER == 0 {
-                let op = TensorOp::half(&buffer.ffn_x)?;
+            if (index + 1) % RESCALE_LAYER == 0 {
+                let op = TensorOp::discount(&buffer.ffn_x, 0.5)?;
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
                 drop(pass);
@@ -1094,12 +1105,17 @@ impl ModelRunInternal for Model<'_> {
         if num_header > 0 {
             let ops = TensorOp::List(vec![
                 hook_op(Hook::PreHead)?,
-                TensorOp::layer_norm(&tensor.head.layer_norm.w, &tensor.head.layer_norm.b, head_x)?,
+                TensorOp::layer_norm(
+                    &tensor.head.layer_norm.w,
+                    &tensor.head.layer_norm.b,
+                    head_x,
+                    Self::LN_EPS,
+                )?,
                 hook_op(Hook::PostHeadLayerNorm)?,
                 tensor.head.w.matmul_op(
-                    output.half_x.view(.., .., .., ..)?,
                     head_x.view(.., .., .., ..)?,
                     output.head_o.view(.., .., .., ..)?,
+                    Activation::None,
                     self.turbo(num_header),
                 )?,
                 hook_op(Hook::PostHead)?,

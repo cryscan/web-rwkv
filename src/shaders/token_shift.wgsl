@@ -101,7 +101,7 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
         let out = mix(load_input(bti), sx[compute_index(vx, cursor.batch, 0u, index)], factor);
         store_output(bti, out);
     } else {
-        let out = mix(load_input(bti), x[bti - stride], factor);
+        let out = mix(load_input(bti), load_input(bti - stride), factor);
         store_output(bti, out);
     }
 #else
@@ -109,8 +109,8 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
         let out = mix(sx[compute_index(vx, cursor.batch, 0u, index)], load_input(bti), factor);
         store_output(bti, out);
     } else {
-        let out = mix(x[bti - stride], load_input(bti), factor);
-        store_output(bti);
+        let out = mix(load_input(bti - stride), load_input(bti), factor);
+        store_output(bti, out);
     }
 #endif
 }

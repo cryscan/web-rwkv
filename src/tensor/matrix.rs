@@ -1,10 +1,14 @@
 use half::f16;
 
-use crate::tensor::{
-    kind::{ReadWrite, Uniform},
-    ops::{TensorOp, TensorPass},
-    shape::Shape,
-    TensorError, TensorGpu, TensorShape, TensorView,
+use super::ops::Activation;
+use crate::{
+    num::Float,
+    tensor::{
+        kind::{ReadWrite, Uniform},
+        ops::{TensorOp, TensorPass},
+        shape::Shape,
+        TensorError, TensorGpu, TensorShape, TensorView,
+    },
 };
 
 #[derive(Debug)]
@@ -27,54 +31,55 @@ pub enum Matrix {
 impl Matrix {
     pub fn matmul_vec_op(
         &self,
-        half: TensorView<f16>,
-        input: TensorView<f32>,
-        output: TensorView<f32>,
+        input: TensorView<f16>,
+        output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output),
+            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, active),
             Matrix::Int8 { w, mx, rx, my, ry } => {
-                TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output)
+                TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output, active)
             }
-            Matrix::NF4 { w, q, m } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input, half.clone())?,
-                TensorOp::matmul_vec_nf4(w, q, m, half, output)?,
-            ])),
+            Matrix::NF4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, active),
         }
     }
 
     pub fn matmul_mat_op(
         &self,
-        half: TensorView<f16>,
-        input: TensorView<f32>,
-        output: TensorView<f32>,
+        input: TensorView<f16>,
+        output: TensorView<impl Float>,
+        active: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input, half.clone())?,
-                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, half, output)?,
-            ])),
-            Matrix::Int8 { w, mx, rx, my, ry } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input, half.clone())?,
-                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, mx, rx, my, ry, half, output)?,
-            ])),
-            Matrix::NF4 { w, q, m } => Ok(TensorOp::List(vec![
-                TensorOp::quantize_fp16(input, half.clone())?,
-                TensorOp::matmul_mat_nf4(w.view(.., .., .., ..)?, q, m, half, output)?,
-            ])),
+            Matrix::Fp16(matrix) => {
+                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, input, output, active)
+            }
+            Matrix::Int8 { w, mx, rx, my, ry } => TensorOp::matmul_mat_int8(
+                w.view(.., .., .., ..)?,
+                mx,
+                rx,
+                my,
+                ry,
+                input,
+                output,
+                active,
+            ),
+            Matrix::NF4 { w, q, m } => {
+                TensorOp::matmul_mat_nf4(w.view(.., .., .., ..)?, q, m, input, output, active)
+            }
         }
     }
 
     pub fn matmul_op(
         &self,
-        half: TensorView<f16>,
-        input: TensorView<f32>,
-        output: TensorView<f32>,
+        input: TensorView<f16>,
+        output: TensorView<impl Float>,
+        active: Activation,
         turbo: bool,
     ) -> Result<TensorOp, TensorError> {
         match turbo {
-            true => self.matmul_mat_op(half, input, output),
-            false => self.matmul_vec_op(half, input, output),
+            true => self.matmul_mat_op(input, output, active),
+            false => self.matmul_vec_op(input, output, active),
         }
     }
 
@@ -118,7 +123,7 @@ impl Matrix {
 
         let matrix_shape = Shape::new(shape[0] / 2, shape[1], shape[2], shape[3]);
         let absmax_shape = Shape::new(
-            shape[0] / TensorOp::NF4_BLOCK_SIZE,
+            shape[0] / TensorOp::NF4_BLOCK_SIZE as usize,
             shape[1],
             shape[2],
             shape[3],

@@ -21,13 +21,13 @@ struct Input {
 
 @group(0) @binding(3) var<storage, read> time_decay: array<vec4<f32>>;  // (A, H, S)
 @group(0) @binding(4) var<storage, read> time_first: array<vec4<f32>>;  // (H, S)
-@group(0) @binding(9) var<storage, read_write> state: array<vec4<f32>>; // (B, S + 1, C)
+@group(0) @binding(5) var<storage, read_write> state: array<vec4<f32>>; // (B, S + 1, C)
 
 #ifdef FP16
-@group(0) @binding(6) var<storage, read> k: array<vec2<f32>>;           // (A, H, S)
-@group(0) @binding(7) var<storage, read> v: array<vec2<f32>>;           // (A, H, S)
-@group(0) @binding(8) var<storage, read> r: array<vec2<f32>>;           // (A, H, S)
-@group(0) @binding(9) var<storage, read_write> x: array<vec2<f32>>;     // (A, H, S)
+@group(0) @binding(6) var<storage, read> k: array<vec2<u32>>;           // (A, H, S)
+@group(0) @binding(7) var<storage, read> v: array<vec2<u32>>;           // (A, H, S)
+@group(0) @binding(8) var<storage, read> r: array<vec2<u32>>;           // (A, H, S)
+@group(0) @binding(9) var<storage, read_write> x: array<vec2<u32>>;     // (A, H, S)
 #else
 @group(0) @binding(6) var<storage, read> k: array<vec4<f32>>;           // (A, H, S)
 @group(0) @binding(7) var<storage, read> v: array<vec4<f32>>;           // (A, H, S)

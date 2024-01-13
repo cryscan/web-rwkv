@@ -1,6 +1,5 @@
 use std::{borrow::Cow, sync::Arc};
 
-use itertools::Itertools;
 use web_rwkv_derive::{Deref, DerefMut, Id};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -75,8 +74,7 @@ pub struct ContextInternal {
     pub device: Device,
     pub queue: Queue,
 
-    // pipelines: HashMap<String, Arc<ComputePipeline>>,
-    pipeline_cache: ResourceCache<(String, Vec<(String, String)>), ComputePipeline>,
+    pipeline_cache: ResourceCache<PipelineKey, ComputePipeline>,
 
     shape_cache: ResourceCache<Shape, Buffer>,
     view_cache: ResourceCache<View, Buffer>,
@@ -89,7 +87,6 @@ pub struct ContextBuilder {
     adapter: Adapter,
     features: Features,
     limits: Limits,
-    // pipelines: HashMap<&'a str, (&'a str, &'a str, Option<&'a [BindGroupLayoutEntry]>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,12 +167,30 @@ impl<'a> ContextBuilder {
     }
 }
 
-#[derive(Debug, Default, Deref, DerefMut)]
-pub struct Macros<'a>(Vec<(Cow<'a, [u8]>, Cow<'a, [u8]>)>);
+#[derive(Debug, Default, Clone, Deref, DerefMut, PartialEq, Eq, Hash)]
+pub struct Macros(Vec<(String, String)>);
 
-impl Macros<'_> {
+impl Macros {
     pub fn new(block_size: u32) -> Self {
-        Self(vec![(("BLOCK_SIZE", format!("{}u", block_size)))])
+        Self(vec![("BLOCK_SIZE".into(), format!("{}u", block_size))])
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    name: String,
+    entry_point: String,
+    macros: Macros,
+}
+
+impl PipelineKey {
+    fn new(name: impl Into<String>, entry_point: impl Into<String>, mut macros: Macros) -> Self {
+        macros.0.sort();
+        Self {
+            name: name.into(),
+            entry_point: entry_point.into(),
+            macros,
+        }
     }
 }
 
@@ -190,44 +205,45 @@ impl Eq for Context {}
 impl Context {
     pub fn request_pipeline(
         &self,
-        name: impl Into<String>,
+        name: impl AsRef<str>,
         source: impl AsRef<str>,
         entry_point: impl AsRef<str>,
         layout: Option<&[BindGroupLayoutEntry]>,
         macros: Macros,
     ) -> Arc<ComputePipeline> {
-        let name = name.into();
-        let key = (name.clone(), macros.iter().sorted().collect());
+        let name = name.as_ref();
+        let entry_point = entry_point.as_ref();
+        let key = PipelineKey::new(name.to_string(), entry_point.to_string(), macros.clone());
+
+        use gpp::{process_str, Context};
+        let mut context = Context::new();
+        context.macros = macros.0.into_iter().collect();
 
         self.pipeline_cache.request(key, move || {
-            let mut context = gpp::Context::new();
-            context.macros = macros.into_iter().collect();
-            let shader = gpp::process_str(&source, &mut context).expect("preprocess");
+            let shader = process_str(source.as_ref(), &mut context).expect("preprocess");
 
             let module = &self.device.create_shader_module(ShaderModuleDescriptor {
-                label: Some(&name),
+                label: Some(name),
                 source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
             });
-            let layout = layout
-                .map(|entries| {
-                    let layout = self
-                        .device
-                        .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                            label: None,
-                            entries,
-                        });
-                    self.device
-                        .create_pipeline_layout(&PipelineLayoutDescriptor {
-                            label: None,
-                            bind_group_layouts: &[&layout],
-                            push_constant_ranges: &[],
-                        })
-                })
-                .as_ref();
+            let layout = layout.map(|entries| {
+                let layout = self
+                    .device
+                    .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                        label: None,
+                        entries,
+                    });
+                self.device
+                    .create_pipeline_layout(&PipelineLayoutDescriptor {
+                        label: None,
+                        bind_group_layouts: &[&layout],
+                        push_constant_ranges: &[],
+                    })
+            });
             self.device
                 .create_compute_pipeline(&ComputePipelineDescriptor {
-                    label: Some(&name),
-                    layout,
+                    label: Some(name),
+                    layout: layout.as_ref(),
                     module,
                     entry_point,
                 })

@@ -15,14 +15,14 @@ struct View {
 @group(0) @binding(7) var<storage, read> ry: array<vec4<f32>>;              // (B, R)
 
 #ifdef IN_FP16
-@group(0) @binding(4) var<storage, read> input: array<vec2<u32>>;           // (B, T, C)
+@group(0) @binding(8) var<storage, read> input: array<vec2<u32>>;           // (B, T, C)
 #else
-@group(0) @binding(4) var<storage, read> input: array<vec4<f32>>;           // (B, T, C)
+@group(0) @binding(8) var<storage, read> input: array<vec4<f32>>;           // (B, T, C)
 #endif
 #ifdef OUT_FP16
-@group(0) @binding(5) var<storage, read_write> output: array<vec2<u32>>;    // (B, T, R)
+@group(0) @binding(9) var<storage, read_write> output: array<vec2<u32>>;    // (B, T, R)
 #else
-@group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, R)
+@group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, R)
 #endif
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;

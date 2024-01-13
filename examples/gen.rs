@@ -50,7 +50,6 @@ async fn create_context(info: &ModelInfo) -> Result<Context> {
         .adapter(wgpu::PowerPreference::HighPerformance)
         .await?;
     let context = ContextBuilder::new(adapter)
-        .with_default_pipelines()
         .with_auto_limits(info)
         .build()
         .await?;

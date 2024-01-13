@@ -11,7 +11,6 @@ use crate::{context::Context, num::Scalar, tensor::TensorError};
 
 pub mod head;
 pub mod loader;
-pub mod matrix;
 pub mod run;
 pub mod softmax;
 pub mod v4;
@@ -230,7 +229,6 @@ struct PreparedModelBuilder<'a> {
     quant: HashMap<usize, Quant>,
     embed_device: EmbedDevice,
     turbo: bool,
-    rescale: bool,
     token_chunk_size: usize,
 }
 
@@ -266,8 +264,6 @@ impl<'a> ModelBuilder<'a> {
             .next_power_of_two();
         log::info!("token chunk size: {token_chunk_size}");
 
-        let rescale = turbo || quant.iter().any(|(_, quant)| matches!(quant, Quant::NF4));
-
         Ok(PreparedModelBuilder {
             context,
             info,
@@ -275,7 +271,6 @@ impl<'a> ModelBuilder<'a> {
             quant,
             embed_device,
             turbo,
-            rescale,
             token_chunk_size,
         })
     }
