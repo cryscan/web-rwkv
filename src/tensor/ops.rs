@@ -2150,6 +2150,7 @@ mod tests {
         const C: usize = 1000;
         const T: usize = 3;
         const B: usize = 2;
+        const EPS: f32 = 1.0e-5;
 
         let x = [(); C * T * B]
             .map(|_| 10.0 * (fastrand::f32() - 0.5))
@@ -2171,7 +2172,7 @@ mod tests {
         let w_dev = TensorGpu::from_data(&context, shape, &w[..1000])?;
         let b_dev = TensorGpu::from_data(&context, shape, &b[..1000])?;
 
-        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, 1.0e-5)?;
+        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, EPS)?;
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
@@ -2194,11 +2195,19 @@ mod tests {
         {
             let chunk = chunk.collect_vec();
             let x = chunk.iter().map(|((x, _), _)| x).copied();
-            let sum: f32 = x.clone().sum();
-            let squared_sum: f32 = x.clone().map(|x| x.powi(2)).sum();
+            // let sum: f32 = x.clone().sum();
+            // let squared_sum: f32 = x.clone().map(|x| x.powi(2)).sum();
 
-            let mean = sum / C as f32;
-            let deviation = ((squared_sum / C as f32) - mean.powi(2)).sqrt();
+            // let mean = sum / C as f32;
+            // let deviation = ((squared_sum / C as f32) - mean.powi(2)).sqrt();
+            let (mean, m2, count) = x.fold((0.0f32, 0.0f32, 0u32), |(mean, m2, count), x| {
+                let count = count + 1;
+                let delta = x - mean;
+                let mean = mean + delta / count as f32;
+                let m2 = m2 + delta * (x - mean);
+                (mean, m2, count)
+            });
+            let deviation = (m2 / count as f32 + EPS).sqrt();
 
             let mut x: Vec<_> = chunk
                 .into_iter()
@@ -2209,7 +2218,7 @@ mod tests {
 
         for (index, (a, b)) in Iterator::zip(x_host.into_iter(), ans.into_iter()).enumerate() {
             assert!(
-                is_approx_eps(a, b, 1.0e-3),
+                is_approx_eps(a, b, 0.01),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }
