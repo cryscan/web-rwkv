@@ -2218,7 +2218,7 @@ mod tests {
 
         for (index, (a, b)) in Iterator::zip(x_host.into_iter(), ans.into_iter()).enumerate() {
             assert!(
-                is_approx_eps(a, b, 0.01),
+                is_approx_eps(a, b, 1.0e-3),
                 "Failed at index {index}, computed: {a} vs. answer: {b}"
             );
         }
