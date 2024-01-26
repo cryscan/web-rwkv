@@ -22,6 +22,7 @@ pub mod matrix;
 pub mod ops;
 pub mod shape;
 
+/// Buffer of the tensor on GPU.
 #[derive(Debug, Clone)]
 pub struct TensorBuffer {
     pub meta: Arc<Buffer>,
@@ -135,6 +136,7 @@ impl std::fmt::Display for TensorError {
 
 impl std::error::Error for TensorError {}
 
+/// Data defining a tensor view in shader.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct View {
     pub stride: Shape,
@@ -153,6 +155,7 @@ impl IntoBytes for View {
     }
 }
 
+/// A record in order to separate different batches of input of various lengths.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Cursor {
     pub batch: usize,
@@ -203,13 +206,16 @@ pub trait TensorScalar {
 }
 
 pub trait TensorInit<'a, T: Scalar>: Sized {
+    /// Init the tensor with given shape and contents.
     fn from_data(
         context: &Context,
         shape: Shape,
         data: impl Into<Cow<'a, [T]>>,
     ) -> Result<Self, TensorError>;
+    /// Init the tensor with given shape.
     fn init(context: &Context, shape: Shape) -> Self;
 
+    /// Create a tensor from safetensors.
     fn from_safetensors(
         context: &Context,
         tensor: safetensors::tensor::TensorView<'a>,
@@ -254,6 +260,7 @@ pub trait TensorTransfer: Sized {
     fn transfer(self, context: &Context) -> Result<Self, TensorError>;
 }
 
+/// A tensor on either CPU or GPU.
 #[derive(Debug)]
 pub struct Tensor<D: Device, T: Scalar> {
     context: Context,
@@ -417,7 +424,7 @@ impl<'a, T: Scalar, K: Kind> TensorInit<'a, T> for TensorGpu<T, K> {
             context: context.clone(),
             shape,
             data: TensorBuffer {
-                meta: context.request_shape_uniform(shape),
+                meta: context.checkout_shape_uniform(shape),
                 buffer,
             },
             phantom: PhantomData,
@@ -442,7 +449,7 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
         w: TensorDimension,
     ) -> Result<Self, TensorError> {
         let shape = TensorDimension::deduce(self.shape, x, y, z, w)?;
-        let meta = self.context.request_shape_uniform(shape);
+        let meta = self.context.checkout_shape_uniform(shape);
         Ok(Self {
             shape,
             data: TensorBuffer {
@@ -462,7 +469,7 @@ impl<T: Scalar, K: Kind> From<TensorCpu<'_, T>> for TensorGpu<T, K> {
             data,
             ..
         } = value;
-        let meta = context.request_shape_uniform(shape);
+        let meta = context.checkout_shape_uniform(shape);
         let contents = bytemuck::cast_slice(&data);
         let buffer = context
             .device
@@ -594,6 +601,7 @@ impl<T: Scalar> std::ops::Index<(usize, usize, usize, usize)> for TensorCpu<'_, 
 }
 
 impl<'a, T: Scalar> TensorCpu<'a, T> {
+    /// Apply a map `f` to every element in the tensor.
     pub fn map<U: Scalar>(self, f: impl FnMut(&T) -> U) -> TensorCpu<'a, U> {
         let Self {
             context,
@@ -734,6 +742,7 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
     }
 }
 
+/// Like a reference to a tensor, but refer to a sub-chunk of it.
 #[derive(Debug, Clone)]
 pub struct TensorView<'a, T: Scalar> {
     tensor: &'a TensorGpu<T, ReadWrite>,
@@ -791,6 +800,7 @@ impl<F: Float> TensorView<'_, F> {
 }
 
 impl<T: Scalar> TensorGpu<T, ReadWrite> {
+    /// Create a view for the tensor.
     pub fn view(
         &self,
         x: impl TensorAxis,
@@ -805,7 +815,7 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
             offset: start,
             shape: end - start,
         };
-        let meta = self.context.request_view_uniform(view);
+        let meta = self.context.checkout_view_uniform(view);
         Ok(TensorView {
             tensor: self,
             meta,

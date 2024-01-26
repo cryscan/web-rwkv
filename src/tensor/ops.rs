@@ -177,7 +177,7 @@ impl TensorOp {
 
         let shape = x.shape();
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "softmax",
             include_str!("../shaders/softmax.wgsl"),
             "softmax",
@@ -222,7 +222,7 @@ impl TensorOp {
         input.check_shape(Shape::new(shape[0], input.shape[1], 1, 1))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "embed",
             include_str!("../shaders/embed.wgsl"),
             "embed",
@@ -285,7 +285,7 @@ impl TensorOp {
         }
 
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "layer_norm",
             include_str!("../shaders/layer_norm.wgsl"),
             "layer_norm",
@@ -351,7 +351,7 @@ impl TensorOp {
         b.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
 
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "group_norm",
             include_str!("../shaders/layer_norm.wgsl"),
             "group_norm",
@@ -405,7 +405,7 @@ impl TensorOp {
         input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "matmul_vec_fp16",
             include_str!("../shaders/matmul_vec_fp16.wgsl"),
             "matmul",
@@ -481,7 +481,7 @@ impl TensorOp {
         ry.check_shape(Shape::new(matrix.shape[1], shape[2], 1, 1))?;
 
         let context = matrix.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "matmul_vec_int8",
             include_str!("../shaders/matmul_vec_int8.wgsl"),
             "matmul",
@@ -571,7 +571,7 @@ impl TensorOp {
         ))?;
 
         let context = matrix.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "matmul_vec_nf4",
             include_str!("../shaders/matmul_vec_nf4.wgsl"),
             "matmul",
@@ -647,7 +647,7 @@ impl TensorOp {
         input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "matmul_mat_fp16",
             include_str!("../shaders/matmul_mat_fp16.wgsl"),
             "matmul",
@@ -727,7 +727,7 @@ impl TensorOp {
         ry.check_shape(Shape::new(matrix.shape()[1], shape[2], 1, 1))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "matmul_mat_int8",
             include_str!("../shaders/matmul_mat_int8.wgsl"),
             "matmul",
@@ -816,7 +816,7 @@ impl TensorOp {
         input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "matmul_mat_nf4",
             include_str!("../shaders/matmul_mat_nf4.wgsl"),
             "matmul",
@@ -889,7 +889,7 @@ impl TensorOp {
             .or(input.check_shape(shape))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "add",
             include_str!("../shaders/add.wgsl"),
             "add",
@@ -950,7 +950,7 @@ impl TensorOp {
         sx.check_shape(Shape::new(shape[0], sx.shape()[1], sx.shape()[2], 1))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "token_shift",
             include_str!("../shaders/token_shift.wgsl"),
             "token_shift",
@@ -1029,7 +1029,7 @@ impl TensorOp {
         state.check_shape(Shape::new(shape[0], 4, state.shape()[2], 1))?;
 
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "time_mix_v4",
             include_str!("../shaders/time_mix_v4.wgsl"),
             "time_mix",
@@ -1114,7 +1114,7 @@ impl TensorOp {
         state.check_shape(Shape::new(dim, shape[0] + 1, state.shape()[2], 1))?;
 
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "time_mix_v5",
             include_str!("../shaders/time_mix_v5.wgsl"),
             "time_mix",
@@ -1199,7 +1199,7 @@ impl TensorOp {
         state.check_shape(Shape::new(dim, shape[0] + 1, state.shape()[2], 1))?;
 
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "time_mix_v6",
             include_str!("../shaders/time_mix_v6.wgsl"),
             "time_mix",
@@ -1270,7 +1270,7 @@ impl TensorOp {
         input.check_shape(shape)?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "silu",
             include_str!("../shaders/silu.wgsl"),
             "silu",
@@ -1314,7 +1314,7 @@ impl TensorOp {
 
         let shape = x.shape();
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "tanh",
             include_str!("../shaders/activation.wgsl"),
             "act_tanh",
@@ -1352,7 +1352,7 @@ impl TensorOp {
 
         let shape = x.shape();
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "stable_exp",
             include_str!("../shaders/activation.wgsl"),
             "stable_exp",
@@ -1390,7 +1390,7 @@ impl TensorOp {
 
         let shape = x.shape();
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "squared_relu",
             include_str!("../shaders/activation.wgsl"),
             "squared_relu",
@@ -1438,7 +1438,7 @@ impl TensorOp {
         state.check_shape(Shape::new(shape[0], 1, state.shape()[2], 1))?;
 
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "channel_mix",
             include_str!("../shaders/channel_mix.wgsl"),
             "channel_mix",
@@ -1502,7 +1502,7 @@ impl TensorOp {
         input.check_shape(shape)?;
 
         let context = input.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "blit",
             include_str!("../shaders/blit.wgsl"),
             "blit",
@@ -1556,7 +1556,7 @@ impl TensorOp {
         output.check_shape(Shape::new(shape[0], shape[2], shape[1], 1))?;
 
         let context = input.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "transpose",
             include_str!("../shaders/blit.wgsl"),
             "transpose",
@@ -1611,7 +1611,7 @@ impl TensorOp {
         factor.check_shape(Shape::new(4, 1, 1, 1))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "blend",
             include_str!("../shaders/blend.wgsl"),
             "blend",
@@ -1672,7 +1672,7 @@ impl TensorOp {
         xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2], 1))?;
 
         let context = output.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "blend_lora",
             include_str!("../shaders/blend_lora.wgsl"),
             "blend_lora",
@@ -1733,7 +1733,7 @@ impl TensorOp {
 
         let shape = x.shape();
         let context = x.context();
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "discount",
             include_str!("../shaders/discount.wgsl"),
             "discount",
@@ -1892,7 +1892,7 @@ impl TensorOp {
         ];
 
         let op = |entry_point: &'static str, dispatch| -> Result<Self, TensorError> {
-            let pipeline = context.request_pipeline(
+            let pipeline = context.checkout_pipeline(
                 format!("quant_mat_int8_{}", entry_point),
                 include_str!("../shaders/quant_mat_int8.wgsl"),
                 entry_point,
@@ -1947,7 +1947,7 @@ impl TensorOp {
 
         let absmax_f32: TensorGpu<f32, ReadWrite> = context.tensor_init(absmax_shape);
 
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "quant_mat_nf4_absmax",
             include_str!("../shaders/quant_mat_nf4.wgsl"),
             "compute_absmax",
@@ -1990,7 +1990,7 @@ impl TensorOp {
             ],
         };
 
-        let pipeline = context.request_pipeline(
+        let pipeline = context.checkout_pipeline(
             "quant_mat_nf4",
             include_str!("../shaders/quant_mat_nf4.wgsl"),
             "quantize",

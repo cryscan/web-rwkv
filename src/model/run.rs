@@ -45,8 +45,8 @@ pub(crate) trait ModelRunInternal: ModelBase + Sync {
     type State: ModelState;
     type Runtime;
 
-    fn request_runtime(&self, num_batch: usize) -> Arc<Self::Runtime>;
-    fn request_output(&self, num_batch: usize) -> Arc<Output>;
+    fn checkout_runtime(&self, num_batch: usize) -> Arc<Self::Runtime>;
+    fn checkout_output(&self, num_batch: usize) -> Arc<Output>;
 
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     fn token_chunk_size(&self) -> usize;

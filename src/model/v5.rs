@@ -529,13 +529,13 @@ impl<'a> FromBuilder for Model<'a> {
                 Quant::None => Ok(Matrix::Fp16(loader.load_matrix_f16(name)?)),
                 Quant::Int8 => {
                     let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    let buffer = matrix_f16_cache.checkout(shape, || context.tensor_init(shape));
                     loader.load_in_place_matrix_f16(&buffer, &name)?;
                     Ok(Matrix::quant_u8(&buffer)?)
                 }
                 Quant::NF4 => {
                     let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    let buffer = matrix_f16_cache.checkout(shape, || context.tensor_init(shape));
                     loader.load_in_place_matrix_f16(&buffer, &name)?;
                     Ok(Matrix::quant_nf4(&buffer)?)
                 }
@@ -548,13 +548,13 @@ impl<'a> FromBuilder for Model<'a> {
                 )),
                 Quant::Int8 => {
                     let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    let buffer = matrix_f16_cache.checkout(shape, || context.tensor_init(shape));
                     loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
                     Ok(Matrix::quant_u8(&buffer)?)
                 }
                 Quant::NF4 => {
                     let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.request(shape, || context.tensor_init(shape));
+                    let buffer = matrix_f16_cache.checkout(shape, || context.tensor_init(shape));
                     loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
                     Ok(Matrix::quant_nf4(&buffer)?)
                 }
@@ -687,8 +687,8 @@ impl<'a> ModelBase for Model<'a> {
 
 impl ModelSoftmaxInternal for Model<'_> {
     #[inline]
-    fn request_softmax(&self, num_batch: usize) -> Arc<Softmax> {
-        self.softmax_cache.request(num_batch, || {
+    fn checkout_softmax(&self, num_batch: usize) -> Arc<Softmax> {
+        self.softmax_cache.checkout(num_batch, || {
             Softmax::new(&self.context, &self.info, num_batch)
         })
     }
@@ -700,15 +700,15 @@ impl ModelRunInternal for Model<'_> {
     type State = ModelState;
 
     #[inline]
-    fn request_runtime(&self, num_token: usize) -> Arc<Runtime> {
-        self.runtime_cache.request(num_token, || {
+    fn checkout_runtime(&self, num_token: usize) -> Arc<Runtime> {
+        self.runtime_cache.checkout(num_token, || {
             Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
         })
     }
 
     #[inline]
-    fn request_output(&self, num_batch: usize) -> Arc<Output> {
-        self.output_cache.request(num_batch, || {
+    fn checkout_output(&self, num_batch: usize) -> Arc<Output> {
+        self.output_cache.checkout(num_batch, || {
             Output::new(&self.context, &self.info, num_batch)
         })
     }
@@ -756,8 +756,8 @@ impl ModelRunInternal for Model<'_> {
             .collect_vec();
         let num_header = headers.len();
 
-        let buffer = self.request_runtime(num_token);
-        let output = self.request_output(num_header.max(1));
+        let buffer = self.checkout_runtime(num_token);
+        let output = self.checkout_output(num_header.max(1));
 
         let hook_op = |hook: Hook| -> Result<TensorOp, TensorError> {
             hooks

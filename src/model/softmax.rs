@@ -31,7 +31,7 @@ impl Softmax {
 }
 
 pub(crate) trait ModelSoftmaxInternal: ModelBase + Sync {
-    fn request_softmax(&self, num_batch: usize) -> Arc<Softmax>;
+    fn checkout_softmax(&self, num_batch: usize) -> Arc<Softmax>;
 }
 
 pub trait ModelSoftmax {
@@ -70,7 +70,7 @@ impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
         )?;
 
         let num_batch = input.shape()[2];
-        let softmax = self.request_softmax(num_batch);
+        let softmax = self.checkout_softmax(num_batch);
         softmax.buffer.load(&input)?;
 
         let op = TensorOp::softmax(&softmax.buffer)?;

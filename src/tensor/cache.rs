@@ -19,6 +19,7 @@ impl<V> CacheItem<V> {
     }
 }
 
+/// An LRU cache.
 #[allow(clippy::type_complexity)]
 #[derive(Debug, Clone)]
 pub struct ResourceCache<K, V> {
@@ -39,6 +40,7 @@ impl<K, V> ResourceCache<K, V>
 where
     K: PartialEq + Eq + Hash,
 {
+    /// Note: If `max_count` is 0, the cache won't evict any items.
     pub fn new(max_count: usize) -> Self {
         Self {
             max_count,
@@ -46,7 +48,8 @@ where
         }
     }
 
-    pub fn request(&self, key: K, f: impl FnOnce() -> V) -> Arc<V> {
+    /// Checkout the item with the given key. If the item doesn't exist, `f` is called to construct it.
+    pub fn checkout(&self, key: K, f: impl FnOnce() -> V) -> Arc<V> {
         let mut map = self.map.lock().unwrap();
         if self.max_count > 0 {
             map.retain(|_, item| {
@@ -65,6 +68,7 @@ where
         value
     }
 
+    /// Empty the cache.
     pub fn clear(&self) {
         let mut map = self.map.lock().unwrap();
         map.clear();

@@ -167,6 +167,7 @@ impl<'a> ContextBuilder {
     }
 }
 
+/// A container of macro definitions in shader.
 #[derive(Debug, Default, Clone, Deref, DerefMut, PartialEq, Eq, Hash)]
 pub struct Macros(Vec<(String, String)>);
 
@@ -203,7 +204,7 @@ impl PartialEq for Context {
 impl Eq for Context {}
 
 impl Context {
-    pub fn request_pipeline(
+    pub fn checkout_pipeline(
         &self,
         name: impl AsRef<str>,
         source: impl AsRef<str>,
@@ -219,7 +220,7 @@ impl Context {
         let mut context = Context::new();
         context.macros = macros.0.into_iter().collect();
 
-        self.pipeline_cache.request(key, move || {
+        self.pipeline_cache.checkout(key, move || {
             let shader = process_str(source.as_ref(), &mut context).expect("preprocess");
 
             let module = &self.device.create_shader_module(ShaderModuleDescriptor {
@@ -250,8 +251,8 @@ impl Context {
         })
     }
 
-    pub fn request_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
-        self.shape_cache.request(shape, || {
+    pub fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
+        self.shape_cache.checkout(shape, || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &shape.into_bytes(),
@@ -260,8 +261,8 @@ impl Context {
         })
     }
 
-    pub fn request_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.view_cache.request(view, || {
+    pub fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
+        self.view_cache.checkout(view, || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &view.into_bytes(),
