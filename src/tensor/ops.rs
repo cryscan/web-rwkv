@@ -106,16 +106,19 @@ impl std::fmt::Display for Activation {
 }
 
 impl Macros {
+    /// Define a `u32` macro `NF4_BLOCK_SIZE`.
     pub fn nf4(mut self, block_size: u32) -> Self {
         self.push(("NF4_BLOCK_SIZE".into(), format!("{}u", block_size)));
         self
     }
 
+    /// Define a `f32` macro with a given name.
     pub fn float(mut self, value: f32, name: impl Into<String>) -> Self {
         self.push((name.into(), format!("{}", value)));
         self
     }
 
+    /// Define a `bool` macro with a given name.
     pub fn bool(mut self, value: bool, name: impl Into<String>) -> Self {
         match value {
             true => {
@@ -126,6 +129,7 @@ impl Macros {
         }
     }
 
+    /// Define the macro specifies input/output tensor data type.
     pub fn tensor<T: Float>(
         mut self,
         _tensor: &impl TensorScalar<T = T>,
@@ -138,6 +142,7 @@ impl Macros {
         self
     }
 
+    /// Define a macro with custom display name and prefix.
     pub fn custom(mut self, value: impl std::fmt::Display, prefix: Option<&'_ str>) -> Self {
         match prefix {
             None => self.push((format!("{}", value), Default::default())),
@@ -262,10 +267,12 @@ impl TensorOp {
     /// - `x` shape: `[C, T, B]`.
     /// - `w` shape: `[C, 1, 1]`.
     /// - `b` shape: `[C, 1, 1]`.
+    /// - `s` shape: `[4, T, B]`, mean and inverse std of `x`.
     pub fn layer_norm(
         w: &TensorGpu<f16, ReadWrite>,
         b: &TensorGpu<f16, ReadWrite>,
         x: &TensorGpu<impl Float, ReadWrite>,
+        s: Option<&TensorGpu<f32, ReadWrite>>,
         eps: f32,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
@@ -273,6 +280,9 @@ impl TensorOp {
         let shape = x.shape();
         w.check_shape(Shape::new(shape[0], 1, 1, 1))?;
         b.check_shape(Shape::new(shape[0], 1, 1, 1))?;
+        if let Some(s) = s {
+            s.check_shape(Shape::new(4, shape[1], shape[2], 1))?;
+        }
 
         let context = x.context();
         let pipeline = context.request_pipeline(
@@ -280,29 +290,41 @@ impl TensorOp {
             include_str!("../shaders/layer_norm.wgsl"),
             "layer_norm",
             None,
-            Macros::new(BLOCK_SIZE).float(eps, "EPS").tensor(x, None),
+            Macros::new(BLOCK_SIZE)
+                .float(eps, "EPS")
+                .tensor(x, None)
+                .bool(s.is_some(), "STATS"),
         );
+
+        let mut entries = vec![
+            BindGroupEntry {
+                binding: 0,
+                resource: x.meta_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: w.binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: b.binding(),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: x.binding(),
+            },
+        ];
+        if let Some(s) = s {
+            entries.push(BindGroupEntry {
+                binding: 4,
+                resource: s.binding(),
+            });
+        }
+
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: w.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: b.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: x.binding(),
-                },
-            ],
+            entries: &entries,
         })];
 
         Ok(Self::Atom {
@@ -2129,12 +2151,14 @@ mod tests {
             ans.append(&mut x);
         }
 
-        for (index, (a, b)) in Iterator::zip(x_host.into_iter(), ans.into_iter()).enumerate() {
-            assert!(
-                is_approx(a, b),
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        itertools::zip_eq(x_host.into_iter(), ans.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    is_approx(a, b),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
 
         Ok(())
     }
@@ -2172,7 +2196,11 @@ mod tests {
         let w_dev = TensorGpu::from_data(&context, shape, &w[..1000])?;
         let b_dev = TensorGpu::from_data(&context, shape, &b[..1000])?;
 
-        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, EPS)?;
+        let shape = Shape::new(4, T, B, 1);
+        let s_dev = context.tensor_init(shape);
+        let s_map = context.tensor_init(shape);
+
+        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, Some(&s_dev), EPS)?;
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
@@ -2181,12 +2209,14 @@ mod tests {
         drop(pass);
 
         encoder.copy_tensor(&x_dev, &x_map)?;
+        encoder.copy_tensor(&s_dev, &s_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = x_map.back();
-        let x_host = Vec::from(x_host);
+        let x_host = x_map.back().to_vec();
+        let s_host = s_map.back().to_vec();
 
         let mut ans = vec![];
+        let mut ans_stats = vec![];
         for chunk in &x
             .into_iter()
             .zip(w.into_iter())
@@ -2208,6 +2238,7 @@ mod tests {
                 (mean, m2, count)
             });
             let deviation = (m2 / count as f32 + EPS).sqrt();
+            ans_stats.append(&mut vec![mean, 1.0 / deviation, 0.0, 0.0]);
 
             let mut x: Vec<_> = chunk
                 .into_iter()
@@ -2216,12 +2247,23 @@ mod tests {
             ans.append(&mut x);
         }
 
-        for (index, (a, b)) in Iterator::zip(x_host.into_iter(), ans.into_iter()).enumerate() {
-            assert!(
-                is_approx_eps(a, b, 1.0e-3),
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        itertools::zip_eq(s_host.into_iter(), ans_stats.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    is_approx_eps(a, b, 1.0e-3),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
+
+        itertools::zip_eq(x_host.into_iter(), ans.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    is_approx_eps(a, b, 1.0e-3),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
 
         Ok(())
     }
@@ -2327,14 +2369,14 @@ mod tests {
             }
         }
 
-        for (index, (a, b)) in
-            itertools::zip_eq(output_host.into_iter(), ans.into_iter()).enumerate()
-        {
-            assert!(
-                is_approx_eps(a, b, 0.01),
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        itertools::zip_eq(output_host.into_iter(), ans.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    is_approx_eps(a, b, 0.01),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
 
         Ok(())
     }
@@ -2444,12 +2486,14 @@ mod tests {
         .concat();
         let ans = [matrix_u8, mx, my, rx, ry].concat();
 
-        for (index, (a, b)) in Iterator::zip(output.into_iter(), ans.into_iter()).enumerate() {
-            assert!(
-                is_approx_eps(a, b, 0.005),
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        itertools::zip_eq(output.into_iter(), ans.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    is_approx_eps(a, b, 0.005),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
 
         let input_f32 = vec![(); C * T]
             .into_iter()
@@ -2533,14 +2577,14 @@ mod tests {
             }
         }
 
-        for (index, (a, b)) in
-            itertools::zip_eq(output_host.into_iter(), ans.into_iter()).enumerate()
-        {
-            assert!(
-                is_approx_eps(a, b, 0.01),
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        itertools::zip_eq(output_host.into_iter(), ans.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    is_approx_eps(a, b, 0.01),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
 
         Ok(())
     }
@@ -2718,30 +2762,32 @@ mod tests {
             }
         }
 
-        for (index, (a, b)) in
-            Iterator::zip(matrix_u4_host.into_iter(), matrix_u4.into_iter()).enumerate()
-        {
-            assert!(
-                a == b,
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        itertools::zip_eq(matrix_u4_host.into_iter(), matrix_u4.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    a == b,
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
 
-        for (index, (a, b)) in
-            Iterator::zip(absmax_host.into_iter(), absmax.into_iter()).enumerate()
-        {
-            assert!(
-                is_approx_eps(a.to_f32(), b.to_f32(), 0.01),
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        itertools::zip_eq(absmax_host.into_iter(), absmax.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    is_approx_eps(a.to_f32(), b.to_f32(), 0.01),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
 
-        for (index, (a, b)) in Iterator::zip(output_host.into_iter(), ans.into_iter()).enumerate() {
-            assert!(
-                is_approx_eps(a, b, 0.01),
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        itertools::zip_eq(output_host.into_iter(), ans.into_iter())
+            .enumerate()
+            .for_each(|(index, (a, b))| {
+                assert!(
+                    is_approx_eps(a, b, 0.01),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
 
         Ok(())
     }

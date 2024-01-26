@@ -7,6 +7,9 @@
 #else
 @group(0) @binding(3) var<storage, read_write> x: array<vec4<f32>>;         // (B, T, C)
 #endif
+#ifdef STATS
+@group(0) @binding(4) var<storage, read_write> s: array<vec4<f32>>;         // (B, T, 4)
+#endif
 
 var<workgroup> mu: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> m2: array<vec4<f32>, BLOCK_SIZE>;
@@ -92,6 +95,12 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         x[bb + i] = fma(value, unpack4x16float(w[i]), unpack4x16float(b[i]));
 #endif
     }
+
+#ifdef STATS
+    if index == 0u {
+        s[batch * shape[1] + token] = vec4<f32>(mean, deviation, 0.0, 0.0);
+    }
+#endif
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
