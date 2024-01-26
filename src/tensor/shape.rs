@@ -10,7 +10,7 @@ pub trait IntoBytes {
     fn into_bytes(self) -> Vec<u8>;
 }
 
-/// The shape of a [`Tensor`].
+/// The shape of a [`Tensor`](super::Tensor).
 /// Note that the fastest-moving axis occupies the lowest shape index, which is opposite to that in `torch`.
 #[derive(
     Debug, Default, Clone, Copy, Deref, DerefMut, PartialEq, Eq, Hash, Serialize, Deserialize,
