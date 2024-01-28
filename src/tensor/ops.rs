@@ -2346,12 +2346,13 @@ mod tests {
                 let m2 = m2 + delta * (x - mean);
                 (mean, m2, count)
             });
-            let deviation = (m2 / count as f32 + EPS).sqrt();
-            ans_stats.append(&mut vec![mean, 1.0 / deviation, 0.0, 0.0]);
+            let variance = m2 / count as f32 + EPS;
+            let deviation = 1.0 / variance.sqrt();
+            ans_stats.append(&mut vec![mean, deviation, variance, 0.0]);
 
             let mut x: Vec<_> = chunk
                 .into_iter()
-                .map(|((x, w), b)| (x - mean) / deviation * w.to_f32() + b.to_f32())
+                .map(|((x, w), b)| (x - mean) * deviation * w.to_f32() + b.to_f32())
                 .collect();
             ans.append(&mut x);
         }

@@ -82,7 +82,12 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
         let _delta = mu[0] - mean;
         let _m2 = dot(m2[0], vec4<f32>(1.0)) + dot(_delta * _delta, _count);
-        deviation = inverseSqrt(_m2 / f32(shape[0]) + EPS);
+        let variance = _m2 / f32(shape[0]) + EPS;
+        deviation = inverseSqrt(variance);
+
+#ifdef STATS
+        s[batch * shape[1] + token] = vec4<f32>(mean, deviation, variance, 0.0);
+#endif
     }
     workgroupBarrier();
 
@@ -95,12 +100,6 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         x[bb + i] = fma(value, unpack4x16float(w[i]), unpack4x16float(b[i]));
 #endif
     }
-
-#ifdef STATS
-    if index == 0u {
-        s[batch * shape[1] + token] = vec4<f32>(mean, deviation, 0.0, 0.0);
-    }
-#endif
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
@@ -141,7 +140,8 @@ fn group_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
         let _delta = mu[0] - mean;
         let _m2 = dot(m2[0], vec4<f32>(1.0)) + dot(_delta * _delta, _count);
-        deviation = inverseSqrt(_m2 / f32(shape[0]) + EPS);
+        let variance = _m2 / f32(shape[0]) + EPS;
+        deviation = inverseSqrt(variance);
     }
     workgroupBarrier();
 
