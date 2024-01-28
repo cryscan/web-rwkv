@@ -53,3 +53,25 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 #endif
     }
 }
+
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
+fn mul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+    let stride = destination.shape.x / 4u;
+    let index = invocation_id.x;
+    let token = invocation_id.y;
+    let batch = invocation_id.z;
+
+    if index < stride {
+#ifdef IN_FP16
+        let x = unpack4x16float(input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)]);
+#else
+        let x = input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)];
+#endif
+        let bti = compute_index(destination, batch, token, index);
+#ifdef OUT_FP16
+        output[bti] = pack4x16float(x * unpack4x16float(output[bti]));
+#else
+        output[bti] = x * output[bti];
+#endif
+    }
+}

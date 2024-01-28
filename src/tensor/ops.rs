@@ -891,8 +891,63 @@ impl TensorOp {
         let context = output.context();
         let pipeline = context.checkout_pipeline(
             "add",
-            include_str!("../shaders/add.wgsl"),
+            include_str!("../shaders/binary.wgsl"),
             "add",
+            None,
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT")),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: input.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    pub fn mul(
+        input: TensorView<impl Float>,
+        output: TensorView<impl Float>,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let shape = output.shape();
+        input
+            .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
+            .or(input.check_shape(shape))?;
+
+        let context = output.context();
+        let pipeline = context.checkout_pipeline(
+            "mul",
+            include_str!("../shaders/binary.wgsl"),
+            "mul",
             None,
             Macros::new(BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
@@ -1491,7 +1546,7 @@ impl TensorOp {
         })
     }
 
-    /// Copy the content of `input` into `output`, given an `offset`.
+    /// Copy the content of `input` into `output` of the same shape.
     pub fn blit(
         input: TensorView<impl Float>,
         output: TensorView<impl Float>,
@@ -1506,6 +1561,60 @@ impl TensorOp {
             "blit",
             include_str!("../shaders/blit.wgsl"),
             "blit",
+            None,
+            Macros::new(BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT")),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: input.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: output.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: output.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    /// Repeat the content of `input` into `output` along the token and batch axes.
+    pub fn broadcast(
+        input: TensorView<impl Float>,
+        output: TensorView<impl Float>,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let shape = output.shape();
+        input.check_shape(Shape::new(shape[0], input.shape()[1], input.shape()[2], 1))?;
+
+        let context = input.context();
+        let pipeline = context.checkout_pipeline(
+            "broadcast",
+            include_str!("../shaders/blit.wgsl"),
+            "broadcast",
             None,
             Macros::new(BLOCK_SIZE)
                 .tensor(&input, Some("IN"))

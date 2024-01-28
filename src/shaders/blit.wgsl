@@ -54,6 +54,30 @@ fn blit(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
+fn broadcast(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+    let stride = destination.shape.x / 4u;
+    let index = invocation_id.x;
+    let token = invocation_id.y;
+    let batch = invocation_id.z;
+
+    if index < stride {
+        var _token = token % source.shape.y;
+        var _batch = batch % source.shape.z;
+
+#ifdef IN_FP16
+        let x = unpack4x16float(input[compute_index(source, _batch, _token, index)]);
+#else
+        let x = input[compute_index(source, _batch, _token, index)];
+#endif
+#ifdef OUT_FP16
+        output[compute_index(destination, batch, token, index)] = pack4x16float(x);
+#else
+        output[compute_index(destination, batch, token, index)] = x;
+#endif
+    }
+}
+
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn transpose(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = destination.shape.x / 4u;
     let index = invocation_id.x;
