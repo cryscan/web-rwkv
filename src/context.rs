@@ -153,6 +153,11 @@ impl<'a> ContextBuilder {
         self
     }
 
+    pub fn modify_limits(mut self, f: impl FnOnce(&mut Limits)) -> Self {
+        f(&mut self.limits);
+        self
+    }
+
     /// Compute the limits automatically based on given model build info.
     pub fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
         let max_buffer_size = info.max_buffer_size();
@@ -163,6 +168,11 @@ impl<'a> ContextBuilder {
 
     pub fn with_features(mut self, features: Features) -> Self {
         self.features = features;
+        self
+    }
+
+    pub fn modify_features(mut self, f: impl FnOnce(&mut Features)) -> Self {
+        f(&mut self.features);
         self
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "web-rwkv"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 authors = ["Zhenyuan Zhang <cryscan@umich.edu>"]
 license = "MIT OR Apache-2.0"
@@ -42,16 +42,6 @@ clap = { version = "4.3", features = ["derive"] }
 dialoguer = "0.11.0"
 ratatui = { version = "0.25.0", features = ["all-widgets"] }
 crossterm = "0.27"
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["File"] }
-console_error_panic_hook = "0.1.7"
-console_log = "1.0.0"
-log = "0.4"
-itertools = "0.12"
-fastrand = { version = "2.0", features = ['js'] }
 
 [profile.release]
 lto = false
