@@ -16,7 +16,7 @@ var<workgroup> m2: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> count: array<vec4<u32>, BLOCK_SIZE>;
 
 var<workgroup> mean: f32;
-var<workgroup> deviation: f32;
+var<workgroup> dev: f32;
 
 fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
     return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
@@ -82,21 +82,21 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
         let _delta = mu[0] - mean;
         let _m2 = dot(m2[0], vec4<f32>(1.0)) + dot(_delta * _delta, _count);
-        let variance = _m2 / f32(shape[0]) + EPS;
-        deviation = inverseSqrt(variance);
+        let _var = _m2 / f32(shape[0]) + EPS;
+        dev = inverseSqrt(_var);
 
 #ifdef STATS
-        s[batch * shape[1] + token] = vec4<f32>(mean, deviation, variance, 0.0);
+        s[batch * shape[1] + token] = vec4<f32>(mean, dev, _var, 0.0);
 #endif
     }
     workgroupBarrier();
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
 #ifdef FP16
-        let value = (unpack4x16float(x[bb + i]) - mean) * deviation;
+        let value = (unpack4x16float(x[bb + i]) - mean) * dev;
         x[bb + i] = pack4x16float(fma(value, unpack4x16float(w[i]), unpack4x16float(b[i])));
 #else
-        let value = (x[bb + i] - mean) * deviation;
+        let value = (x[bb + i] - mean) * dev;
         x[bb + i] = fma(value, unpack4x16float(w[i]), unpack4x16float(b[i]));
 #endif
     }
@@ -140,17 +140,17 @@ fn group_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
         let _delta = mu[0] - mean;
         let _m2 = dot(m2[0], vec4<f32>(1.0)) + dot(_delta * _delta, _count);
-        let variance = _m2 / f32(shape[0]) + EPS;
-        deviation = inverseSqrt(variance);
+        let _var = _m2 / f32(shape[0]) + EPS;
+        dev = inverseSqrt(_var);
     }
     workgroupBarrier();
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
 #ifdef FP16
-        let value = (unpack4x16float(x[th + i]) - mean) * deviation;
+        let value = (unpack4x16float(x[th + i]) - mean) * dev;
         x[th + i] = pack4x16float(fma(value, unpack4x16float(w[h + i]), unpack4x16float(b[h + i])));
 #else
-        let value = (x[th + i] - mean) * deviation;
+        let value = (x[th + i] - mean) * dev;
         x[th + i] = fma(value, unpack4x16float(w[h + i]), unpack4x16float(b[h + i]));
 #endif
     }
