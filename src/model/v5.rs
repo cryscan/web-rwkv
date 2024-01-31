@@ -18,7 +18,7 @@ use crate::{
         cache::ResourceCache,
         kind::{ReadBack, ReadWrite},
         matrix::Matrix,
-        ops::{Activation, TensorCommand, TensorOp, TensorOpHook, TensorPass},
+        ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorReshape,
         TensorShape, TensorView,
@@ -195,8 +195,6 @@ pub enum Hook {
     PostHeadLayerNorm,
     PostHead,
 }
-
-impl TensorOpHook for Hook {}
 
 #[derive(Debug, Clone)]
 pub struct ModelState {

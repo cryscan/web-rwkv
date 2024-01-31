@@ -90,9 +90,7 @@ pub trait BackedState:
     fn embed(&self, batch: usize, layer: usize) -> Vec<f32>;
 }
 
-pub trait ModelState:
-    Sync + for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible>
-{
+pub trait ModelState: for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible> {
     type BackedState: BackedState;
 
     fn max_batch(&self) -> usize;
@@ -102,9 +100,9 @@ pub trait ModelState:
     /// Load one batch from host. The batch size the backed state should be 1.
     fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<()>;
     /// Back the entire device state to host.
-    fn back(&self) -> impl Future<Output = Self::BackedState> + Send;
+    fn back(&self) -> impl Future<Output = Self::BackedState>;
     /// Back one batch of the device state to host.
-    fn back_batch(&self, batch: usize) -> impl Future<Output = Result<Self::BackedState>> + Send;
+    fn back_batch(&self, batch: usize) -> impl Future<Output = Result<Self::BackedState>>;
     /// Copy one device state to another. Their shapes must match.
     fn blit(&self, other: &Self) -> Result<(), TensorError>;
     /// Copy one batch from the source state to another.

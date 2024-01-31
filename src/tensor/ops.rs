@@ -152,8 +152,6 @@ impl Macros {
     }
 }
 
-pub trait TensorOpHook: Hash + Send + Sync {}
-
 pub enum TensorOp {
     Atom {
         pipeline: Arc<ComputePipeline>,

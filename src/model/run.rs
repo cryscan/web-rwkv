@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{collections::HashMap, future::Future, hash::Hash, sync::Arc};
 
 use anyhow::Result;
 use half::f16;
@@ -9,7 +9,7 @@ use crate::{
     context::Context,
     tensor::{
         kind::{ReadBack, ReadWrite},
-        ops::{TensorOp, TensorOpHook},
+        ops::TensorOp,
         shape::{Shape, TensorDimension},
         TensorCpu, TensorError, TensorGpu, TensorReshape, TensorStack,
     },
@@ -35,13 +35,11 @@ impl Output {
     }
 }
 
-pub type HookMap<Hook, Model, State, Runtime> = HashMap<
-    Hook,
-    Box<dyn Fn(&Model, &State, &Runtime) -> Result<TensorOp, TensorError> + Send + Sync>,
->;
+pub type HookMap<Hook, Model, State, Runtime> =
+    HashMap<Hook, Box<dyn Fn(&Model, &State, &Runtime) -> Result<TensorOp, TensorError>>>;
 
-pub(crate) trait ModelRunInternal: ModelBase + Sync {
-    type Hook: TensorOpHook;
+pub(crate) trait ModelRunInternal: ModelBase {
+    type Hook: Hash;
     type State: ModelState;
     type Runtime;
 
@@ -94,7 +92,7 @@ pub(crate) trait ModelRunInternal: ModelBase + Sync {
 }
 
 pub trait ModelRun {
-    type Hook: TensorOpHook;
+    type Hook: Hash;
     type State: ModelState;
     type Runtime;
 
@@ -105,7 +103,7 @@ pub trait ModelRun {
         &self,
         tokens: &mut Vec<Vec<u16>>,
         state: &Self::State,
-    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
+    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>>;
 
     /// Run the model for a batch of tokens as input, but with custom hooks.
     /// The length of `tokens` must match the number of batches in `state`.
@@ -115,12 +113,12 @@ pub trait ModelRun {
         tokens: &mut Vec<Vec<u16>>,
         state: &Self::State,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
+    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>>;
 }
 
 impl<Hook, Runtime, Model, State> ModelRun for Model
 where
-    Hook: TensorOpHook,
+    Hook: Hash,
     Model: ModelRunInternal<Hook = Hook, Runtime = Runtime, State = State>,
     State: super::ModelState,
 {

@@ -30,7 +30,7 @@ impl Softmax {
     }
 }
 
-pub(crate) trait ModelSoftmaxInternal: ModelBase + Sync {
+pub(crate) trait ModelSoftmaxInternal: ModelBase {
     fn checkout_softmax(&self, num_batch: usize) -> Arc<Softmax>;
 }
 
@@ -39,7 +39,7 @@ pub trait ModelSoftmax {
     fn softmax(
         &self,
         input: Vec<Option<Vec<f32>>>,
-    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>> + Send;
+    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>>;
 }
 
 impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
