@@ -16,7 +16,8 @@ use web_rwkv::{
         loader::Loader,
         run::{HookMap, ModelRun},
         softmax::ModelSoftmax,
-        v5, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelVersion, Quant, StateBuilder,
+        v5, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput, ModelOutput, ModelVersion,
+        Quant, StateBuilder,
     },
     tensor::{
         kind::{ReadBack, ReadWrite},
@@ -188,19 +189,22 @@ async fn run(cli: Cli) -> Result<()> {
         bail!("prompt must not be empty")
     }
 
-    let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
+    let mut tokens = vec![ModelInput {
+        tokens: tokenizer.encode(prompt.as_bytes())?,
+        ..Default::default()
+    }];
     println!("Prompt: {}", prompt);
 
     // run initial prompt
     let logits = loop {
         let logits = model.run_with_hooks(&mut tokens, &state, &hooks).await?;
-        if logits.iter().any(Option::is_some) {
+        if logits.iter().any(|x| matches!(x, ModelOutput::Last(_))) {
             break logits;
         }
     };
     let probs = model.softmax(logits).await?;
 
-    if let Some(probs) = &probs[0] {
+    if let ModelOutput::Last(probs) = &probs[0] {
         let token = sample(probs, 0.5);
         let word = tokenizer.decode(&[token])?;
         let word = String::from_utf8_lossy(&word);

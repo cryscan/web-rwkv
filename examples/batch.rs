@@ -25,8 +25,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelState,
-        ModelVersion, Quant, StateBuilder,
+        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput,
+        ModelOutput, ModelState, ModelVersion, OutputType, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -224,11 +224,18 @@ where
         .iter()
         .map(|str| String::from_str(str).unwrap())
         .collect_vec();
-    let mut tokens = prompts
+    let tokens = prompts
         .clone()
         .iter()
         .map(|prompt| tokenizer.encode(prompt.as_bytes()).unwrap())
         .collect_vec();
+    let mut tokens = tokens
+        .into_iter()
+        .map(|tokens| ModelInput {
+            tokens,
+            ty: OutputType::Full,
+        })
+        .collect();
 
     let mut num_tokens =
         [100usize, 400, 200, 300].to_vec().repeat((batch + 3) / 4)[..batch].to_vec();
@@ -288,20 +295,20 @@ where
 
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
-        for (index, probs) in probs
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, x)| x.map(|x| (index, x)))
-        {
+        for (index, probs) in probs.iter().enumerate().filter_map(|(index, x)| match x {
+            ModelOutput::Full(x) => Some((index, x.last()?)),
+            ModelOutput::Last(x) => Some((index, x)),
+            _ => None,
+        }) {
             if num_tokens[index] > 0 {
                 let token = sample(probs.to_vec(), 0.5);
                 let decoded = tokenizer.decode(&[token])?;
                 let word = String::from_utf8_lossy(&decoded);
-                tokens[index] = vec![token];
+                tokens[index].tokens = vec![token];
                 prompts[index].push_str(&word);
                 num_tokens[index] -= 1;
             } else {
-                tokens[index] = vec![];
+                tokens[index].tokens = vec![];
             }
         }
 

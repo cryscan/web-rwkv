@@ -399,7 +399,7 @@ mod tests {
         let y: Vec<_> = x.slice(.., .., 1..2, ..)?.into();
         assert_eq!(y, vec![8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0]);
 
-        let y: Vec<_> = x.into_slice(2.., 1.., ..0, ..)?.into();
+        let y: Vec<_> = x.slice(2.., 1.., ..0, ..)?.into();
         assert_eq!(y, Vec::<f32>::new());
 
         Ok(())

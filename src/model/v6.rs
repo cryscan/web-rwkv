@@ -6,10 +6,10 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    run::{HookMap, ModelRunInternal, Output},
+    run::{Header, HookMap, ModelRunInternal},
     softmax::{ModelSoftmaxInternal, Softmax},
-    FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, PreparedModelBuilder, Quant,
-    StateBuilder,
+    FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, OutputType, PreparedModelBuilder,
+    Quant, StateBuilder,
 };
 use crate::{
     context::Context,
@@ -37,7 +37,7 @@ pub struct Model<'a> {
 
     tensor: ModelTensor<'a>,
     runtime_cache: ResourceCache<usize, Runtime>,
-    output_cache: ResourceCache<usize, Output>,
+    header_cache: ResourceCache<usize, Header>,
     softmax_cache: ResourceCache<usize, Softmax>,
 }
 
@@ -716,7 +716,7 @@ impl<'a> FromBuilder for Model<'a> {
             token_chunk_size,
             tensor,
             runtime_cache: ResourceCache::new(1),
-            output_cache: ResourceCache::new(1),
+            header_cache: ResourceCache::new(1),
             softmax_cache: ResourceCache::new(1),
         })
     }
@@ -763,9 +763,9 @@ impl ModelRunInternal for Model<'_> {
     }
 
     #[inline]
-    fn checkout_output(&self, num_batch: usize) -> Arc<Output> {
-        self.output_cache.checkout(num_batch, || {
-            Output::new(&self.context, &self.info, num_batch)
+    fn checkout_header(&self, num_batch: usize) -> Arc<Header> {
+        self.header_cache.checkout(num_batch, || {
+            Header::new(&self.context, &self.info, num_batch)
         })
     }
 
@@ -783,9 +783,9 @@ impl ModelRunInternal for Model<'_> {
         &self,
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
-        should_output: Vec<bool>,
+        outputs: Vec<Option<OutputType>>,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)> {
+    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>)> {
         let context = &self.context;
         let tensor = &self.tensor;
 
@@ -798,22 +798,31 @@ impl ModelRunInternal for Model<'_> {
         let turbo = self.turbo(num_token);
 
         // collect batch output copy commands for later
-        let mut redirect = vec![None; num_batch];
+        let mut redirect = vec![0..0; num_batch];
         let headers = input
             .cursors
             .iter()
             .filter(|cursor| cursor.len > 0)
-            .filter(|cursor| should_output[cursor.batch])
-            .enumerate()
-            .map(|(index, cursor)| {
-                redirect[cursor.batch] = Some(index);
-                cursor.token + cursor.len - 1
+            .fold((0, vec![]), |(index, mut header), cursor| {
+                match outputs[cursor.batch] {
+                    Some(OutputType::Last) => {
+                        redirect[cursor.batch] = index..index + 1;
+                        header.push(cursor.token + cursor.len - 1);
+                        (index + 1, header)
+                    }
+                    Some(OutputType::Full) => {
+                        redirect[cursor.batch] = index..index + cursor.len;
+                        let r = (cursor.token..cursor.token + cursor.len).collect();
+                        (index + cursor.len, [header, r].concat())
+                    }
+                    None => (index, header),
+                }
             })
-            .collect_vec();
+            .1;
         let num_header = headers.len();
 
         let buffer = self.checkout_runtime(num_token);
-        let output = self.checkout_output(num_header.max(1));
+        let header = self.checkout_header(num_header.max(1));
 
         let hook_op = |hook: Hook| -> Result<TensorOp, TensorError> {
             hooks
@@ -836,14 +845,14 @@ impl ModelRunInternal for Model<'_> {
                     assert_eq!(last - first + 1, end - start);
 
                     let input = buffer.ffn_x.view(.., first..=last, .., ..)?;
-                    let output = output.head_x.view(.., start..end, .., ..)?;
+                    let output = header.head_x.view(.., start..end, .., ..)?;
                     ops.push(TensorOp::blit(input, output)?);
 
                     start = end;
                 }
                 end += 1;
             }
-            (TensorOp::List(ops), &output.head_x)
+            (TensorOp::List(ops), &header.head_x)
         };
 
         // let head_ops: Vec<_> = input
@@ -1243,7 +1252,7 @@ impl ModelRunInternal for Model<'_> {
                 hook_op(Hook::PostHeadLayerNorm)?,
                 tensor.head.w.matmul_op(
                     head_x.view(.., .., .., ..)?,
-                    output.head_o.view(.., .., .., ..)?,
+                    header.head_o.view(.., .., .., ..)?,
                     Activation::None,
                     self.turbo(num_header),
                 )?,
@@ -1255,10 +1264,10 @@ impl ModelRunInternal for Model<'_> {
             pass.execute_tensor_op(&ops);
             drop(pass);
 
-            encoder.copy_tensor(&output.head_o, &output.map)?;
+            encoder.copy_tensor(&header.head_o, &header.map)?;
         }
 
         context.queue.submit(Some(encoder.finish()));
-        Ok((output.map.clone(), redirect))
+        Ok((header.map.clone(), redirect))
     }
 }

@@ -3,7 +3,7 @@ use std::{future::Future, sync::Arc};
 use anyhow::Result;
 use itertools::Itertools;
 
-use super::{ModelBase, ModelInfo};
+use super::{ModelBase, ModelInfo, ModelOutput};
 use crate::{
     context::Context,
     tensor::{
@@ -36,37 +36,39 @@ pub(crate) trait ModelSoftmaxInternal: ModelBase {
 
 pub trait ModelSoftmax {
     /// Softmax of the input tensors.
-    fn softmax(
-        &self,
-        input: Vec<Option<Vec<f32>>>,
-    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>>;
+    fn softmax(&self, input: Vec<ModelOutput>) -> impl Future<Output = Result<Vec<ModelOutput>>>;
 }
 
 impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
-    async fn softmax(&self, input: Vec<Option<Vec<f32>>>) -> Result<Vec<Option<Vec<f32>>>> {
+    async fn softmax(&self, input: Vec<ModelOutput>) -> Result<Vec<ModelOutput>> {
         let max_batch = input.len();
         let context = self.context();
         let info = self.info();
 
-        let mut redirect = vec![None; max_batch];
+        let mut redirect = vec![0..0; max_batch];
         let input: Vec<_> = input
             .into_iter()
             .enumerate()
-            .filter_map(|(batch, data)| data.map(|data| (batch, data)))
+            .filter_map(|(batch, data)| match data {
+                ModelOutput::None => None,
+                ModelOutput::Last(data) => Some((batch, vec![data])),
+                ModelOutput::Full(data) => Some((batch, data)),
+            })
             .map(|(batch, data)| {
-                let shape = Shape::new(info.num_vocab, 1, 1, 1);
-                TensorCpu::from_data(context, shape, data).map(|tensor| (batch, tensor))
+                let shape = Shape::new(info.num_vocab, 1, data.len(), 1);
+                TensorCpu::from_data(context, shape, data.concat()).map(|tensor| (batch, tensor))
             })
             .try_collect()?;
         let input = TensorCpu::stack(
             input
                 .into_iter()
-                .enumerate()
-                .map(|(index, (batch, tensor))| {
-                    redirect[batch] = Some(index);
-                    tensor
+                .fold((0, vec![]), |(index, mut tensors), (batch, tensor)| {
+                    let len = tensor.shape()[2];
+                    redirect[batch] = index..index + len;
+                    tensors.push(tensor);
+                    (index + len, tensors)
                 })
-                .collect_vec(),
+                .1,
         )?;
 
         let num_batch = input.shape()[2];
@@ -87,24 +89,17 @@ impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
         encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
         self.context().queue.submit(Some(encoder.finish()));
 
-        let mut output = softmax
-            .map
-            .clone()
-            .back_async()
-            .await
-            .split(2)
-            .expect("split buffer map")
+        let output = softmax.map.clone().back_async().await;
+        Ok(redirect
             .into_iter()
-            .map(|tensor| Some(tensor.to_vec()))
-            .collect_vec();
-
-        let mut probs = vec![None; max_batch];
-        for (probs, redirect) in probs.iter_mut().zip_eq(redirect.into_iter()) {
-            if let Some(redirect) = redirect {
-                std::mem::swap(probs, &mut output[redirect]);
-            }
-        }
-
-        Ok(probs)
+            .map(|r| match r.len() {
+                0 => ModelOutput::None,
+                1 => ModelOutput::Last(output.slice(.., .., r.start, ..).unwrap().to_vec()),
+                _ => ModelOutput::Full(
+                    r.map(|index| output.slice(.., .., index, ..).unwrap().to_vec())
+                        .collect(),
+                ),
+            })
+            .collect())
     }
 }

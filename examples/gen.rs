@@ -13,8 +13,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelState,
-        ModelVersion, Quant, StateBuilder,
+        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput,
+        ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -168,7 +168,10 @@ where
     M: Model<State = S>,
 {
     let prompt = "The Space Needle is located in downtown";
-    let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
+    let mut tokens = vec![ModelInput {
+        tokens: tokenizer.encode(prompt.as_bytes())?,
+        ..Default::default()
+    }];
     print!("{}", prompt);
     let mut instant;
     let mut duration = Duration::default();
@@ -183,12 +186,12 @@ where
             _ => duration + instant.elapsed(),
         };
 
-        if let Some(probs) = &probs[0] {
+        if let ModelOutput::Last(probs) = &probs[0] {
             let token = sample(probs, 0.5);
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);
             print!("{}", word);
-            tokens[0] = vec![token];
+            tokens[0].tokens = vec![token];
         }
     }
 

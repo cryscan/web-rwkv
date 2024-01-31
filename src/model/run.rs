@@ -4,7 +4,7 @@ use anyhow::Result;
 use half::f16;
 use itertools::Itertools;
 
-use super::{ModelBase, ModelError, ModelInfo, ModelState};
+use super::{ModelBase, ModelError, ModelInfo, ModelInput, ModelOutput, ModelState, OutputType};
 use crate::{
     context::Context,
     tensor::{
@@ -16,13 +16,13 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct Output {
+pub struct Header {
     pub head_x: TensorGpu<f16, ReadWrite>,
     pub head_o: TensorGpu<f32, ReadWrite>,
     pub map: TensorGpu<f32, ReadBack>,
 }
 
-impl Output {
+impl Header {
     pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
         let head_shape = Shape::new(info.num_emb, num_batch, 1, 1);
         let output_shape = Shape::new(info.num_vocab, num_batch, 1, 1);
@@ -44,7 +44,7 @@ pub(crate) trait ModelRunInternal: ModelBase {
     type Runtime;
 
     fn checkout_runtime(&self, num_batch: usize) -> Arc<Self::Runtime>;
-    fn checkout_output(&self, num_batch: usize) -> Arc<Output>;
+    fn checkout_header(&self, num_batch: usize) -> Arc<Header>;
 
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     fn token_chunk_size(&self) -> usize;
@@ -57,9 +57,9 @@ pub(crate) trait ModelRunInternal: ModelBase {
         &self,
         tokens: Vec<Vec<u16>>,
         state: &Self::State,
-        should_output: Vec<bool>,
+        outputs: Vec<Option<OutputType>>,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<Option<usize>>)>;
+    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>)>;
 
     fn create_input<'a>(
         &self,
@@ -101,19 +101,19 @@ pub trait ModelRun {
     /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
     fn run(
         &self,
-        tokens: &mut Vec<Vec<u16>>,
+        tokens: &mut Vec<ModelInput>,
         state: &Self::State,
-    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>>;
+    ) -> impl Future<Output = Result<Vec<ModelOutput>>>;
 
     /// Run the model for a batch of tokens as input, but with custom hooks.
     /// The length of `tokens` must match the number of batches in `state`.
     /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
     fn run_with_hooks(
         &self,
-        tokens: &mut Vec<Vec<u16>>,
+        tokens: &mut Vec<ModelInput>,
         state: &Self::State,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> impl Future<Output = Result<Vec<Option<Vec<f32>>>>>;
+    ) -> impl Future<Output = Result<Vec<ModelOutput>>>;
 }
 
 impl<Hook, Runtime, Model, State> ModelRun for Model
@@ -128,20 +128,20 @@ where
 
     async fn run(
         &self,
-        tokens: &mut Vec<Vec<u16>>,
+        tokens: &mut Vec<ModelInput>,
         state: &Self::State,
-    ) -> Result<Vec<Option<Vec<f32>>>> {
+    ) -> Result<Vec<ModelOutput>> {
         let hooks = Default::default();
         self.run_with_hooks(tokens, state, &hooks).await
     }
 
     async fn run_with_hooks(
         &self,
-        tokens: &mut Vec<Vec<u16>>,
+        tokens: &mut Vec<ModelInput>,
         state: &Self::State,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> Result<Vec<Option<Vec<f32>>>> {
-        let num_token: usize = tokens.iter().map(Vec::len).sum();
+    ) -> Result<Vec<ModelOutput>> {
+        let num_token: usize = tokens.iter().map(|input| input.tokens.len()).sum();
         let max_batch = state.max_batch();
 
         if tokens.len() != max_batch {
@@ -154,55 +154,57 @@ where
         // we only infer at most `token_chunk_size` tokens at a time
         let mut num_token = num_token.min(self.token_chunk_size());
         let mut inputs = vec![vec![]; max_batch];
-        let mut should_output = vec![false; max_batch];
+        let mut outputs: Vec<Option<OutputType>> = vec![None; max_batch];
 
         // take `num_token` tokens out of all the inputs and put into `input`
         // first pass, make sure each slot computes at least one token
-        for (output, input, remain) in itertools::multizip((
-            should_output.iter_mut(),
-            inputs.iter_mut(),
-            tokens.iter_mut(),
-        )) {
-            let mid = 1.min(remain.len()).min(num_token);
+        for (output, input, slot) in
+            itertools::multizip((outputs.iter_mut(), inputs.iter_mut(), tokens.iter_mut()))
+        {
+            let mid = 1.min(slot.tokens.len()).min(num_token);
             num_token -= mid;
 
             if mid > 0 {
-                let (head, tail) = remain.split_at(mid);
-                *output = tail.is_empty();
+                let (head, tail) = slot.tokens.split_at(mid);
                 *input = [&input, head].concat();
-                *remain = tail.to_vec();
+                *output = match slot.ty {
+                    OutputType::Last => tail.is_empty().then_some(OutputType::Last),
+                    OutputType::Full => Some(OutputType::Full),
+                };
+                slot.tokens = tail.to_vec();
             }
         }
 
         // second pass, assign rest token budgets from left to right
-        for (output, input, remain) in itertools::multizip((
-            should_output.iter_mut(),
-            inputs.iter_mut(),
-            tokens.iter_mut(),
-        )) {
-            let mid = remain.len().min(num_token);
+        for (output, input, slot) in
+            itertools::multizip((outputs.iter_mut(), inputs.iter_mut(), tokens.iter_mut()))
+        {
+            let mid = slot.tokens.len().min(num_token);
             num_token -= mid;
 
             if mid > 0 {
-                let (head, tail) = remain.split_at(mid);
-                *output = tail.is_empty();
+                let (head, tail) = slot.tokens.split_at(mid);
                 *input = [&input, head].concat();
-                *remain = tail.to_vec();
+                *output = match slot.ty {
+                    OutputType::Last => tail.is_empty().then_some(OutputType::Last),
+                    OutputType::Full => Some(OutputType::Full),
+                };
+                slot.tokens = tail.to_vec();
             }
         }
 
-        let (output, redirect) = self.run_internal(inputs, state, should_output, hooks)?;
+        let (output, redirect) = self.run_internal(inputs, state, outputs, hooks)?;
         let output = output.back_async().await;
 
         Ok(redirect
             .into_iter()
-            .map(|index| {
-                index.map(|index| {
-                    output
-                        .slice(.., index, .., ..)
-                        .expect("this never happens")
-                        .to_vec()
-                })
+            .map(|r| match r.len() {
+                0 => ModelOutput::None,
+                1 => ModelOutput::Last(output.slice(.., r.start, .., ..).unwrap().to_vec()),
+                _ => ModelOutput::Full(
+                    r.map(|index| output.slice(.., index, .., ..).unwrap().to_vec())
+                        .collect(),
+                ),
             })
             .collect())
     }

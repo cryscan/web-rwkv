@@ -14,8 +14,8 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelState,
-        ModelVersion, Quant, StateBuilder,
+        loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput,
+        ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -244,7 +244,10 @@ where
     let bot = &prompt.bot;
     let prompt = prompt.build();
 
-    let mut tokens = vec![tokenizer.encode(prompt.as_bytes())?];
+    let mut tokens = vec![ModelInput {
+        tokens: tokenizer.encode(prompt.as_bytes())?,
+        ..Default::default()
+    }];
 
     println!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting\n\n------------");
     print!("{}", prompt);
@@ -253,11 +256,11 @@ where
     // run initial prompt
     loop {
         let logits = model.run(&mut tokens, &state).await?;
-        if logits.iter().any(Option::is_some) {
+        if logits.iter().any(|x| matches!(x, ModelOutput::Last(_))) {
             break;
         }
     }
-    tokens[0].clear();
+    tokens[0].tokens.clear();
 
     let mut backed = state.back().await;
     let mut last_user_text = String::from("Hi!");
@@ -292,17 +295,19 @@ where
         std::io::stdout().flush()?;
 
         let prompt = format!("{user}: {user_text}\n\n{bot}:");
-        tokens[0].append(&mut tokenizer.encode(prompt.as_bytes())?);
+        tokens[0]
+            .tokens
+            .append(&mut tokenizer.encode(prompt.as_bytes())?);
 
         loop {
             let mut logits = loop {
                 let logits = model.run(&mut tokens, &state).await?;
-                if logits.iter().any(Option::is_some) {
+                if logits.iter().any(|x| matches!(x, ModelOutput::Last(_))) {
                     break logits;
                 }
             };
             logits.iter_mut().for_each(|logits| {
-                if let Some(logits) = logits {
+                if let ModelOutput::Last(logits) = logits {
                     logits[0] = f32::NEG_INFINITY;
                     for (&token, &count) in occurrences.iter() {
                         let penalty =
@@ -313,7 +318,7 @@ where
             });
 
             let probs = model.softmax(logits).await?;
-            if let Some(probs) = &probs[0] {
+            if let ModelOutput::Last(probs) = &probs[0] {
                 let token = sampler.sample(probs);
                 let decoded = tokenizer.decode(&[token])?;
                 let word = String::from_utf8_lossy(&decoded);
@@ -322,7 +327,7 @@ where
                 print!("{}", word);
                 std::io::stdout().flush()?;
 
-                tokens[0] = vec![token];
+                tokens[0].tokens = vec![token];
                 let count = occurrences.get(&token).unwrap_or(&1);
                 occurrences.insert(token, *count);
 

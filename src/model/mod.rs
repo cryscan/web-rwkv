@@ -73,6 +73,34 @@ impl ModelInfo {
     }
 }
 
+/// Input of one inference slot.
+#[derive(Debug, Default, Clone)]
+pub struct ModelInput {
+    pub tokens: Vec<u16>,
+    pub ty: OutputType,
+}
+
+/// Output distribution of one inference slot.
+#[derive(Debug, Default, Clone)]
+pub enum ModelOutput {
+    /// This slot is empty.
+    #[default]
+    None,
+    /// Only the prediction of the last token.
+    Last(Vec<f32>),
+    /// Predictions of all input tokens.
+    Full(Vec<Vec<f32>>),
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub enum OutputType {
+    /// Only the prediction of the last token.
+    #[default]
+    Last,
+    /// Predictions of all input tokens.
+    Full,
+}
+
 pub trait FromBuilder: Sized {
     type Builder<'a>;
     type Error;
