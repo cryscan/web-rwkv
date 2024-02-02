@@ -92,6 +92,19 @@ pub enum ModelOutput {
     Full(Vec<Vec<f32>>),
 }
 
+impl ModelOutput {
+    pub fn concat(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::None, y) => y,
+            (x, Self::None) => x,
+            (Self::Last(x), Self::Last(y)) => Self::Full(vec![x, y]),
+            (Self::Last(x), Self::Full(y)) => Self::Full([vec![x], y].concat()),
+            (Self::Full(x), Self::Last(y)) => Self::Full([x, vec![y]].concat()),
+            (Self::Full(x), Self::Full(y)) => Self::Full([x, y].concat()),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub enum OutputType {
     /// Only the prediction of the last token.
