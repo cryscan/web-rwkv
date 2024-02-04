@@ -198,7 +198,7 @@ async fn run(cli: Cli) -> Result<()> {
     // run initial prompt
     let logits = loop {
         let logits = model.run_with_hooks(&mut tokens, &state, &hooks).await?;
-        if logits.iter().any(|x| matches!(x, ModelOutput::Last(_))) {
+        if logits.iter().any(ModelOutput::is_some) {
             break logits;
         }
     };

@@ -256,7 +256,7 @@ where
     // run initial prompt
     loop {
         let logits = model.run(&mut tokens, &state).await?;
-        if logits.iter().any(|x| matches!(x, ModelOutput::Last(_))) {
+        if logits.iter().any(ModelOutput::is_some) {
             break;
         }
     }
@@ -302,7 +302,7 @@ where
         loop {
             let mut logits = loop {
                 let logits = model.run(&mut tokens, &state).await?;
-                if logits.iter().any(|x| matches!(x, ModelOutput::Last(_))) {
+                if logits.iter().any(ModelOutput::is_some) {
                     break logits;
                 }
             };
