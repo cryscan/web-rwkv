@@ -30,9 +30,9 @@ var<workgroup> sb: array<array<vec4<u32>, 32u>, 32u>;
 var<workgroup> q: array<vec4<f32>, 4u>;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32, step: u32) -> u32 {
-    let stride = view.stride.x / step;
-    let offset = view.offset.x / step;
-    return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * stride + offset + index;
+    let stride = view.stride.x >> step;
+    let offset = vec3<u32>(view.offset.zy, view.offset.x >> step);
+    return dot(vec3<u32>(batch, token, index) + offset, vec3<u32>(view.stride.y * stride, stride, 1u));
 }
 
 fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
@@ -102,7 +102,7 @@ fn matmul(in: Input) {
                 let x = k + i;
                 let y = b.x + j;
                 if all(vec2<u32>(x, y) < ra) {
-                    sa[j][i] = xa[compute_index(va, in.uid.z, y, x, 4u)];
+                    sa[j][i] = xa[compute_index(va, in.uid.z, y, x, 2u)];
                 } else {
                     sa[j][i] = 0x77777777u;
                 }
@@ -110,7 +110,7 @@ fn matmul(in: Input) {
                 let x = k + i;
                 let y = b.y + j;
                 if all(vec2<u32>(x, y) < rb) {
-                    sb[j][i] = xb[compute_index(vb, in.uid.z, y, x, 8u)];
+                    sb[j][i] = xb[compute_index(vb, in.uid.z, y, x, 3u)];
                 } else {
                     sb[j][i] = vec4<u32>(0u);
                 }
@@ -120,7 +120,7 @@ fn matmul(in: Input) {
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
-            let ai = compute_index(va, in.uid.z, u.x, k, 4u);
+            let ai = compute_index(va, in.uid.z, u.x, k, 2u);
             let a = array<vec4<f32>, 4>(
                 unpack4x16float(absmax[ai / (NF4_BLOCK_SIZE / 2u)]),
                 unpack4x16float(absmax[(ai + stride) / (NF4_BLOCK_SIZE / 2u)]),
@@ -187,15 +187,15 @@ fn matmul(in: Input) {
 #endif
 #endif
 #ifdef OUT_FP16
-        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 4u)] = pack4x16float(local_sum[0]);
-        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x, 4u)] = pack4x16float(local_sum[1]);
-        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x, 4u)] = pack4x16float(local_sum[2]);
-        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x, 4u)] = pack4x16float(local_sum[3]);
+        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 2u)] = pack4x16float(local_sum[0]);
+        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x, 2u)] = pack4x16float(local_sum[1]);
+        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x, 2u)] = pack4x16float(local_sum[2]);
+        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x, 2u)] = pack4x16float(local_sum[3]);
 #else
-        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 4u)] = local_sum[0];
-        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x, 4u)] = local_sum[1];
-        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x, 4u)] = local_sum[2];
-        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x, 4u)] = local_sum[3];
+        output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 2u)] = local_sum[0];
+        output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x, 2u)] = local_sum[1];
+        output[compute_index(destination, in.uid.z, u.y + 2u, in.uid.x, 2u)] = local_sum[2];
+        output[compute_index(destination, in.uid.z, u.y + 3u, in.uid.x, 2u)] = local_sum[3];
 #endif
     }
 }

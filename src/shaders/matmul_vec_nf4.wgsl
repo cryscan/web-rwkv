@@ -23,9 +23,9 @@ var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> q: array<vec4<f32>, 4u>;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32, step: u32) -> u32 {
-    let stride = view.stride.x / step;
-    let offset = view.offset.x / step;
-    return ((view.offset.z + batch) * view.stride.y + view.offset.y + token) * stride + offset + index;
+    let stride = view.stride.x >> step;
+    let offset = vec3<u32>(view.offset.zy, view.offset.x >> step);
+    return dot(vec3<u32>(batch, token, index) + offset, vec3<u32>(view.stride.y * stride, stride, 1u));
 }
 
 fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
@@ -91,7 +91,7 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let token = invocation_id.y;
     let batch = invocation_id.z;
 
-    let bb = compute_index(source, batch, token, 0u, 8u);
+    let bb = compute_index(source, batch, token, 0u, 3u);
     let cb = batch * shape.y * stride + channel * 4u * stride;
 
     if index == 0u {
@@ -144,7 +144,7 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     reduce_sum(index, 1u);
 
     if index == 0u {
-        let btc = compute_index(destination, batch, token, channel, 4u);
+        let btc = compute_index(destination, batch, token, channel, 2u);
 #ifdef ACT_SQUARED_RELU
         let out = squared_relu(sketch[0]);
 #else

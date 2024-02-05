@@ -23,10 +23,10 @@ struct Input {
 var<workgroup> sa: array<array<vec2<u32>, 32u>, 32u>;
 var<workgroup> sb: array<array<vec2<u32>, 32u>, 32u>;
 
-fn compute_index(view: View, z: u32, y: u32, x: u32) -> u32 {
-    let stride = view.stride.x / 4u;
-    let offset = view.offset.x / 4u;
-    return ((view.offset.z + z) * view.stride.y + view.offset.y + y) * stride + offset + x;
+fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
+    let stride = view.stride.x >> 2u;
+    let offset = vec3<u32>(view.offset.zy, view.offset.x >> 2u);
+    return dot(vec3<u32>(batch, token, index) + offset, vec3<u32>(view.stride.y * stride, stride, 1u));
 }
 
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
