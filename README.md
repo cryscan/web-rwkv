@@ -15,6 +15,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - Very fast.
 - LoRA merging at loading time.
 - Support RWKV V4, V5 and V6.
+- Hooks to intervene the inference process at any point.
 
 <p align='center'>
 <image src="screenshots/chat.gif">
@@ -36,36 +37,58 @@ It *does not* provide the following:
 - Python (or any other languages) binding.
 - Runtime. Without a runtime makes it easy to be integrated into any applications from servers, front-end apps (yes, `web-rwkv` can run in browser) to game engines.
 
-## Compile and Run
+## Compile
 1. [Install Rust](https://rustup.rs/).
 2. Download the model from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert it using [`convert_safetensors.py`](./convert_safetensors.py). Put the `.st` model under `assets/models`.
-3. To generate 100 tokens and measure the time cost, run
+3. Compile
    ```bash
-   $ cargo run --release --example gen
+   $ cargo build --release --examples
    ```
-4. To chat with the model, run
-   ```bash
-   $ cargo run --release --example chat
-   ```
-5. To generate 4 batches of text with various lengths simultaneously, run
-   ```bash
-   $ cargo run --release --example batch
-   ```
-6. To specify the location of your safetensors model, use 
+
+## Examples
+
+### Performance Test
+The test generates 100 tokens and measure the time cost.
+```bash
+$ cargo run --release --example gen
+```
+
+### Chat Demo
+To chat with the model, run
+```bash
+$ cargo run --release --example chat
+```
+
+In this demo, type `+` to retry last round's generation; type `-` to exit.
+
+- To specify the location of your safetensors model, use 
    ```bash
    $ cargo run --release --example chat -- --model /path/to/model
    ```
-7. To load custom prompts for chat, use 
+
+- To load custom prompts for chat, use 
    ```bash
    $ cargo run --release --example chat -- --prompt /path/to/prompt
    ```
    See [`assets/prompt.json`](./assets/prompt.json) for details.
-8. To specify layer quantization, use `--quant <LAYERS>` or `--quant-nf4 <LAYERS>` to quantize the first `<LAYERS>` layers. For example, use 
-   ```bash
-   $ cargo run --release --example chat -- --quant 32
-   ```
-   to quantize all 32 layers.
-9.  Use `--turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.
+
+- To specify layer quantization, use `--quant <LAYERS>` or `--quant-nf4 <LAYERS>` to quantize the first `<LAYERS>` layers. For example, use 
+  ```bash
+  $ cargo run --release --example chat -- --quant 32
+  ```
+  to quantize all 32 layers.
+
+- Use `--turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.
+
+
+### Batched Inference
+This demo showcases generation of 4 batches of text with various lengths simultaneously.
+```bash
+$ cargo run --release --example batch
+```
+
+### Inspector
+The inspector demo is a guide to an advanced usage called hooks. Hooks allow user to inject any tensor ops into the model's inference process, fetching and modifying the contents of the runtime buffer, state, and even the model parameters. Hooks enable certain third-party implementations like dynamic LoRA, control net, and so on.
 
 ## Use in Your Project
 To use in your own rust project, simply add `web-rwkv = "0.6"` as a dependency in your `Cargo.toml`.
@@ -85,6 +108,41 @@ If a slot is empty, no inference will be run for it.
 
 After calling `run()`, some (but may not be all) input tokens are consumed, and `logits` appears in their corresponding returned slots if the inference of that slot is finished during this run.
 Since there are only `token_chunk_size` tokens are processed during each `run()` call, there may be none of `logits` appearing in the results.
+
+## Explanation of Hooks
+Hooks are a very powerful tool for customizing model inference process.
+The library provides with the `Model::run_with_hooks` function, which takes into a `HookMap` as a parameter.
+
+A `HookMap` is essentially a hashmap from `Model::Hook` to functions.
+A `Model::Hook` defines a certain place the hook function can be injected into. A model generally has dozens of hooking points.
+A hook function is a function of `Fn(&Model<'_>, &ModelState, &Runtime) -> Result<TensorOp, TensorError>`, where you can create tensor ops that reads/writes all the tensors you get here.
+
+An example that reads out every layer's output:
+```rust
+let info = model.info();
+// create a buffer to store each layer's output
+let buffer = Buffer::new(&context, &info);
+let mut hooks = HookMap::default();
+for layer in 0..info.num_layer {
+   let buffer = buffer.clone();
+   hooks.insert(
+      v5::Hook::PostFfn(layer),
+      Box::new(
+            move |_model, _state, runtime: &v5::Runtime| -> Result<TensorOp, TensorError> {
+               // figure out how many tokens this run has
+               let shape = runtime.ffn_x.shape();
+               let num_token = shape[1];
+               // "steal" the layer's output (activation), and put it into our buffer
+               TensorOp::blit(
+                  runtime.ffn_x.view(.., num_token - 1, .., ..)?,
+                  buffer.ffn_x.view(.., layer, .., ..)?,
+               )
+            },
+      ),
+   );
+}
+let output = model.run_with_hooks(&mut tokens, &state, &hooks).await?;
+```
 
 ## Convert Models
 *You must download the model and put in `assets/models` before running if you are building from source.*
