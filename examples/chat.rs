@@ -107,25 +107,25 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_model<M: Model>(
     context: &Context,
     data: &[u8],
     lora: Option<PathBuf>,
-    quant: Option<usize>,
-    quant_nf4: Option<usize>,
+    quant: usize,
+    quant_nf4: usize,
     embed_device: Option<EmbedDevice>,
     turbo: bool,
+    token_chunk_size: usize,
 ) -> Result<M> {
-    let quant = quant
-        .map(|layer| (0..layer).map(|layer| (layer, Quant::Int8)).collect_vec())
-        .unwrap_or_default();
-    let quant_nf4 = quant_nf4
-        .map(|layer| (0..layer).map(|layer| (layer, Quant::NF4)).collect_vec())
-        .unwrap_or_default();
-    let quant = quant.into_iter().chain(quant_nf4).collect();
+    let quant = (0..quant)
+        .map(|layer| (layer, Quant::Int8))
+        .chain((0..quant_nf4).map(|layer| (layer, Quant::NF4)))
+        .collect();
     let model = ModelBuilder::new(context, data)
         .with_quant(quant)
         .with_turbo(turbo)
+        .with_token_chunk_size(token_chunk_size)
         .with_embed_device(embed_device.unwrap_or_default().into());
     match lora {
         Some(lora) => {
@@ -196,6 +196,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.quant_nf4,
                 cli.embed_device,
                 cli.turbo,
+                cli.token_chunk_size,
             )?;
             let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer, prompt, sampler).await
@@ -209,6 +210,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.quant_nf4,
                 cli.embed_device,
                 cli.turbo,
+                cli.token_chunk_size,
             )?;
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer, prompt, sampler).await
@@ -222,6 +224,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.quant_nf4,
                 cli.embed_device,
                 cli.turbo,
+                cli.token_chunk_size,
             )?;
             let state: v6::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer, prompt, sampler).await
@@ -366,14 +369,16 @@ struct Cli {
     lora: Option<PathBuf>,
     #[arg(short, long, value_name = "FILE")]
     prompt: Option<PathBuf>,
-    #[arg(short, long, value_name = "LAYERS")]
-    quant: Option<usize>,
-    #[arg(long, value_name = "LAYERS")]
-    quant_nf4: Option<usize>,
+    #[arg(short, long, value_name = "LAYERS", default_value_t = 0)]
+    quant: usize,
+    #[arg(long, value_name = "LAYERS", default_value_t = 0)]
+    quant_nf4: usize,
     #[arg(short, long)]
     embed_device: Option<EmbedDevice>,
     #[arg(short, long, action)]
     turbo: bool,
+    #[arg(long, default_value_t = 32)]
+    token_chunk_size: usize,
     #[command(flatten)]
     sampler: Sampler,
 }
