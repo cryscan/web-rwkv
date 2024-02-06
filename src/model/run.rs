@@ -4,7 +4,10 @@ use anyhow::Result;
 use half::f16;
 use itertools::Itertools;
 
-use super::{ModelBase, ModelError, ModelInfo, ModelInput, ModelOutput, ModelState, OutputType};
+use super::{
+    ModelBase, ModelError, ModelInfo, ModelInput, ModelOutput, ModelState, OutputType,
+    MIN_TOKEN_CHUNK_SIZE,
+};
 use crate::{
     context::Context,
     tensor::{
@@ -152,7 +155,12 @@ where
         }
 
         // we only infer at most `token_chunk_size` tokens at a time
-        let mut num_token = num_token.min(self.token_chunk_size());
+        let num_token = num_token.min(self.token_chunk_size());
+        let mut num_token = match num_token > MIN_TOKEN_CHUNK_SIZE {
+            true => num_token - num_token % MIN_TOKEN_CHUNK_SIZE,
+            false => num_token,
+        };
+
         let mut inputs = vec![vec![]; max_batch];
         let mut outputs: Vec<Option<OutputType>> = vec![None; max_batch];
 

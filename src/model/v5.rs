@@ -9,7 +9,7 @@ use super::{
     run::{Header, HookMap, ModelRunInternal},
     softmax::{ModelSoftmaxInternal, Softmax},
     FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, PreparedModelBuilder, Quant,
-    StateBuilder,
+    StateBuilder, MIN_TOKEN_CHUNK_SIZE,
 };
 use crate::{
     context::Context,
@@ -718,7 +718,7 @@ impl ModelRunInternal for Model<'_> {
 
     #[inline]
     fn turbo(&self, num_token: usize) -> bool {
-        self.turbo && num_token == self.token_chunk_size
+        self.turbo && num_token % MIN_TOKEN_CHUNK_SIZE == 0
     }
 
     fn run_internal(
