@@ -109,7 +109,7 @@ If a slot is empty, no inference will be run for it.
 After calling `run()`, some (but may not be all) input tokens are consumed, and `logits` appears in their corresponding returned slots if the inference of that slot is finished during this run.
 Since there are only `token_chunk_size` tokens are processed during each `run()` call, there may be none of `logits` appearing in the results.
 
-## Explanation of Hooks
+### Explanation of Hooks
 Hooks are a very powerful tool for customizing model inference process.
 The library provides with the `Model::run_with_hooks` function, which takes into a `HookMap` as a parameter.
 
