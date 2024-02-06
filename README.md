@@ -48,7 +48,7 @@ It *does not* provide the following:
 ## Examples
 
 ### Performance Test
-The test generates 100 tokens and measure the time cost.
+The test generates 500 tokens and measure the time cost.
 ```bash
 $ cargo run --release --example gen
 ```
