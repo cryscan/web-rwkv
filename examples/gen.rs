@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
+#[cfg(not(debug_assertions))]
 use itertools::Itertools;
 use memmap2::Mmap;
 use std::{
@@ -65,25 +66,25 @@ fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_model<M: Model>(
     context: &Context,
     data: &[u8],
     lora: Option<PathBuf>,
-    quant: Option<usize>,
-    quant_nf4: Option<usize>,
+    quant: usize,
+    quant_nf4: usize,
     embed_device: Option<EmbedDevice>,
     turbo: bool,
+    token_chunk_size: usize,
 ) -> Result<M> {
-    let quant = quant
-        .map(|layer| (0..layer).map(|layer| (layer, Quant::Int8)).collect_vec())
-        .unwrap_or_default();
-    let quant_nf4 = quant_nf4
-        .map(|layer| (0..layer).map(|layer| (layer, Quant::NF4)).collect_vec())
-        .unwrap_or_default();
-    let quant = quant.into_iter().chain(quant_nf4).collect();
+    let quant = (0..quant)
+        .map(|layer| (layer, Quant::Int8))
+        .chain((0..quant_nf4).map(|layer| (layer, Quant::NF4)))
+        .collect();
     let model = ModelBuilder::new(context, data)
         .with_quant(quant)
         .with_turbo(turbo)
+        .with_token_chunk_size(token_chunk_size)
         .with_embed_device(embed_device.unwrap_or_default().into());
     match lora {
         Some(lora) => {
@@ -129,6 +130,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.quant_nf4,
                 cli.embed_device,
                 cli.turbo,
+                cli.token_chunk_size,
             )?;
             let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer).await
@@ -142,6 +144,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.quant_nf4,
                 cli.embed_device,
                 cli.turbo,
+                cli.token_chunk_size,
             )?;
             let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer).await
@@ -155,6 +158,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.quant_nf4,
                 cli.embed_device,
                 cli.turbo,
+                cli.token_chunk_size,
             )?;
             let state: v6::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer).await
@@ -167,35 +171,64 @@ where
     S: ModelState,
     M: Model<State = S>,
 {
-    let prompt = "The Space Needle is located in downtown";
+    const PROMPT: &str = include_str!("prompt.md");
     let mut tokens = vec![ModelInput {
-        tokens: tokenizer.encode(prompt.as_bytes())?,
+        tokens: tokenizer.encode(PROMPT.as_bytes())?,
         ..Default::default()
     }];
-    print!("{}", prompt);
-    let mut instant;
-    let mut duration = Duration::default();
 
-    let num_tokens = 100;
-    for index in 0..=num_tokens {
+    let prompt_len = tokens[0].tokens.len();
+    println!("Reading {} tokens.", prompt_len);
+
+    let mut read = false;
+    let mut count = 0usize;
+
+    let mut instant;
+    let mut prefill = Duration::ZERO;
+    let mut duration = Duration::ZERO;
+
+    let num_tokens = 500;
+    while count < num_tokens {
         instant = Instant::now();
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
-        duration = match index {
-            0 => Duration::default(),
-            _ => duration + instant.elapsed(),
-        };
+        duration += instant.elapsed();
 
         if let ModelOutput::Last(probs) = &probs[0] {
+            if !read {
+                print!("\n{}", PROMPT);
+                prefill = duration;
+                duration = Duration::ZERO;
+                read = true;
+            }
+
             let token = sample(probs, 0.5);
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);
             print!("{}", word);
+            std::io::stdout().flush().unwrap();
+
             tokens[0].tokens = vec![token];
+            count += 1;
+        } else {
+            print!(".");
+            std::io::stdout().flush().unwrap();
         }
     }
 
-    println!("\n{} tokens: {} mills", num_tokens, duration.as_millis());
+    println!();
+    println!(
+        "Prefill: {} tokens, {} mills, {} tps.",
+        prompt_len,
+        prefill.as_millis(),
+        prompt_len as f64 / prefill.as_secs_f64()
+    );
+    println!(
+        "Generation: {} tokens, {} mills, {} tps.",
+        num_tokens,
+        duration.as_millis(),
+        num_tokens as f64 / duration.as_secs_f64()
+    );
     std::io::stdout().flush()?;
 
     Ok(())
@@ -224,14 +257,16 @@ struct Cli {
     model: Option<PathBuf>,
     #[arg(short, long, value_name = "FILE")]
     lora: Option<PathBuf>,
-    #[arg(short, long, value_name = "LAYERS")]
-    quant: Option<usize>,
-    #[arg(long, value_name = "LAYERS")]
-    quant_nf4: Option<usize>,
+    #[arg(short, long, value_name = "LAYERS", default_value_t = 0)]
+    quant: usize,
+    #[arg(long, value_name = "LAYERS", default_value_t = 0)]
+    quant_nf4: usize,
     #[arg(short, long)]
     embed_device: Option<EmbedDevice>,
     #[arg(short, long, action)]
     turbo: bool,
+    #[arg(long, default_value_t = 32)]
+    token_chunk_size: usize,
 }
 
 #[tokio::main]

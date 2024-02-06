@@ -45,6 +45,10 @@ impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
         let context = self.context();
         let info = self.info();
 
+        if input.iter().all(ModelOutput::is_none) {
+            return Ok(input);
+        }
+
         let mut redirect = vec![0..0; max_batch];
         let input: Vec<_> = input
             .into_iter()
