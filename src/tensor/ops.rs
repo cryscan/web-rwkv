@@ -3,7 +3,7 @@ use std::{hash::Hash, sync::Arc};
 use half::f16;
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutEntry, BindingType,
-    BufferBindingType, CommandEncoder, ComputePass, ComputePipeline, ShaderStages,
+    BufferBindingType, CommandEncoder, ComputePass, ShaderStages,
 };
 
 use super::{
@@ -11,7 +11,7 @@ use super::{
     Shape, TensorError, TensorGpu, TensorScalar, TensorShape, TensorView,
 };
 use crate::{
-    context::Macros,
+    context::{CachedPipeline, Macros},
     num::{Float, Scalar},
 };
 
@@ -74,7 +74,7 @@ impl<'b, 'a: 'b> TensorPass<'a> for ComputePass<'b> {
                 bindings,
                 dispatch,
             } => {
-                self.set_pipeline(pipeline);
+                self.set_pipeline(&pipeline.pipeline);
                 for (index, bind_group) in bindings.iter().enumerate() {
                     self.set_bind_group(index as u32, bind_group, &[])
                 }
@@ -154,7 +154,7 @@ impl Macros {
 
 pub enum TensorOp {
     Atom {
-        pipeline: Arc<ComputePipeline>,
+        pipeline: Arc<CachedPipeline>,
         bindings: Vec<BindGroup>,
         dispatch: [u32; 3],
     },
@@ -184,7 +184,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -229,7 +229,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -321,7 +321,7 @@ impl TensorOp {
 
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &entries,
         })];
 
@@ -358,7 +358,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -415,7 +415,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -491,7 +491,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -582,7 +582,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -657,7 +657,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -737,7 +737,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -827,7 +827,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -898,7 +898,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -953,7 +953,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1016,7 +1016,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1091,7 +1091,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1176,7 +1176,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1261,7 +1261,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1334,7 +1334,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1376,7 +1376,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1414,7 +1414,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1452,7 +1452,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1500,7 +1500,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1566,7 +1566,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1620,7 +1620,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1674,7 +1674,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1729,7 +1729,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1788,7 +1788,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -1851,7 +1851,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -2008,7 +2008,7 @@ impl TensorOp {
             );
             let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
                 label: None,
-                layout: &pipeline.get_bind_group_layout(0),
+                layout: &pipeline.layout,
                 entries,
             })];
             Ok(Self::Atom {
@@ -2063,7 +2063,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 // BindGroupEntry {
                 //     binding: 0,
@@ -2106,7 +2106,7 @@ impl TensorOp {
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
-            layout: &pipeline.get_bind_group_layout(0),
+            layout: &pipeline.layout,
             entries: &[
                 // BindGroupEntry {
                 //     binding: 0,

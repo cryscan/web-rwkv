@@ -3,9 +3,9 @@ use std::{borrow::Cow, sync::Arc};
 use web_rwkv_derive::{Deref, DerefMut, Id};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    Adapter, Backends, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferUsages,
-    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Limits,
-    PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
+    Adapter, Backends, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
+    BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features,
+    Limits, PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
     ShaderModuleDescriptor,
 };
 
@@ -74,7 +74,7 @@ pub struct ContextInternal {
     pub device: Device,
     pub queue: Queue,
 
-    pipeline_cache: ResourceCache<PipelineKey, ComputePipeline>,
+    pipeline_cache: ResourceCache<PipelineKey, CachedPipeline>,
 
     shape_cache: ResourceCache<Shape, Buffer>,
     view_cache: ResourceCache<View, Buffer>,
@@ -195,14 +195,20 @@ struct PipelineKey {
 }
 
 impl PipelineKey {
-    fn new(name: impl Into<String>, entry_point: impl Into<String>, mut macros: Macros) -> Self {
+    fn new(name: String, entry_point: String, mut macros: Macros) -> Self {
         macros.0.sort();
         Self {
-            name: name.into(),
-            entry_point: entry_point.into(),
+            name,
+            entry_point,
             macros,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct CachedPipeline {
+    pub pipeline: ComputePipeline,
+    pub layout: BindGroupLayout,
 }
 
 impl PartialEq for Context {
@@ -221,22 +227,22 @@ impl Context {
         entry_point: impl AsRef<str>,
         layout: Option<&[BindGroupLayoutEntry]>,
         macros: Macros,
-    ) -> Arc<ComputePipeline> {
+    ) -> Arc<CachedPipeline> {
         let name = name.as_ref();
         let entry_point = entry_point.as_ref();
-        let key = PipelineKey::new(name.to_string(), entry_point.to_string(), macros.clone());
+        let key = PipelineKey::new(name.into(), entry_point.into(), macros.clone());
 
         use gpp::{process_str, Context};
         let mut context = Context::new();
         context.macros = macros.0.into_iter().collect();
 
         self.pipeline_cache.checkout(key, move || {
-            let shader = process_str(source.as_ref(), &mut context).expect("preprocess");
-
+            let shader = process_str(source.as_ref(), &mut context).unwrap();
             let module = &self.device.create_shader_module(ShaderModuleDescriptor {
                 label: Some(name),
                 source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
             });
+
             let layout = layout.map(|entries| {
                 let layout = self
                     .device
@@ -251,13 +257,17 @@ impl Context {
                         push_constant_ranges: &[],
                     })
             });
-            self.device
+
+            let pipeline = self
+                .device
                 .create_compute_pipeline(&ComputePipelineDescriptor {
                     label: Some(name),
                     layout: layout.as_ref(),
                     module,
                     entry_point,
-                })
+                });
+            let layout = pipeline.get_bind_group_layout(0);
+            CachedPipeline { pipeline, layout }
         })
     }
 
