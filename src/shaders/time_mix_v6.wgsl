@@ -77,11 +77,14 @@ fn time_mix(in: Input) {
     for (var t = 0u; t < shape[2]; t += 1u) {
         let bti = t * stride + index;
         let cursor = compute_cursor(cursors[t]);
+
+        if t + 1u == cursor.token + cursor.len {
 #ifdef FP16
-        state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[(cursor.token + cursor.len - 1u) * stride + index]);
+            state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[(cursor.token + cursor.len - 1u) * stride + index]);
 #else
-        state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
+            state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
 #endif
+        }
 
         workgroupBarrier();
         shared_w[in.tid.x] = time_decay[bti];

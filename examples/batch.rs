@@ -26,7 +26,7 @@ use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
         loader::Loader, v4, v5, v6, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput,
-        ModelOutput, ModelState, ModelVersion, OutputType, Quant, StateBuilder,
+        ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -236,7 +236,7 @@ where
         .into_iter()
         .map(|tokens| ModelInput {
             tokens,
-            ty: OutputType::Full,
+            ..Default::default()
         })
         .collect();
 
@@ -250,17 +250,12 @@ where
             let block = Block::default().black();
             frame.render_widget(block, size);
 
+            let constraints = (0..batch)
+                .map(|_| Constraint::Percentage(100 / batch as u16))
+                .collect_vec();
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(
-                    [
-                        Constraint::Percentage(25),
-                        Constraint::Percentage(25),
-                        Constraint::Percentage(25),
-                        Constraint::Percentage(25),
-                    ]
-                    .as_ref(),
-                )
+                .constraints(&constraints)
                 .split(size);
 
             let create_block = |title| {
