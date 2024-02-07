@@ -23,8 +23,10 @@ struct Input {
 @group(0) @binding(5) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
 #endif
 
-var<workgroup> sa: array<array<vec2<u32>, 32u>, 32u>;
-var<workgroup> sb: array<array<vec2<u32>, 32u>, 32u>;
+const TILE_SIZE: u32 = BLOCK_SIZE * 4u;
+
+var<workgroup> sa: array<array<vec2<u32>, BLOCK_SIZE>, TILE_SIZE>;
+var<workgroup> sb: array<array<vec2<u32>, BLOCK_SIZE>, TILE_SIZE>;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x >> 2u;
@@ -47,41 +49,38 @@ fn squared_relu(x: vec4<f32>) -> vec4<f32> {
 
 @compute @workgroup_size(BLOCK_SIZE, BLOCK_SIZE, 1)
 fn matmul(in: Input) {
-    let b = in.bid.xy * 32u;
+    let b = in.bid.xy * TILE_SIZE;
     let u = in.uid.xy * 4u;
     let t = in.tid.xy * 4u;
     let ra = vec2<u32>(va.shape.x / 4u, va.shape.y);
     let rb = vec2<u32>(vb.shape.x / 4u, vb.shape.y);
     let stride = min(ra.x, rb.x);
-    let i = in.index & 31u;
 
     var local_sum: mat4x4<f32>;
-    for (var k = 0u; k < stride; k += 32u) {
-        // load 8x4 rows from each of the matrix, each with 32x4 columns
-        for (var j = 0u; j < 32u; j += 1u) {
-            if in.index < 32u {
-                let x = k + i;
-                let y = b.x + j;
-                if all(vec2<u32>(x, y) < ra) {
-                    sa[j][i] = xa[compute_index(va, in.uid.z, y, x)];
-                } else {
-                    sa[j][i] = vec2<u32>(0u);
-                }
+    for (var k = 0u; k < stride; k += BLOCK_SIZE) {
+        // load 8x4 rows from each of the matrix, each with 8x4 columns
+        for (var j = in.tid.y; j < TILE_SIZE; j += BLOCK_SIZE) {
+            let i = in.tid.x;
+            let x = k + i;
+            var y = b.x + j;
+            if all(vec2<u32>(x, y) < ra) {
+                sa[j][i] = xa[compute_index(va, in.uid.z, y, x)];
             } else {
-                let x = k + i;
-                let y = b.y + j;
-                if all(vec2<u32>(x, y) < rb) {
-                    sb[j][i] = xb[compute_index(vb, in.uid.z, y, x)];
-                } else {
-                    sb[j][i] = vec2<u32>(0u);
-                }
+                sa[j][i] = vec2<u32>(0u);
+            }
+
+            y = b.y + j;
+            if all(vec2<u32>(x, y) < rb) {
+                sb[j][i] = xb[compute_index(vb, in.uid.z, y, x)];
+            } else {
+                sb[j][i] = vec2<u32>(0u);
             }
         }
         workgroupBarrier();
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
-            for (var x = 0u; x < 32u; x += 1u) {
+            for (var x = 0u; x < BLOCK_SIZE; x += 1u) {
                 if k + x >= stride {
                     break;
                 }
