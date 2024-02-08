@@ -26,8 +26,7 @@ struct Input {
 #endif
 
 const TILE_SIZE: u32 = BLOCK_SIZE * 4u;
-const STEP_IN: u32 = 8u;
-const STEP_ABSMAX: u32 = 2u * NF4_BLOCK_SIZE;
+const NF4_BLOCK_STEP: u32 = 2u * NF4_BLOCK_SIZE / 8u;
 
 var<workgroup> sa: array<array<u32, BLOCK_SIZE>, TILE_SIZE>;
 var<workgroup> sb: array<array<vec4<u32>, BLOCK_SIZE>, TILE_SIZE>;
@@ -121,19 +120,13 @@ fn matmul(in: Input) {
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
-            // let a = array<vec4<f32>, 4>(
-            //     unpack4x16float(absmax[ai / NF4_ABSMAX_TILE_SIZE]),
-            //     unpack4x16float(absmax[(ai + stride) / NF4_ABSMAX_TILE_SIZE]),
-            //     unpack4x16float(absmax[(ai + stride * 2u) / NF4_ABSMAX_TILE_SIZE]),
-            //     unpack4x16float(absmax[(ai + stride * 3u) / NF4_ABSMAX_TILE_SIZE]),
-            // );
             let i = compute_index(va, in.uid.z, u.x, k, 4u);
             let j = (k / BLOCK_SIZE) % 2u;
             let a = vec4<f32>(
-                unpack2x16float(absmax[i / (STEP_ABSMAX / STEP_IN)])[j],
-                unpack2x16float(absmax[(i + stride) / (STEP_ABSMAX / STEP_IN)])[j],
-                unpack2x16float(absmax[(i + 2u * stride) / (STEP_ABSMAX / STEP_IN)])[j],
-                unpack2x16float(absmax[(i + 3u * stride) / (STEP_ABSMAX / STEP_IN)])[j],
+                unpack2x16float(absmax[i / NF4_BLOCK_STEP])[j],
+                unpack2x16float(absmax[(i + stride) / NF4_BLOCK_STEP])[j],
+                unpack2x16float(absmax[(i + 2u * stride) / NF4_BLOCK_STEP])[j],
+                unpack2x16float(absmax[(i + 3u * stride) / NF4_BLOCK_STEP])[j],
             );
 
             for (var x = 0u; x < BLOCK_SIZE; x += 1u) {
