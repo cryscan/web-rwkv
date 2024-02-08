@@ -32,7 +32,6 @@ pub enum ModelError {
     NoViableChunkSize,
     BatchSize(usize, usize),
     BatchOutOfRange { batch: usize, max: usize },
-    EmptyInput,
 }
 
 impl std::fmt::Display for ModelError {
@@ -44,7 +43,6 @@ impl std::fmt::Display for ModelError {
             ModelError::BatchOutOfRange { batch, max } => {
                 write!(f, "batch {batch} out of range of max {max}")
             }
-            ModelError::EmptyInput => write!(f, "input is empty"),
         }
     }
 }

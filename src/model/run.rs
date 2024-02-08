@@ -151,7 +151,7 @@ where
             return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
         }
         if num_token == 0 {
-            return Err(ModelError::EmptyInput.into());
+            return Ok(vec![ModelOutput::None; tokens.len()]);
         }
 
         // we only infer at most `token_chunk_size` tokens at a time
@@ -164,40 +164,30 @@ where
         let mut inputs = vec![vec![]; max_batch];
         let mut outputs: Vec<Option<OutputType>> = vec![None; max_batch];
 
-        // take `num_token` tokens out of all the inputs and put into `input`
-        // first pass, make sure each slot computes at least one token
-        for (output, input, slot) in
-            itertools::multizip((outputs.iter_mut(), inputs.iter_mut(), tokens.iter_mut()))
-        {
-            let mid = 1.min(slot.tokens.len()).min(num_token);
-            num_token -= mid;
+        // consume all available token counts
+        // assign them to as many slots as possible
+        while num_token > 0 {
+            let mid = tokens
+                .iter()
+                .map(|input| input.tokens.len())
+                .filter(|x| x > &0)
+                .min()
+                .unwrap_or_default();
+            for (output, input, slot) in
+                itertools::multizip((outputs.iter_mut(), inputs.iter_mut(), tokens.iter_mut()))
+            {
+                let mid = mid.min(slot.tokens.len()).min(num_token);
+                num_token -= mid;
 
-            if mid > 0 {
-                let (head, tail) = slot.tokens.split_at(mid);
-                *input = [&input, head].concat();
-                *output = match slot.ty {
-                    OutputType::Last => tail.is_empty().then_some(OutputType::Last),
-                    OutputType::Full => Some(OutputType::Full),
-                };
-                slot.tokens = tail.to_vec();
-            }
-        }
-
-        // second pass, assign rest token budgets from left to right
-        for (output, input, slot) in
-            itertools::multizip((outputs.iter_mut(), inputs.iter_mut(), tokens.iter_mut()))
-        {
-            let mid = slot.tokens.len().min(num_token);
-            num_token -= mid;
-
-            if mid > 0 {
-                let (head, tail) = slot.tokens.split_at(mid);
-                *input = [&input, head].concat();
-                *output = match slot.ty {
-                    OutputType::Last => tail.is_empty().then_some(OutputType::Last),
-                    OutputType::Full => Some(OutputType::Full),
-                };
-                slot.tokens = tail.to_vec();
+                if mid > 0 {
+                    let (head, tail) = slot.tokens.split_at(mid);
+                    *output = match slot.ty {
+                        OutputType::Last => tail.is_empty().then_some(OutputType::Last),
+                        OutputType::Full => Some(OutputType::Full),
+                    };
+                    input.append(&mut head.to_vec());
+                    slot.tokens = tail.to_vec();
+                }
             }
         }
 
