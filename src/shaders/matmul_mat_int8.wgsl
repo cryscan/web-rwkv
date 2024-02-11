@@ -15,23 +15,17 @@ struct Input {
 @group(0) @binding(1) var<uniform> vb: View;                                // [K, N, B]
 @group(0) @binding(2) var<uniform> destination: View;                       // [M, N, B]
 
-@group(0) @binding(3) var<storage, read> mx: array<vec4<f32>>;              // (B, K)
-@group(0) @binding(4) var<storage, read> rx: array<vec4<f32>>;              // (B, K)
-@group(0) @binding(5) var<storage, read> my: array<vec4<f32>>;              // (B, M)
-@group(0) @binding(6) var<storage, read> ry: array<vec4<f32>>;              // (B, M)
-
-@group(0) @binding(7) var<storage, read> xa: array<u32>;                    // (B, M, K)
-@group(0) @binding(8) var<storage, read> xb: array<vec2<u32>>;              // (B, N, K)
+@group(0) @binding(3) var<storage, read> minmax: array<u32>;
+@group(0) @binding(4) var<storage, read> xa: array<u32>;                    // (B, M, K)
+@group(0) @binding(5) var<storage, read> xb: array<vec2<u32>>;              // (B, N, K)
 #ifdef OUT_FP16
-@group(0) @binding(9) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
+@group(0) @binding(6) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
 #else
-@group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
+@group(0) @binding(6) var<storage, read_write> output: array<vec4<f32>>;    // (B, N, M)
 #endif
 
 const TILE_SIZE: u32 = BLOCK_SIZE * 4u;
-
-var<workgroup> smx: array<vec4<f32>, BLOCK_SIZE>;
-var<workgroup> srx: array<vec4<f32>, BLOCK_SIZE>;
+const INT8_BLOCK_STEP: u32 = INT8_BLOCK_SIZE / 4u;
 
 var<workgroup> sa: array<array<u32, BLOCK_SIZE>, TILE_SIZE>;
 var<workgroup> sb: array<array<vec2<u32>, BLOCK_SIZE>, TILE_SIZE>;
@@ -42,12 +36,17 @@ fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     return dot(vec3<u32>(batch, token, index) + offset, vec3<u32>(view.stride.y * stride, stride, 1u));
 }
 
+fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
+    return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
+}
+
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
-    return vec2<u32>(pack2x16float(x.xy), pack2x16float(x.zw));
+fn unpack_minmax(index: u32) -> vec2<f32> {
+    let i = index / INT8_BLOCK_STEP;
+    return unpack2x16float(minmax[i]);
 }
 
 fn squared_relu(x: vec4<f32>) -> vec4<f32> {
@@ -64,22 +63,8 @@ fn matmul(in: Input) {
     let rb = vec2<u32>(vb.shape.x / 4u, vb.shape.y);
     let stride = min(ra.x, rb.x);
 
-    let myy = my[in.uid.z * ra.y + in.uid.x];
-    let ryy = ry[in.uid.z * ra.y + in.uid.x];
-
     var local_sum: mat4x4<f32>;
     for (var k = 0u; k < stride; k += BLOCK_SIZE) {
-        // load 8x4 mx and rx
-        let i = in.tid.x;
-        let x = k + i;
-        if x < ra.x {
-            smx[i] = mx[in.uid.z * ra.x + x];
-            srx[i] = rx[in.uid.z * ra.x + x];
-        } else {
-            smx[i] = vec4<f32>(0.0);
-            srx[i] = vec4<f32>(0.0);
-        }
-
         // load 8x4 rows from each of the matrix, each with 8x4 columns
         for (var j = in.tid.y; j < TILE_SIZE; j += BLOCK_SIZE) {
             let i = in.tid.x;
@@ -102,17 +87,22 @@ fn matmul(in: Input) {
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
+            var i = compute_index(va, in.uid.z, u.x, k);
+            var b: array<vec2<f32>, 4>;
+            b[0] = unpack_minmax(i); i += stride;
+            b[1] = unpack_minmax(i); i += stride;
+            b[2] = unpack_minmax(i); i += stride;
+            b[3] = unpack_minmax(i);
+
             for (var x = 0u; x < BLOCK_SIZE; x += 1u) {
                 if k + x >= stride {
                     break;
                 }
-                let mxx = smx[x];
-                let rxx = srx[x];
                 let aa = mat4x4<f32>(
-                    fma(unpack4x8unorm(sa[t.x][x]), ryy[0] * rxx, myy[0] + mxx),
-                    fma(unpack4x8unorm(sa[t.x + 1u][x]), ryy[1] * rxx, myy[1] + mxx),
-                    fma(unpack4x8unorm(sa[t.x + 2u][x]), ryy[2] * rxx, myy[2] + mxx),
-                    fma(unpack4x8unorm(sa[t.x + 3u][x]), ryy[3] * rxx, myy[3] + mxx),
+                    fma(unpack4x8unorm(sa[t.x][x]), vec4<f32>(b[0][1] - b[0][0]), vec4<f32>(b[0][0])),
+                    fma(unpack4x8unorm(sa[t.x + 1u][x]), vec4<f32>(b[1][1] - b[1][0]), vec4<f32>(b[1][0])),
+                    fma(unpack4x8unorm(sa[t.x + 2u][x]), vec4<f32>(b[2][1] - b[2][0]), vec4<f32>(b[2][0])),
+                    fma(unpack4x8unorm(sa[t.x + 3u][x]), vec4<f32>(b[3][1] - b[3][0]), vec4<f32>(b[3][0])),
                 );
                 let bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x]),

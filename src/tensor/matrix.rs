@@ -16,10 +16,7 @@ pub enum Matrix {
     Fp16(TensorGpu<f16, ReadWrite>),
     Int8 {
         w: TensorGpu<u8, ReadWrite>,
-        mx: TensorGpu<f32, ReadWrite>,
-        rx: TensorGpu<f32, ReadWrite>,
-        my: TensorGpu<f32, ReadWrite>,
-        ry: TensorGpu<f32, ReadWrite>,
+        m: TensorGpu<f16, ReadWrite>,
     },
     NF4 {
         w: TensorGpu<u8, ReadWrite>,
@@ -37,9 +34,7 @@ impl Matrix {
     ) -> Result<TensorOp, TensorError> {
         match self {
             Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, active),
-            Matrix::Int8 { w, mx, rx, my, ry } => {
-                TensorOp::matmul_vec_int8(w, mx, rx, my, ry, input, output, active)
-            }
+            Matrix::Int8 { w, m } => TensorOp::matmul_vec_int8(w, m, input, output, active),
             Matrix::NF4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, active),
         }
     }
@@ -54,16 +49,9 @@ impl Matrix {
             Matrix::Fp16(matrix) => {
                 TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, input, output, active)
             }
-            Matrix::Int8 { w, mx, rx, my, ry } => TensorOp::matmul_mat_int8(
-                w.view(.., .., .., ..)?,
-                mx,
-                rx,
-                my,
-                ry,
-                input,
-                output,
-                active,
-            ),
+            Matrix::Int8 { w, m } => {
+                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, m, input, output, active)
+            }
             Matrix::NF4 { w, q, m } => {
                 TensorOp::matmul_mat_nf4(w.view(.., .., .., ..)?, q, m, input, output, active)
             }
@@ -87,24 +75,15 @@ impl Matrix {
         let context = matrix.context();
         let shape = matrix.shape();
 
-        // let mx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1, 1));
-        // let rx_f32 = context.init_tensor(Shape::new(shape[0], 1, 1, 1));
-        // let my_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
-        // let ry_f32 = context.init_tensor(Shape::new(shape[1], 1, 1, 1));
+        let w = context.tensor_init(shape);
+        let m = context.tensor_init(Shape::new(
+            (shape[0] << 1) / TensorOp::INT8_BLOCK_SIZE as usize,
+            shape[1],
+            shape[2],
+            shape[3],
+        ));
 
-        let w = context.tensor_init(matrix.shape());
-
-        let mx = context.tensor_init(Shape::new(shape[0], 1, 1, 1));
-        let rx = context.tensor_init(Shape::new(shape[0], 1, 1, 1));
-        let my = context.tensor_init(Shape::new(shape[1], 1, 1, 1));
-        let ry = context.tensor_init(Shape::new(shape[1], 1, 1, 1));
-
-        let op = TensorOp::quantize_mat_int8(matrix, &mx, &rx, &my, &ry, &w)?;
-
-        // ops.push(TensorOp::quantize_vec_fp16(&mx_f32, &mx)?);
-        // ops.push(TensorOp::quantize_vec_fp16(&rx_f32, &rx)?);
-        // ops.push(TensorOp::quantize_vec_fp16(&my_f32, &my)?);
-        // ops.push(TensorOp::quantize_vec_fp16(&ry_f32, &ry)?);
+        let op = TensorOp::quantize_mat_int8(matrix, &m, &w)?;
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
@@ -114,7 +93,7 @@ impl Matrix {
 
         context.queue.submit(Some(encoder.finish()));
 
-        Ok(Matrix::Int8 { w, mx, rx, my, ry })
+        Ok(Matrix::Int8 { w, m })
     }
 
     pub fn quant_nf4(matrix: &TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {

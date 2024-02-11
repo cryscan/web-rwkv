@@ -9,21 +9,16 @@ struct View {
 @group(0) @binding(2) var<uniform> destination: View;                       // [R, T, B]
 
 @group(0) @binding(3) var<storage, read> matrix: array<u32>;                // (B, R, C)
-@group(0) @binding(4) var<storage, read> mx: array<vec4<f32>>;              // (B, C)
-@group(0) @binding(5) var<storage, read> rx: array<vec4<f32>>;              // (B, C)
-@group(0) @binding(6) var<storage, read> my: array<vec4<f32>>;              // (B, R)
-@group(0) @binding(7) var<storage, read> ry: array<vec4<f32>>;              // (B, R)
+@group(0) @binding(4) var<storage, read> minmax: array<u32>;
 
-#ifdef IN_FP16
-@group(0) @binding(8) var<storage, read> input: array<vec2<u32>>;           // (B, T, C)
-#else
-@group(0) @binding(8) var<storage, read> input: array<vec4<f32>>;           // (B, T, C)
-#endif
+@group(0) @binding(5) var<storage, read> input: array<vec2<u32>>;           // (B, T, C)
 #ifdef OUT_FP16
-@group(0) @binding(9) var<storage, read_write> output: array<vec2<u32>>;    // (B, T, R)
+@group(0) @binding(6) var<storage, read_write> output: array<vec2<u32>>;    // (B, T, R)
 #else
-@group(0) @binding(9) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, R)
+@group(0) @binding(6) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, R)
 #endif
+
+const INT8_BLOCK_STEP: u32 = INT8_BLOCK_SIZE / 4u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 
@@ -39,6 +34,11 @@ fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
 
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
+}
+
+fn unpack_minmax(index: u32) -> vec2<f32> {
+    let i = index / INT8_BLOCK_STEP;
+    return unpack2x16float(minmax[i]);
 }
 
 fn squared_relu(x: vec4<f32>) -> vec4<f32> {
@@ -64,11 +64,6 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let bb = compute_index(source, batch, token, 0u);
     let cb = batch * shape.y * stride + channel * 4u * stride;
 
-    // let myc = unpack4x16float(my[channel]);
-    // let ryc = unpack4x16float(ry[channel]);
-    let myc = my[batch * shape.y + channel];
-    let ryc = ry[batch * shape.y + channel];
-
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
         let bti = bb + i;
@@ -81,18 +76,13 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let x = input[bti];
 #endif
 
-        // let mxi = unpack4x16float(mx[i]);
-        // let rxi = unpack4x16float(rx[i]);
-        let mxi = mx[batch * stride + i];
-        let rxi = rx[batch * stride + i];
-
         // read 4 rows from the matrix, each with 4 unpacked floats, forming a 4x4 sub-block
         var m: mat4x4<f32>;
-
-        m[0] = fma(unpack4x8unorm(matrix[ci]), ryc[0] * rxi, myc[0] + mxi); ci += stride;
-        m[1] = fma(unpack4x8unorm(matrix[ci]), ryc[1] * rxi, myc[1] + mxi); ci += stride;
-        m[2] = fma(unpack4x8unorm(matrix[ci]), ryc[2] * rxi, myc[2] + mxi); ci += stride;
-        m[3] = fma(unpack4x8unorm(matrix[ci]), ryc[3] * rxi, myc[3] + mxi);
+        var b: vec2<f32>;
+        b = unpack_minmax(ci); m[0] = fma(unpack4x8unorm(matrix[ci]), vec4<f32>(b[1] - b[0]), vec4<f32>(b[0])); ci += stride;
+        b = unpack_minmax(ci); m[1] = fma(unpack4x8unorm(matrix[ci]), vec4<f32>(b[1] - b[0]), vec4<f32>(b[0])); ci += stride;
+        b = unpack_minmax(ci); m[2] = fma(unpack4x8unorm(matrix[ci]), vec4<f32>(b[1] - b[0]), vec4<f32>(b[0])); ci += stride;
+        b = unpack_minmax(ci); m[3] = fma(unpack4x8unorm(matrix[ci]), vec4<f32>(b[1] - b[0]), vec4<f32>(b[0]));
         local_sum += transpose(m) * x;
     }
     sketch[index] = local_sum;

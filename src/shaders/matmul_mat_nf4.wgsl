@@ -26,7 +26,7 @@ struct Input {
 #endif
 
 const TILE_SIZE: u32 = BLOCK_SIZE * 4u;
-const NF4_BLOCK_STEP: u32 = 2u * NF4_BLOCK_SIZE / 8u;
+const NF4_BLOCK_STEP: u32 = NF4_BLOCK_SIZE / 8u;
 
 var<workgroup> sa: array<array<u32, BLOCK_SIZE>, TILE_SIZE>;
 var<workgroup> sb: array<array<vec4<u32>, BLOCK_SIZE>, TILE_SIZE>;
@@ -44,6 +44,11 @@ fn pack4x16float(x: vec4<f32>) -> vec2<u32> {
 
 fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
+}
+
+fn unpack_absmax(index: u32) -> f32 {
+    let i = index / NF4_BLOCK_STEP; // 1 block of absmax: NF4_BLOCK_SIZE / 8u entries in matrix
+    return unpack2x16float(absmax[i >> 1u])[i & 1u];
 }
 
 fn unpack_matrix_0(v: u32) -> vec4<f32> {
@@ -93,7 +98,6 @@ fn matmul(in: Input) {
     if in.index == 0u {
         q = quant;
     }
-    // workgroupBarrier();
 
     var local_sum: mat4x4<f32>;
     for (var k = 0u; k < stride; k += BLOCK_SIZE) {
@@ -120,21 +124,18 @@ fn matmul(in: Input) {
 
         // each thread multiplies and sums up 4x4 blocks along the reduced dimension
         if all(u < vec2<u32>(ra.y, rb.y)) {
-            let i = compute_index(va, in.uid.z, u.x, k, 4u);
-            let j = (k / BLOCK_SIZE) % 2u;
-            let a = vec4<f32>(
-                unpack2x16float(absmax[i / NF4_BLOCK_STEP])[j],
-                unpack2x16float(absmax[(i + stride) / NF4_BLOCK_STEP])[j],
-                unpack2x16float(absmax[(i + 2u * stride) / NF4_BLOCK_STEP])[j],
-                unpack2x16float(absmax[(i + 3u * stride) / NF4_BLOCK_STEP])[j],
-            );
+            var i = compute_index(va, in.uid.z, u.x, k, 4u);
+            var a: vec4<f32>;
+            a[0] = unpack_absmax(i); i += stride;
+            a[1] = unpack_absmax(i); i += stride;
+            a[2] = unpack_absmax(i); i += stride;
+            a[3] = unpack_absmax(i);
 
             for (var x = 0u; x < BLOCK_SIZE; x += 1u) {
                 if k + x >= stride {
                     break;
                 }
-
-                let ssa = vec4<u32>(
+                let la = vec4<u32>(
                     sa[t.x][x],
                     sa[t.x + 1u][x],
                     sa[t.x + 2u][x],
@@ -142,10 +143,10 @@ fn matmul(in: Input) {
                 );
 
                 var aa = mat4x4<f32>(
-                    a[0] * unpack_matrix_0(ssa[0]),
-                    a[1] * unpack_matrix_0(ssa[1]),
-                    a[2] * unpack_matrix_0(ssa[2]),
-                    a[3] * unpack_matrix_0(ssa[3]),
+                    a[0] * unpack_matrix_0(la[0]),
+                    a[1] * unpack_matrix_0(la[1]),
+                    a[2] * unpack_matrix_0(la[2]),
+                    a[3] * unpack_matrix_0(la[3]),
                 );
                 var bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x].xy),
@@ -156,10 +157,10 @@ fn matmul(in: Input) {
                 local_sum += transpose(aa) * bb;
 
                 aa = mat4x4<f32>(
-                    a[0] * unpack_matrix_1(ssa[0]),
-                    a[1] * unpack_matrix_1(ssa[1]),
-                    a[2] * unpack_matrix_1(ssa[2]),
-                    a[3] * unpack_matrix_1(ssa[3]),
+                    a[0] * unpack_matrix_1(la[0]),
+                    a[1] * unpack_matrix_1(la[1]),
+                    a[2] * unpack_matrix_1(la[2]),
+                    a[3] * unpack_matrix_1(la[3]),
                 );
                 bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x].zw),

@@ -128,14 +128,14 @@ fn load_model<M: Model>(
 
 async fn run(cli: Cli) -> Result<()> {
     let tokenizer = load_tokenizer()?;
-    let model = cli.model.unwrap_or(
+    let model = cli.model.unwrap_or_else(|| {
         std::fs::read_dir("assets/models")
             .unwrap()
             .filter_map(|x| x.ok())
             .find(|x| x.path().extension().is_some_and(|x| x == "st"))
             .unwrap()
-            .path(),
-    );
+            .path()
+    });
 
     let file = File::open(model)?;
     let map = unsafe { Mmap::map(&file)? };

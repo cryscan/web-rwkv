@@ -19,6 +19,8 @@ struct View {
 @group(0) @binding(7) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, R)
 #endif
 
+const NF4_BLOCK_STEP: u32 = NF4_BLOCK_SIZE / 8u;
+
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> q: array<vec4<f32>, 4u>;
 
@@ -37,7 +39,7 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 }
 
 fn unpack_absmax(index: u32) -> f32 {
-    let i = index / (NF4_BLOCK_SIZE / 8u);              // 1 block of absmax: NF4_BLOCK_SIZE / 8u entries in matrix
+    let i = index / NF4_BLOCK_STEP; // 1 block of absmax: NF4_BLOCK_SIZE / 8u entries in matrix
     return unpack2x16float(absmax[i >> 1u])[i & 1u];
 }
 
@@ -97,7 +99,6 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if index == 0u {
         q = quant;
     }
-    workgroupBarrier();
 
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {

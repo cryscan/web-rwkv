@@ -167,14 +167,14 @@ fn load_prompt(path: Option<PathBuf>) -> Result<Prompt> {
 
 async fn run(cli: Cli) -> Result<()> {
     let tokenizer = load_tokenizer()?;
-    let model = cli.model.unwrap_or(
+    let model = cli.model.unwrap_or_else(|| {
         std::fs::read_dir("assets/models")
             .unwrap()
             .filter_map(|x| x.ok())
             .find(|x| x.path().extension().is_some_and(|x| x == "st"))
             .unwrap()
-            .path(),
-    );
+            .path()
+    });
     let prompt = load_prompt(cli.prompt)?;
     let sampler = cli.sampler;
 
