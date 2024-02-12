@@ -372,7 +372,6 @@ impl super::ModelState for ModelState {
             let host = map.back_async().await;
             data.push((shape, host.to_vec()))
         }
-        let data = data.into();
 
         BackedState {
             max_batch,
@@ -383,18 +382,6 @@ impl super::ModelState for ModelState {
     }
 
     async fn back_batch(&self, batch: usize) -> Result<BackedState> {
-        let max_batch = self.max_batch;
-        let chunk_size = self.chunk_size;
-        let head_size = self.head_size;
-
-        if batch >= max_batch {
-            return Err(ModelError::BatchOutOfRange {
-                batch,
-                max: max_batch,
-            }
-            .into());
-        }
-
         let mut data = Vec::with_capacity(self.state.len());
         for state in self.state.iter() {
             let context = state.context();
@@ -409,12 +396,11 @@ impl super::ModelState for ModelState {
             let host = map.back_async().await;
             data.push((shape, host.to_vec()));
         }
-        let data = data.into();
 
         Ok(BackedState {
             max_batch: 1,
-            chunk_size,
-            head_size,
+            chunk_size: self.chunk_size,
+            head_size: self.head_size,
             data,
         })
     }
@@ -459,7 +445,7 @@ pub struct BackedState {
     pub max_batch: usize,
     pub chunk_size: usize,
     pub head_size: usize,
-    pub data: Arc<Vec<(Shape, Vec<f32>)>>,
+    pub data: Vec<(Shape, Vec<f32>)>,
 }
 
 impl FromBuilder for BackedState {
@@ -483,8 +469,7 @@ impl FromBuilder for BackedState {
                     .concat()
             })
             .map(|x| (shape, x))
-            .collect_vec()
-            .into();
+            .collect_vec();
         Ok(Self {
             max_batch,
             chunk_size,

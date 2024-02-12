@@ -291,19 +291,11 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor(self, &map).expect("back entire state");
         context.queue.submit(Some(encoder.finish()));
 
-        let data = map.back_async().await.to_vec().into();
+        let data = map.back_async().await.into();
         BackedState { shape, data }
     }
 
     async fn back_batch(&self, batch: usize) -> Result<Self::BackedState> {
-        if batch >= self.max_batch() {
-            return Err(ModelError::BatchOutOfRange {
-                batch,
-                max: self.max_batch(),
-            }
-            .into());
-        }
-
         let context = self.context();
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
@@ -313,7 +305,7 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor_batch(self, &map, batch)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let data = map.back_async().await.to_vec().into();
+        let data = map.back_async().await.into();
         Ok(BackedState { shape, data })
     }
 
@@ -351,7 +343,7 @@ impl super::ModelState for ModelState {
 #[derive(Debug, Clone)]
 pub struct BackedState {
     pub shape: Shape,
-    pub data: Arc<Vec<f32>>,
+    pub data: Vec<f32>,
 }
 
 impl FromBuilder for BackedState {
@@ -380,8 +372,7 @@ impl FromBuilder for BackedState {
                     .concat()
             })
             .collect_vec()
-            .concat()
-            .into();
+            .concat();
         Ok(Self { shape, data })
     }
 }

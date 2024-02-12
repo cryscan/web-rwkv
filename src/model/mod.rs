@@ -31,7 +31,6 @@ pub enum ModelError {
     InvalidVersion,
     NoViableChunkSize,
     BatchSize(usize, usize),
-    BatchOutOfRange { batch: usize, max: usize },
 }
 
 impl std::fmt::Display for ModelError {
@@ -39,10 +38,7 @@ impl std::fmt::Display for ModelError {
         match self {
             ModelError::InvalidVersion => write!(f, "invalid model version"),
             ModelError::NoViableChunkSize => write!(f, "no viable chunk size found"),
-            ModelError::BatchSize(lhs, rhs) => write!(f, "input batch size {lhs} not match {rhs}"),
-            ModelError::BatchOutOfRange { batch, max } => {
-                write!(f, "batch {batch} out of range of max {max}")
-            }
+            ModelError::BatchSize(a, b) => write!(f, "batch size not match: {a} vs. {b}"),
         }
     }
 }
@@ -127,9 +123,7 @@ pub trait FromBuilder: Sized {
     fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
 }
 
-pub trait BackedState:
-    Send + for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible>
-{
+pub trait BackedState: for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible> {
     fn max_batch(&self) -> usize;
     fn num_layer(&self) -> usize;
 
