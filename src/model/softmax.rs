@@ -44,7 +44,6 @@ pub trait ModelSoftmax {
 
 impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
     async fn softmax(&self, input: Vec<ModelOutput>) -> Result<Vec<ModelOutput>, TensorError> {
-        let max_batch = input.len();
         let context = self.context();
         let info = self.info();
 
@@ -52,7 +51,7 @@ impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
             return Ok(input);
         }
 
-        let mut redirect = vec![0..0; max_batch];
+        let mut redirect = vec![0..0; input.len()];
         let input: Vec<_> = input
             .into_iter()
             .enumerate()

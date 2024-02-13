@@ -100,8 +100,8 @@ This is achieved by a modified `WKV` kernel.
 
 When building the model, the user specifies `token_chunk_size` (default: 32, but for powerful GPUs this could be much higher), which is the maximum number of tokens the engine could process in one `run` call.
 
-After creating the model, the user creates a `ModelState` with `max_batch` specified.
-This means that there are `max_batch` slots that could consume the inputs in parallel.
+After creating the model, the user creates a `ModelState` with `num_batch` specified.
+This means that there are `num_batch` slots that could consume the inputs in parallel.
 
 Before calling `run()`, the user fills each slot with some tokens as prompt.
 If a slot is empty, no inference will be run for it.

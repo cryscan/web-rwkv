@@ -199,7 +199,7 @@ pub enum Hook {
 #[derive(Debug, Clone)]
 pub struct ModelState {
     info: ModelInfo,
-    max_batch: usize,
+    num_batch: usize,
     chunk_size: usize,
     head_size: usize,
     state: Vec<TensorGpu<f32, ReadWrite>>,
@@ -248,20 +248,20 @@ impl FromBuilder for ModelState {
         let StateBuilder {
             context,
             info,
-            max_batch,
+            num_batch,
             chunk_size,
         } = builder;
         let num_chunk = (info.num_layer + chunk_size - 1) / chunk_size;
         let head_size = info.num_emb / info.num_head;
         let state = (0..num_chunk)
             .map(|_| {
-                let data = (0..max_batch)
+                let data = (0..num_batch)
                     .map(|_| vec![0.0; chunk_size * info.num_emb * (head_size + 2)])
                     .collect_vec()
                     .concat();
                 context
                     .tensor_from_data(
-                        Shape::new(info.num_emb, chunk_size * (head_size + 2), max_batch, 1),
+                        Shape::new(info.num_emb, chunk_size * (head_size + 2), num_batch, 1),
                         data,
                     )
                     .expect("state creation")
@@ -269,7 +269,7 @@ impl FromBuilder for ModelState {
             .collect();
         Ok(Self {
             info,
-            max_batch,
+            num_batch,
             chunk_size,
             head_size,
             state,
@@ -282,7 +282,7 @@ impl super::ModelState for ModelState {
 
     #[inline]
     fn num_batch(&self) -> usize {
-        self.max_batch
+        self.num_batch
     }
 
     fn load(&self, backed: &BackedState) -> Result<(), TensorError> {
@@ -314,7 +314,7 @@ impl super::ModelState for ModelState {
     }
 
     async fn back(&self) -> BackedState {
-        let max_batch = self.max_batch;
+        let num_batch = self.num_batch;
         let chunk_size = self.chunk_size;
         let head_size = self.head_size;
 
@@ -333,7 +333,7 @@ impl super::ModelState for ModelState {
         }
 
         BackedState {
-            max_batch,
+            num_batch,
             chunk_size,
             head_size,
             data,
@@ -357,7 +357,7 @@ impl super::ModelState for ModelState {
         }
 
         Ok(BackedState {
-            max_batch: 1,
+            num_batch: 1,
             chunk_size: self.chunk_size,
             head_size: self.head_size,
             data,
@@ -401,7 +401,7 @@ impl super::ModelState for ModelState {
 
 #[derive(Debug, Clone)]
 pub struct BackedState {
-    pub max_batch: usize,
+    pub num_batch: usize,
     pub chunk_size: usize,
     pub head_size: usize,
     pub data: Vec<(Shape, Vec<f32>)>,
@@ -414,15 +414,15 @@ impl FromBuilder for BackedState {
     fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let StateBuilder {
             info,
-            max_batch,
+            num_batch,
             chunk_size,
             ..
         } = builder;
         let head_size = info.num_emb / info.num_head;
-        let shape = Shape::new(info.num_emb, chunk_size * (head_size + 2), max_batch, 1);
+        let shape = Shape::new(info.num_emb, chunk_size * (head_size + 2), num_batch, 1);
         let data = (0..info.num_layer)
             .map(|_| {
-                (0..max_batch)
+                (0..num_batch)
                     .map(|_| vec![0.0; chunk_size * info.num_emb * (head_size + 2)])
                     .collect_vec()
                     .concat()
@@ -430,7 +430,7 @@ impl FromBuilder for BackedState {
             .map(|x| (shape, x))
             .collect();
         Ok(Self {
-            max_batch,
+            num_batch,
             chunk_size,
             head_size,
             data,
@@ -441,7 +441,7 @@ impl FromBuilder for BackedState {
 impl super::BackedState for BackedState {
     #[inline]
     fn num_batch(&self) -> usize {
-        self.max_batch
+        self.num_batch
     }
 
     #[inline]

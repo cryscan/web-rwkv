@@ -144,10 +144,10 @@ where
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
     ) -> Result<Vec<ModelOutput>, TensorError> {
         let num_token: usize = tokens.iter().map(|input| input.tokens.len()).sum();
-        let max_batch = state.num_batch();
+        let num_batch = state.num_batch();
 
-        if tokens.len() != max_batch {
-            return Err(TensorError::Batch(tokens.len(), max_batch));
+        if tokens.len() != num_batch {
+            return Err(TensorError::Batch(tokens.len(), num_batch));
         }
         if num_token == 0 {
             return Ok(vec![ModelOutput::None; tokens.len()]);
@@ -160,8 +160,8 @@ where
             false => num_token,
         };
 
-        let mut inputs = vec![vec![]; max_batch];
-        let mut outputs: Vec<Option<OutputType>> = vec![None; max_batch];
+        let mut inputs = vec![vec![]; num_batch];
+        let mut outputs: Vec<Option<OutputType>> = vec![None; num_batch];
 
         // consume all available token counts
         // assign them to as many slots as possible

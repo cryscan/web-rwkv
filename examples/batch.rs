@@ -161,7 +161,7 @@ async fn run(cli: Cli) -> Result<()> {
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
-                .with_max_batch(cli.batch)
+                .with_num_batch(cli.batch)
                 .with_chunk_size(4)
                 .build();
             run_internal(model, state, tokenizer, cli.batch).await
@@ -180,7 +180,7 @@ async fn run(cli: Cli) -> Result<()> {
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
-                .with_max_batch(cli.batch)
+                .with_num_batch(cli.batch)
                 .with_chunk_size(4)
                 .build();
             run_internal(model, state, tokenizer, cli.batch).await
@@ -199,7 +199,7 @@ async fn run(cli: Cli) -> Result<()> {
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
-                .with_max_batch(cli.batch)
+                .with_num_batch(cli.batch)
                 .with_chunk_size(4)
                 .build();
             run_internal(model, state, tokenizer, cli.batch).await

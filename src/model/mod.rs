@@ -358,13 +358,13 @@ impl<'a> ModelBuilder<'a> {
 }
 
 /// Create a model state.
-/// - `max_batch`: The maximum number of runtime slots.
+/// - `num_batch`: The maximum number of runtime slots.
 /// - `chunk_size`: Internally, the state is split into chunks of layers, since there is a size limit on one GPU buffer (128 MB).
 /// If there is only one batch, it is recommended to set `chunk_size` to `info.num_layers()`.
 pub struct StateBuilder {
     context: Context,
     info: ModelInfo,
-    max_batch: usize,
+    num_batch: usize,
     chunk_size: usize,
 }
 
@@ -373,13 +373,13 @@ impl StateBuilder {
         Self {
             context: context.clone(),
             info: info.clone(),
-            max_batch: 1,
+            num_batch: 1,
             chunk_size: info.num_layer,
         }
     }
 
-    pub fn with_max_batch(mut self, value: usize) -> Self {
-        self.max_batch = value;
+    pub fn with_num_batch(mut self, value: usize) -> Self {
+        self.num_batch = value;
         self
     }
 

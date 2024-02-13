@@ -221,10 +221,10 @@ impl FromBuilder for ModelState {
         let StateBuilder {
             context,
             info,
-            max_batch,
+            num_batch,
             ..
         } = builder;
-        let data = (0..max_batch)
+        let data = (0..num_batch)
             .map(|_| {
                 (0..info.num_layer)
                     .map(|_| {
@@ -244,7 +244,7 @@ impl FromBuilder for ModelState {
             .concat();
         let state = context
             .tensor_from_data(
-                Shape::new(info.num_emb, 5 * info.num_layer, max_batch, 1),
+                Shape::new(info.num_emb, 5 * info.num_layer, num_batch, 1),
                 data,
             )
             .unwrap();
@@ -352,10 +352,10 @@ impl FromBuilder for BackedState {
 
     fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let StateBuilder {
-            info, max_batch, ..
+            info, num_batch, ..
         } = builder;
-        let shape = Shape::new(info.num_emb, 5 * info.num_layer, max_batch, 1);
-        let data = (0..max_batch)
+        let shape = Shape::new(info.num_emb, 5 * info.num_layer, num_batch, 1);
+        let data = (0..num_batch)
             .map(|_| {
                 (0..info.num_layer)
                     .map(|_| {
