@@ -30,7 +30,6 @@ pub enum ModelVersion {
 pub enum ModelError {
     InvalidVersion,
     NoViableChunkSize,
-    BatchSize(usize, usize),
 }
 
 impl std::fmt::Display for ModelError {
@@ -38,7 +37,6 @@ impl std::fmt::Display for ModelError {
         match self {
             ModelError::InvalidVersion => write!(f, "invalid model version"),
             ModelError::NoViableChunkSize => write!(f, "no viable chunk size found"),
-            ModelError::BatchSize(a, b) => write!(f, "batch size not match: {a} vs. {b}"),
         }
     }
 }
@@ -124,7 +122,7 @@ pub trait FromBuilder: Sized {
 }
 
 pub trait BackedState: for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible> {
-    fn max_batch(&self) -> usize;
+    fn num_batch(&self) -> usize;
     fn num_layer(&self) -> usize;
 
     /// Extract the embedding from a given layer of the state.
@@ -134,16 +132,19 @@ pub trait BackedState: for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = I
 pub trait ModelState: for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible> {
     type BackedState: BackedState;
 
-    fn max_batch(&self) -> usize;
+    fn num_batch(&self) -> usize;
 
     /// Load the state from host. Their shapes must match.
-    fn load(&self, backed: &Self::BackedState) -> Result<()>;
+    fn load(&self, backed: &Self::BackedState) -> Result<(), TensorError>;
     /// Load one batch from host. The batch size the backed state should be 1.
-    fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<()>;
+    fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<(), TensorError>;
     /// Back the entire device state to host.
     fn back(&self) -> impl Future<Output = Self::BackedState>;
     /// Back one batch of the device state to host.
-    fn back_batch(&self, batch: usize) -> impl Future<Output = Result<Self::BackedState>>;
+    fn back_batch(
+        &self,
+        batch: usize,
+    ) -> impl Future<Output = Result<Self::BackedState, TensorError>>;
     /// Copy one device state to another. Their shapes must match.
     fn blit(&self, other: &Self) -> Result<(), TensorError>;
     /// Copy one batch from the source state to another.
@@ -369,13 +370,13 @@ impl StateBuilder {
         }
     }
 
-    pub fn with_max_batch(mut self, max_batch: usize) -> Self {
-        self.max_batch = max_batch;
+    pub fn with_max_batch(mut self, value: usize) -> Self {
+        self.max_batch = value;
         self
     }
 
-    pub fn with_chunk_size(mut self, chunk_size: usize) -> Self {
-        self.chunk_size = chunk_size;
+    pub fn with_chunk_size(mut self, value: usize) -> Self {
+        self.chunk_size = value;
         self
     }
 

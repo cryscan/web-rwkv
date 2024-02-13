@@ -9,8 +9,8 @@ use web_rwkv_derive::{Deref, DerefMut};
 use super::{
     run::{Header, HookMap, ModelRunInternal},
     softmax::{ModelSoftmaxInternal, Softmax},
-    FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, OutputType, PreparedModelBuilder,
-    Quant, StateBuilder, MIN_TOKEN_CHUNK_SIZE,
+    FromBuilder, ModelBase, ModelBuilder, ModelInfo, OutputType, PreparedModelBuilder, Quant,
+    StateBuilder, MIN_TOKEN_CHUNK_SIZE,
 };
 use crate::{
     context::Context,
@@ -256,30 +256,30 @@ impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
     #[inline]
-    fn max_batch(&self) -> usize {
+    fn num_batch(&self) -> usize {
         self.0.shape()[2]
     }
 
-    fn load(&self, backed: &Self::BackedState) -> Result<()> {
+    fn load(&self, backed: &Self::BackedState) -> Result<(), TensorError> {
         use super::BackedState;
-        if backed.max_batch() != self.max_batch() {
-            return Err(ModelError::BatchSize(backed.max_batch(), self.max_batch()).into());
+        if backed.num_batch() != self.num_batch() {
+            return Err(TensorError::Batch(backed.num_batch(), self.num_batch()));
         }
         let context = self.context();
         let host = context.tensor_from_data(self.shape(), &*backed.data)?;
-        self.0.load(&host).map_err(|err| err.into())
+        self.0.load(&host)
     }
 
-    fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<()> {
+    fn load_batch(&self, backed: &Self::BackedState, batch: usize) -> Result<(), TensorError> {
         use super::BackedState;
-        if backed.max_batch() != 1 {
-            return Err(ModelError::BatchSize(backed.max_batch(), 1).into());
+        if backed.num_batch() != 1 {
+            return Err(TensorError::Batch(backed.num_batch(), 1));
         }
         let context = self.context();
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
         let host = context.tensor_from_data(shape, &*backed.data)?;
-        self.0.load_batch(&host, batch).map_err(|err| err.into())
+        self.0.load_batch(&host, batch)
     }
 
     async fn back(&self) -> Self::BackedState {
@@ -295,7 +295,7 @@ impl super::ModelState for ModelState {
         BackedState { shape, data }
     }
 
-    async fn back_batch(&self, batch: usize) -> Result<Self::BackedState> {
+    async fn back_batch(&self, batch: usize) -> Result<Self::BackedState, TensorError> {
         let context = self.context();
         let shape = self.shape();
         let shape = Shape::new(shape[0], shape[1], 1, 1);
@@ -379,7 +379,7 @@ impl FromBuilder for BackedState {
 
 impl super::BackedState for BackedState {
     #[inline]
-    fn max_batch(&self) -> usize {
+    fn num_batch(&self) -> usize {
         self.shape[2]
     }
 
@@ -625,7 +625,7 @@ impl ModelRunInternal for Model<'_> {
         state: &ModelState,
         outputs: Vec<Option<OutputType>>,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>)> {
+    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>), TensorError> {
         let context = &self.context;
         let tensor = &self.tensor;
 
@@ -670,7 +670,7 @@ impl ModelRunInternal for Model<'_> {
                 .unwrap_or_else(|| Ok(TensorOp::List(vec![])))
         };
 
-        // gather and group copy operations
+        // collect and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
             (TensorOp::List(vec![]), &buffer.ffn_x)
         } else {
@@ -693,21 +693,6 @@ impl ModelRunInternal for Model<'_> {
             }
             (TensorOp::List(ops), &header.head_x)
         };
-
-        // let head_ops: Vec<_> = input
-        //     .cursors
-        //     .iter()
-        //     .filter(|cursor| cursor.len > 0)
-        //     .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
-        //     .enumerate()
-        //     .map(|(index, cursor)| -> Result<TensorOp<'_>, TensorError> {
-        //         redirect[cursor.batch] = Some(index);
-        //         let token = cursor.token + cursor.len - 1;
-        //         let input = buffer.ffn_x.as_view((.., token, ..))?;
-        //         let output = buffer.head_x.as_view((.., .., index))?;
-        //         TensorOp::blit(input, output)
-        //     })
-        //     .try_collect()?;
 
         let mut ops = vec![];
 

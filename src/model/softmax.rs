@@ -10,7 +10,7 @@ use crate::{
         kind::{ReadBack, ReadWrite},
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::Shape,
-        TensorCpu, TensorGpu, TensorInit, TensorShape,
+        TensorCpu, TensorError, TensorGpu, TensorInit, TensorShape,
     },
 };
 
@@ -36,11 +36,14 @@ pub(crate) trait ModelSoftmaxInternal: ModelBase {
 
 pub trait ModelSoftmax {
     /// Softmax of the input tensors.
-    fn softmax(&self, input: Vec<ModelOutput>) -> impl Future<Output = Result<Vec<ModelOutput>>>;
+    fn softmax(
+        &self,
+        input: Vec<ModelOutput>,
+    ) -> impl Future<Output = Result<Vec<ModelOutput>, TensorError>>;
 }
 
 impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
-    async fn softmax(&self, input: Vec<ModelOutput>) -> Result<Vec<ModelOutput>> {
+    async fn softmax(&self, input: Vec<ModelOutput>) -> Result<Vec<ModelOutput>, TensorError> {
         let max_batch = input.len();
         let context = self.context();
         let info = self.info();

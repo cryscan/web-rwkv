@@ -98,6 +98,7 @@ pub enum TensorError {
     Empty,
     Type,
     Size(usize, usize),
+    Batch(usize, usize),
     Shape(Shape, Shape),
     Deduce,
     BatchOutOfRange {
@@ -119,7 +120,8 @@ impl std::fmt::Display for TensorError {
             TensorError::Empty => write!(f, "list must not be empty"),
             TensorError::Type => write!(f, "data type mismatch"),
             TensorError::Size(a, b) => write!(f, "data size not match: {a} vs. {b}"),
-            TensorError::Shape(a, b) => write!(f, "tensor shape {a} doesn't match {b}"),
+            TensorError::Batch(a, b) => write!(f, "batch size not match: {a} vs. {b}"),
+            TensorError::Shape(a, b) => write!(f, "tensor shape not match: {a} vs. {b}"),
             TensorError::Deduce => write!(f, "cannot deduce dimension"),
             TensorError::BatchOutOfRange { batch, max } => {
                 write!(f, "batch {batch} out of range of max {max}")

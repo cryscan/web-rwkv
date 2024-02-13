@@ -5,8 +5,7 @@ use half::f16;
 use itertools::Itertools;
 
 use super::{
-    ModelBase, ModelError, ModelInfo, ModelInput, ModelOutput, ModelState, OutputType,
-    MIN_TOKEN_CHUNK_SIZE,
+    ModelBase, ModelInfo, ModelInput, ModelOutput, ModelState, OutputType, MIN_TOKEN_CHUNK_SIZE,
 };
 use crate::{
     context::Context,
@@ -62,7 +61,7 @@ pub(crate) trait ModelRunInternal: ModelBase {
         state: &Self::State,
         outputs: Vec<Option<OutputType>>,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>)>;
+    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>), TensorError>;
 
     fn create_input<'a>(
         &self,
@@ -106,7 +105,7 @@ pub trait ModelRun {
         &self,
         tokens: &mut Vec<ModelInput>,
         state: &Self::State,
-    ) -> impl Future<Output = Result<Vec<ModelOutput>>>;
+    ) -> impl Future<Output = Result<Vec<ModelOutput>, TensorError>>;
 
     /// Run the model for a batch of tokens as input, but with custom hooks.
     /// The length of `tokens` must match the number of batches in `state`.
@@ -116,7 +115,7 @@ pub trait ModelRun {
         tokens: &mut Vec<ModelInput>,
         state: &Self::State,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> impl Future<Output = Result<Vec<ModelOutput>>>;
+    ) -> impl Future<Output = Result<Vec<ModelOutput>, TensorError>>;
 }
 
 impl<Hook, Runtime, Model, State> ModelRun for Model
@@ -133,7 +132,7 @@ where
         &self,
         tokens: &mut Vec<ModelInput>,
         state: &Self::State,
-    ) -> Result<Vec<ModelOutput>> {
+    ) -> Result<Vec<ModelOutput>, TensorError> {
         let hooks = Default::default();
         self.run_with_hooks(tokens, state, &hooks).await
     }
@@ -143,12 +142,12 @@ where
         tokens: &mut Vec<ModelInput>,
         state: &Self::State,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> Result<Vec<ModelOutput>> {
+    ) -> Result<Vec<ModelOutput>, TensorError> {
         let num_token: usize = tokens.iter().map(|input| input.tokens.len()).sum();
-        let max_batch = state.max_batch();
+        let max_batch = state.num_batch();
 
         if tokens.len() != max_batch {
-            return Err(ModelError::BatchSize(tokens.len(), max_batch).into());
+            return Err(TensorError::Batch(tokens.len(), max_batch));
         }
         if num_token == 0 {
             return Ok(vec![ModelOutput::None; tokens.len()]);

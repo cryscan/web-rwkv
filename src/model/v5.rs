@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use super::{
     run::{Header, HookMap, ModelRunInternal},
     softmax::{ModelSoftmaxInternal, Softmax},
-    FromBuilder, ModelBase, ModelBuilder, ModelError, ModelInfo, PreparedModelBuilder, Quant,
-    StateBuilder, MIN_TOKEN_CHUNK_SIZE,
+    FromBuilder, ModelBase, ModelBuilder, ModelInfo, PreparedModelBuilder, Quant, StateBuilder,
+    MIN_TOKEN_CHUNK_SIZE,
 };
 use crate::{
     context::Context,
@@ -281,14 +281,14 @@ impl super::ModelState for ModelState {
     type BackedState = BackedState;
 
     #[inline]
-    fn max_batch(&self) -> usize {
+    fn num_batch(&self) -> usize {
         self.max_batch
     }
 
-    fn load(&self, backed: &BackedState) -> Result<()> {
+    fn load(&self, backed: &BackedState) -> Result<(), TensorError> {
         use super::BackedState;
-        if backed.max_batch() != self.max_batch() {
-            return Err(ModelError::BatchSize(backed.max_batch(), self.max_batch()).into());
+        if backed.num_batch() != self.num_batch() {
+            return Err(TensorError::Batch(backed.num_batch(), self.num_batch()));
         }
         for (state, (shape, backed)) in self.state.iter().zip(backed.data.iter()) {
             let context = state.context();
@@ -298,10 +298,10 @@ impl super::ModelState for ModelState {
         Ok(())
     }
 
-    fn load_batch(&self, backed: &BackedState, batch: usize) -> Result<()> {
+    fn load_batch(&self, backed: &BackedState, batch: usize) -> Result<(), TensorError> {
         use super::BackedState;
-        if backed.max_batch() != 1 {
-            return Err(ModelError::BatchSize(backed.max_batch(), 1).into());
+        if backed.num_batch() != 1 {
+            return Err(TensorError::Batch(backed.num_batch(), 1));
         }
         for (state, (_, backed)) in self.state.iter().zip(backed.data.iter()) {
             let context = state.context();
@@ -340,7 +340,7 @@ impl super::ModelState for ModelState {
         }
     }
 
-    async fn back_batch(&self, batch: usize) -> Result<BackedState> {
+    async fn back_batch(&self, batch: usize) -> Result<BackedState, TensorError> {
         let mut data = Vec::with_capacity(self.state.len());
         for state in self.state.iter() {
             let context = state.context();
@@ -440,7 +440,7 @@ impl FromBuilder for BackedState {
 
 impl super::BackedState for BackedState {
     #[inline]
-    fn max_batch(&self) -> usize {
+    fn num_batch(&self) -> usize {
         self.max_batch
     }
 
@@ -712,7 +712,7 @@ impl ModelRunInternal for Model<'_> {
         state: &ModelState,
         outputs: Vec<Option<OutputType>>,
         hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>)> {
+    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>), TensorError> {
         let context = &self.context;
         let tensor = &self.tensor;
 
@@ -758,7 +758,7 @@ impl ModelRunInternal for Model<'_> {
                 .unwrap_or_else(|| Ok(TensorOp::List(vec![])))
         };
 
-        // gather and group copy operations
+        // collect and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
             (TensorOp::List(vec![]), &buffer.ffn_x)
         } else {
@@ -781,21 +781,6 @@ impl ModelRunInternal for Model<'_> {
             }
             (TensorOp::List(ops), &header.head_x)
         };
-
-        // let head_ops: Vec<_> = input
-        //     .cursors
-        //     .iter()
-        //     .filter(|cursor| cursor.len > 0)
-        //     .filter(|cursor| !last.is_some_and(|index| cursor.batch == index))
-        //     .enumerate()
-        //     .map(|(index, cursor)| -> Result<TensorOp<'_>, TensorError> {
-        //         redirect[cursor.batch] = Some(index);
-        //         let token = cursor.token + cursor.len - 1;
-        //         let input = buffer.ffn_x.as_view((.., token, ..))?;
-        //         let output = buffer.head_x.as_view((.., .., index))?;
-        //         TensorOp::blit(input, output)
-        //     })
-        //     .try_collect()?;
 
         let mut ops = vec![];
 
