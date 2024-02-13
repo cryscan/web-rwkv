@@ -4,6 +4,7 @@ use anyhow::Result;
 use half::f16;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
 
 use self::{loader::Loader, run::ModelRun, softmax::ModelSoftmax};
@@ -19,6 +20,7 @@ pub mod v6;
 pub const RESCALE_LAYER: usize = 6;
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
+#[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelVersion {
     V4,
@@ -26,6 +28,7 @@ pub enum ModelVersion {
     V6,
 }
 
+#[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelError {
     InvalidVersion,
@@ -43,6 +46,7 @@ impl std::fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
+#[wasm_bindgen]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub version: ModelVersion,
@@ -53,6 +57,7 @@ pub struct ModelInfo {
     pub num_head: usize,
 }
 
+#[wasm_bindgen]
 impl ModelInfo {
     /// Computes the required storage buffer size, not including head.
     pub fn max_non_head_buffer_size(&self) -> usize {
@@ -105,6 +110,7 @@ impl ModelOutput {
     }
 }
 
+#[wasm_bindgen]
 #[derive(Debug, Default, Clone, Copy)]
 pub enum OutputType {
     /// Only the prediction of the last token.
@@ -182,6 +188,7 @@ impl<M> Model for M where
 }
 
 /// Quantization of a layer.
+#[wasm_bindgen]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Quant {
     /// No quantization.
@@ -195,9 +202,9 @@ pub enum Quant {
 
 /// A LoRA that adds to the model when loading.
 #[derive(Debug, Clone)]
-pub struct Lora {
+pub struct Lora<'a> {
     /// Binary safetensors LoRA content.
-    pub data: Vec<u8>,
+    pub data: &'a [u8],
     /// A list of LoRA blend patterns.
     /// A blend pattern is a regex that matches the name of multiple tensors, and a blend factor.
     /// When applying the patterns, they are applied in order.
@@ -246,6 +253,7 @@ impl LoraBlendPattern {
     }
 }
 
+#[wasm_bindgen]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EmbedDevice {
     #[default]
@@ -256,7 +264,7 @@ pub enum EmbedDevice {
 pub struct ModelBuilder<'a> {
     context: Context,
     data: &'a [u8],
-    lora: Vec<Lora>,
+    lora: Vec<Lora<'a>>,
     quant: HashMap<usize, Quant>,
     embed_device: EmbedDevice,
     turbo: bool,
@@ -316,28 +324,28 @@ impl<'a> ModelBuilder<'a> {
         })
     }
 
-    pub fn with_quant(mut self, quant: HashMap<usize, Quant>) -> Self {
-        self.quant = quant;
+    pub fn with_quant(mut self, value: HashMap<usize, Quant>) -> Self {
+        self.quant = value;
         self
     }
 
-    pub fn add_lora(mut self, lora: Lora) -> Self {
-        self.lora.push(lora);
+    pub fn add_lora(mut self, value: Lora<'a>) -> Self {
+        self.lora.push(value);
         self
     }
 
-    pub fn with_embed_device(mut self, embed_device: EmbedDevice) -> Self {
-        self.embed_device = embed_device;
+    pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
+        self.embed_device = value;
         self
     }
 
-    pub fn with_turbo(mut self, turbo: bool) -> Self {
-        self.turbo = turbo;
+    pub fn with_turbo(mut self, value: bool) -> Self {
+        self.turbo = value;
         self
     }
 
-    pub fn with_token_chunk_size(mut self, token_chunk_size: usize) -> Self {
-        self.token_chunk_size = token_chunk_size;
+    pub fn with_token_chunk_size(mut self, value: usize) -> Self {
+        self.token_chunk_size = value;
         self
     }
 

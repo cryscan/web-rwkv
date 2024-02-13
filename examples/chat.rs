@@ -133,7 +133,7 @@ fn load_model<M: Model>(
             let map = unsafe { Mmap::map(&file)? };
             model
                 .add_lora(Lora {
-                    data: map.to_vec(),
+                    data: &map,
                     blend: Default::default(),
                 })
                 .build()

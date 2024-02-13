@@ -1,7 +1,6 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
-use web_rwkv_derive::Kind;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindingResource, Buffer, BufferBinding, BufferDescriptor, MapMode,
@@ -111,7 +110,6 @@ pub enum TensorError {
         end: usize,
     },
     Contiguous,
-    Pipeline(&'static str),
 }
 
 impl std::fmt::Display for TensorError {
@@ -131,12 +129,17 @@ impl std::fmt::Display for TensorError {
                 "slice {start}..{end} out of range for dimension size {dim}",
             ),
             TensorError::Contiguous => write!(f, "slice not contiguous"),
-            TensorError::Pipeline(name) => write!(f, "pipeline {name} not found"),
         }
     }
 }
 
 impl std::error::Error for TensorError {}
+
+impl From<TensorError> for wasm_bindgen::JsValue {
+    fn from(value: TensorError) -> Self {
+        Self::from_str(value.to_string().leak())
+    }
+}
 
 /// Data defining a tensor view in shader.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
