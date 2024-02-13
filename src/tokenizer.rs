@@ -1,6 +1,6 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
-use derive_getters::Getters;
 use std::collections::BTreeMap;
+use wasm_bindgen::prelude::JsValue;
 
 #[derive(Debug)]
 pub enum TokenizerError {
@@ -29,7 +29,13 @@ impl std::fmt::Display for TokenizerError {
 
 impl std::error::Error for TokenizerError {}
 
-#[derive(Debug, Clone, Getters)]
+impl From<TokenizerError> for JsValue {
+    fn from(value: TokenizerError) -> Self {
+        Self::from_str(value.to_string().leak())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Tokenizer {
     first_bytes_to_lengths: Vec<Box<[u16]>>,
     bytes_to_token_index: HashMap<Vec<u8>, u16>,

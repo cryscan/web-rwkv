@@ -1,5 +1,4 @@
 use anyhow::Result;
-use derive_getters::Getters;
 use half::f16;
 use itertools::Itertools;
 use safetensors::SafeTensors;
@@ -15,7 +14,6 @@ use crate::{
     },
 };
 
-#[derive(Getters)]
 pub struct Loader<'a> {
     context: Context,
     model: SafeTensors<'a>,

@@ -1,6 +1,7 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
+use wasm_bindgen::prelude::JsValue;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindingResource, Buffer, BufferBinding, BufferDescriptor, MapMode,
@@ -135,7 +136,7 @@ impl std::fmt::Display for TensorError {
 
 impl std::error::Error for TensorError {}
 
-impl From<TensorError> for wasm_bindgen::JsValue {
+impl From<TensorError> for JsValue {
     fn from(value: TensorError) -> Self {
         Self::from_str(value.to_string().leak())
     }
