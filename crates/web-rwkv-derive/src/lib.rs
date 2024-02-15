@@ -63,8 +63,8 @@ pub fn derive_deref_mut(input: TokenStream) -> TokenStream {
     }
 }
 
-#[proc_macro_derive(IntoJsValue)]
-pub fn derive_into_js_value(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(JsError)]
+pub fn derive_js_error(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     match input.data {
@@ -75,7 +75,8 @@ pub fn derive_into_js_value(input: TokenStream) -> TokenStream {
             quote! {
                 impl #impl_generics From<#name #ty_generics> for wasm_bindgen::JsValue #where_clause  {
                     fn from(value: #name #ty_generics) -> Self {
-                        Self::from_str(&value.to_string())
+                        let err: wasm_bindgen::JsError = value.into();
+                        Self::from(err)
                     }
                 }
             }

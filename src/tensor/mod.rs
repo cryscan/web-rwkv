@@ -1,7 +1,7 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
-use web_rwkv_derive::IntoJsValue;
+use web_rwkv_derive::JsError;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindingResource, Buffer, BufferBinding, BufferDescriptor, MapMode,
@@ -93,7 +93,7 @@ impl<K: Kind> Device for Gpu<K> {
     type Data = TensorBuffer;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IntoJsValue)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsError)]
 pub enum TensorError {
     Empty,
     Type,

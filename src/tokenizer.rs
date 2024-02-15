@@ -1,9 +1,9 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use std::collections::BTreeMap;
 use wasm_bindgen::prelude::wasm_bindgen;
-use web_rwkv_derive::IntoJsValue;
+use web_rwkv_derive::JsError;
 
-#[derive(Debug, IntoJsValue)]
+#[derive(Debug, JsError)]
 pub enum TokenizerError {
     FailedToParseVocabulary(serde_json::Error),
     NoMatchingTokenFound,
