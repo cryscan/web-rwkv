@@ -1,7 +1,7 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
-use wasm_bindgen::prelude::JsValue;
+use web_rwkv_derive::IntoJsValue;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     BindingResource, Buffer, BufferBinding, BufferDescriptor, MapMode,
@@ -93,7 +93,7 @@ impl<K: Kind> Device for Gpu<K> {
     type Data = TensorBuffer;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, IntoJsValue)]
 pub enum TensorError {
     Empty,
     Type,
@@ -135,12 +135,6 @@ impl std::fmt::Display for TensorError {
 }
 
 impl std::error::Error for TensorError {}
-
-impl From<TensorError> for JsValue {
-    fn from(value: TensorError) -> Self {
-        Self::from_str(value.to_string().leak())
-    }
-}
 
 /// Data defining a tensor view in shader.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]

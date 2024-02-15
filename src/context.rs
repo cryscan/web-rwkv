@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut, Id};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -89,6 +90,7 @@ pub struct ContextBuilder {
     limits: Limits,
 }
 
+#[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreateEnvironmentError {
     RequestAdapterFailed,

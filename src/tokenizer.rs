@@ -1,8 +1,8 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use std::collections::BTreeMap;
-use wasm_bindgen::prelude::JsValue;
+use web_rwkv_derive::IntoJsValue;
 
-#[derive(Debug)]
+#[derive(Debug, IntoJsValue)]
 pub enum TokenizerError {
     FailedToParseVocabulary(serde_json::Error),
     NoMatchingTokenFound,
@@ -28,12 +28,6 @@ impl std::fmt::Display for TokenizerError {
 }
 
 impl std::error::Error for TokenizerError {}
-
-impl From<TokenizerError> for JsValue {
-    fn from(value: TokenizerError) -> Self {
-        Self::from_str(value.to_string().leak())
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Tokenizer {

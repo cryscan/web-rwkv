@@ -63,6 +63,28 @@ pub fn derive_deref_mut(input: TokenStream) -> TokenStream {
     }
 }
 
+#[proc_macro_derive(IntoJsValue)]
+pub fn derive_into_js_value(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    match input.data {
+        Data::Struct(_) | Data::Enum(_) => {
+            let name = input.ident;
+            let generics = input.generics;
+            let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+            quote! {
+                impl #impl_generics From<#name #ty_generics> for wasm_bindgen::JsValue #where_clause  {
+                    fn from(value: #name #ty_generics) -> Self {
+                        Self::from_str(&value.to_string())
+                    }
+                }
+            }
+            .into()
+        }
+        _ => panic!("Expected a struct or enum"),
+    }
+}
+
 #[proc_macro_derive(Id)]
 pub fn derive_id(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
