@@ -1,5 +1,6 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use std::collections::BTreeMap;
+use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::IntoJsValue;
 
 #[derive(Debug, IntoJsValue)]
@@ -29,6 +30,7 @@ impl std::fmt::Display for TokenizerError {
 
 impl std::error::Error for TokenizerError {}
 
+#[wasm_bindgen]
 #[derive(Debug, Clone)]
 pub struct Tokenizer {
     first_bytes_to_lengths: Vec<Box<[u16]>>,
@@ -43,8 +45,10 @@ enum StrOrBytes {
     Bytes(Vec<u8>),
 }
 
+#[wasm_bindgen]
 impl Tokenizer {
-    pub fn new(vocab: &str) -> Result<Self, TokenizerError> {
+    #[wasm_bindgen(constructor)]
+    pub fn new(vocab: &str) -> Result<Tokenizer, TokenizerError> {
         let map: BTreeMap<u16, StrOrBytes> =
             serde_json::from_str(vocab).map_err(TokenizerError::FailedToParseVocabulary)?;
 
@@ -110,6 +114,14 @@ impl Tokenizer {
         Ok(output)
     }
 
+    pub fn decode(&self, tokens: &[u16]) -> Result<Vec<u8>, TokenizerError> {
+        let mut output = Vec::with_capacity(tokens.len());
+        self.decode_into(tokens, &mut output)?;
+        Ok(output)
+    }
+}
+
+impl Tokenizer {
     pub fn encode_into(
         &self,
         mut input: &[u8],
@@ -140,12 +152,6 @@ impl Tokenizer {
         }
 
         Ok(())
-    }
-
-    pub fn decode(&self, tokens: &[u16]) -> Result<Vec<u8>, TokenizerError> {
-        let mut output = Vec::with_capacity(tokens.len());
-        self.decode_into(tokens, &mut output)?;
-        Ok(output)
     }
 
     pub fn decode_into(&self, tokens: &[u16], output: &mut Vec<u8>) -> Result<(), TokenizerError> {
