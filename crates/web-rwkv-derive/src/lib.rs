@@ -85,26 +85,6 @@ pub fn derive_into_js_value(input: TokenStream) -> TokenStream {
     }
 }
 
-#[proc_macro_derive(Id)]
-pub fn derive_id(input: TokenStream) -> TokenStream {
-    let ast = parse_macro_input!(input as DeriveInput);
-    let name = &ast.ident;
-    quote! {
-        impl #name {
-            fn new() -> Self {
-                uid::Id::new().into()
-            }
-        }
-
-        impl From<uid::Id<#name>> for #name {
-            fn from(value: uid::Id<#name>) -> Self {
-                Self(value.get())
-            }
-        }
-    }
-    .into()
-}
-
 #[proc_macro_derive(Kind, attributes(usage))]
 pub fn derive_kind(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);

@@ -1,7 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use wasm_bindgen::prelude::wasm_bindgen;
-use web_rwkv_derive::{Deref, DerefMut, Id};
+use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, Backends, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
@@ -65,12 +65,12 @@ impl Instance {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deref, DerefMut, Id, PartialEq, Eq, Hash)]
-pub struct ContextId(usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContextId;
 
 #[derive(Debug)]
 pub struct ContextInternal {
-    pub id: ContextId,
+    pub id: uid::Id<ContextId>,
     pub adapter: Adapter,
     pub device: Device,
     pub queue: Queue,
@@ -138,7 +138,7 @@ impl<'a> ContextBuilder {
 
         Ok(Context(
             ContextInternal {
-                id: ContextId::new(),
+                id: uid::Id::new(),
                 adapter,
                 device,
                 queue,
