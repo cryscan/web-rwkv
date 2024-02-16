@@ -57,16 +57,21 @@ pub struct ModelInfo {
     pub num_head: usize,
 }
 
+impl ModelInfo {
+    pub const BUFFER_SIZE: usize = 256 << 20;
+    pub const STORAGE_BUFFER_BINDING_SIZE: usize = 128 << 20;
+}
+
 #[wasm_bindgen]
 impl ModelInfo {
-    /// Computes the required storage buffer size, not including head.
+    /// The required storage buffer size, not including head.
     pub fn max_non_head_buffer_size(&self) -> usize {
-        (self.num_emb * self.num_hidden * f16::size()).max(256 << 20)
+        self.num_emb * self.num_hidden * f16::size()
     }
 
-    /// Computes the required storage buffer size, including head.
-    pub fn max_buffer_size(&self) -> usize {
-        (self.num_emb * self.num_vocab * f16::size()).max(256 << 20)
+    /// The head and embed's size.
+    pub fn head_buffer_size(&self) -> usize {
+        self.num_emb * self.num_vocab * f16::size()
     }
 }
 

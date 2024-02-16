@@ -162,9 +162,13 @@ impl<'a> ContextBuilder {
 
     /// Compute the limits automatically based on given model build info.
     pub fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
-        let max_buffer_size = info.max_buffer_size();
-        self.limits.max_buffer_size = (256 << 20).max(max_buffer_size as u64);
-        self.limits.max_storage_buffer_binding_size = (128 << 20).max(max_buffer_size as u32);
+        self.limits.max_buffer_size = ModelInfo::BUFFER_SIZE
+            .max(info.max_non_head_buffer_size())
+            .max(info.head_buffer_size()) as u64;
+        self.limits.max_storage_buffer_binding_size = ModelInfo::STORAGE_BUFFER_BINDING_SIZE
+            .max(info.max_non_head_buffer_size())
+            .max(info.head_buffer_size())
+            as u32;
         self
     }
 
