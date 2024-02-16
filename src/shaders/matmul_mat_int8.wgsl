@@ -17,7 +17,11 @@ struct Input {
 
 @group(0) @binding(3) var<storage, read> minmax: array<u32>;
 @group(0) @binding(4) var<storage, read> xa: array<u32>;                    // (B, M, K)
+#ifdef IN_FP16
 @group(0) @binding(5) var<storage, read> xb: array<vec2<u32>>;              // (B, N, K)
+#else
+@group(0) @binding(5) var<storage, read> xb: array<vec4<f32>>;              // (B, N, K)
+#endif
 #ifdef OUT_FP16
 @group(0) @binding(6) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
 #else
@@ -28,7 +32,11 @@ const TILE_SIZE: u32 = BLOCK_SIZE * 4u;
 const INT8_BLOCK_STEP: u32 = INT8_BLOCK_SIZE / 4u;
 
 var<workgroup> sa: array<array<u32, BLOCK_SIZE>, TILE_SIZE>;
+#ifdef IN_FP16
 var<workgroup> sb: array<array<vec2<u32>, BLOCK_SIZE>, TILE_SIZE>;
+#else
+var<workgroup> sb: array<array<vec4<f32>, BLOCK_SIZE>, TILE_SIZE>;
+#endif
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x >> 2u;
@@ -80,7 +88,11 @@ fn matmul(in: Input) {
             if all(vec2<u32>(x, y) < rb) {
                 sb[j][i] = xb[compute_index(vb, in.uid.z, y, x)];
             } else {
+#ifdef IN_FP16
                 sb[j][i] = vec2<u32>(0u);
+#else
+                sb[j][i] = vec4<f32>(0.0);
+#endif
             }
         }
         workgroupBarrier();
@@ -104,12 +116,21 @@ fn matmul(in: Input) {
                     fma(unpack4x8unorm(sa[t.x + 2u][x]), vec4<f32>(b[2][1] - b[2][0]), vec4<f32>(b[2][0])),
                     fma(unpack4x8unorm(sa[t.x + 3u][x]), vec4<f32>(b[3][1] - b[3][0]), vec4<f32>(b[3][0])),
                 );
+#ifdef IN_FP16
                 let bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x]),
                     unpack4x16float(sb[t.y + 1u][x]),
                     unpack4x16float(sb[t.y + 2u][x]),
                     unpack4x16float(sb[t.y + 3u][x]),
                 );
+#else
+                let bb = mat4x4<f32>(
+                    sb[t.y][x],
+                    sb[t.y + 1u][x],
+                    sb[t.y + 2u][x],
+                    sb[t.y + 3u][x],
+                );
+#endif
                 local_sum += transpose(aa) * bb;
             }
         }

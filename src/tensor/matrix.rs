@@ -28,7 +28,7 @@ pub enum Matrix {
 impl Matrix {
     pub fn matmul_vec_op(
         &self,
-        input: TensorView<f16>,
+        input: TensorView<impl Float>,
         output: TensorView<impl Float>,
         active: Activation,
     ) -> Result<TensorOp, TensorError> {
@@ -41,7 +41,7 @@ impl Matrix {
 
     pub fn matmul_mat_op(
         &self,
-        input: TensorView<f16>,
+        input: TensorView<impl Float>,
         output: TensorView<impl Float>,
         active: Activation,
     ) -> Result<TensorOp, TensorError> {
@@ -60,7 +60,7 @@ impl Matrix {
 
     pub fn matmul_op(
         &self,
-        input: TensorView<f16>,
+        input: TensorView<impl Float>,
         output: TensorView<impl Float>,
         active: Activation,
         turbo: bool,

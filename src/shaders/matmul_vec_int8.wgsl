@@ -11,7 +11,11 @@ struct View {
 @group(0) @binding(3) var<storage, read> matrix: array<u32>;                // (B, R, C)
 @group(0) @binding(4) var<storage, read> minmax: array<u32>;
 
+#ifdef IN_FP16
 @group(0) @binding(5) var<storage, read> input: array<vec2<u32>>;           // (B, T, C)
+#else
+@group(0) @binding(5) var<storage, read> input: array<vec4<f32>>;           // (B, T, C)
+#endif
 #ifdef OUT_FP16
 @group(0) @binding(6) var<storage, read_write> output: array<vec2<u32>>;    // (B, T, R)
 #else

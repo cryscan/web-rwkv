@@ -12,7 +12,11 @@ struct View {
 @group(0) @binding(4) var<storage, read> matrix: array<u32>;                // (B, R, C)
 @group(0) @binding(5) var<storage, read> absmax: array<u32>;
 
+#ifdef IN_FP16
 @group(0) @binding(6) var<storage, read> input: array<vec4<u32>>;           // (B, T, C)
+#else
+@group(0) @binding(6) var<storage, read> input: array<mat2x4<f32>>;         // (B, T, C)
+#endif
 #ifdef OUT_FP16
 @group(0) @binding(7) var<storage, read_write> output: array<vec2<u32>>;    // (B, T, R)
 #else
@@ -120,18 +124,22 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         m[2] = unpack_matrix_0(v[2]);
         m[3] = unpack_matrix_0(v[3]);
         m = transpose(m);
-        // var s = transpose(m) * unpack4x16float(x.xy);
+#ifdef IN_FP16
         local_sum = fma(m * unpack4x16float(x.xy), a, local_sum);
+#else
+        local_sum = fma(m * x[0], a, local_sum);
+#endif
 
         m[0] = unpack_matrix_1(v[0]);
         m[1] = unpack_matrix_1(v[1]);
         m[2] = unpack_matrix_1(v[2]);
         m[3] = unpack_matrix_1(v[3]);
         m = transpose(m);
-        // s += transpose(m) * unpack4x16float(x.zw);
+#ifdef IN_FP16
         local_sum = fma(m * unpack4x16float(x.zw), a, local_sum);
-
-        // local_sum = fma(s, a, local_sum);
+#else
+        local_sum = fma(m * x[1], a, local_sum);
+#endif
     }
     sketch[index] = local_sum;
     workgroupBarrier();

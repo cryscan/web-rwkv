@@ -163,12 +163,8 @@ pub trait ModelState: for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = In
 }
 
 pub trait ModelBase {
-    type ModelTensor;
-
     fn context(&self) -> &Context;
     fn info(&self) -> &ModelInfo;
-
-    fn tensor(&self) -> &Self::ModelTensor;
 }
 
 pub trait Model:

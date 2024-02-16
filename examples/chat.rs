@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Args, Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
+use half::f16;
 use itertools::Itertools;
 use memmap2::Mmap;
 use serde::Deserialize;
@@ -188,7 +189,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     match info.version {
         ModelVersion::V4 => {
-            let model: v4::Model = load_model(
+            let model: v4::Model<f16> = load_model(
                 &context,
                 &map,
                 cli.lora,
@@ -202,7 +203,7 @@ async fn run(cli: Cli) -> Result<()> {
             run_internal(model, state, tokenizer, prompt, sampler).await
         }
         ModelVersion::V5 => {
-            let model: v5::Model = load_model(
+            let model: v5::Model<f16> = load_model(
                 &context,
                 &map,
                 cli.lora,
@@ -216,7 +217,7 @@ async fn run(cli: Cli) -> Result<()> {
             run_internal(model, state, tokenizer, prompt, sampler).await
         }
         ModelVersion::V6 => {
-            let model: v6::Model = load_model(
+            let model: v6::Model<f16> = load_model(
                 &context,
                 &map,
                 cli.lora,

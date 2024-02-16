@@ -9,6 +9,7 @@ use super::{
 };
 use crate::{
     context::Context,
+    num::{Float, Hom},
     tensor::{
         kind::{ReadBack, ReadWrite},
         ops::TensorOp,
@@ -18,13 +19,13 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct Header {
-    pub head_x: TensorGpu<f16, ReadWrite>,
+pub struct Header<F: Float> {
+    pub head_x: TensorGpu<F, ReadWrite>,
     pub head_o: TensorGpu<f32, ReadWrite>,
     pub map: TensorGpu<f32, ReadBack>,
 }
 
-impl Header {
+impl<F: Float> Header<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
         let head_shape = Shape::new(info.num_emb, num_batch, 1, 1);
         let output_shape = Shape::new(info.num_vocab, num_batch, 1, 1);
@@ -37,16 +38,20 @@ impl Header {
     }
 }
 
-pub type HookMap<Hook, Model, State, Runtime> =
-    HashMap<Hook, Box<dyn Fn(&Model, &State, &Runtime) -> Result<TensorOp, TensorError>>>;
+pub type HookMap<Hook, Tensor, State, Runtime, Header> =
+    HashMap<Hook, Box<dyn Fn(&Tensor, &State, &Runtime, &Header) -> Result<TensorOp, TensorError>>>;
 
 pub(crate) trait ModelRunInternal: ModelBase {
     type Hook: Hash;
     type State: ModelState;
+    type Tensor;
     type Runtime;
+    type Header;
+
+    fn tensor(&self) -> &Self::Tensor;
 
     fn checkout_runtime(&self, num_batch: usize) -> Arc<Self::Runtime>;
-    fn checkout_header(&self, num_batch: usize) -> Arc<Header>;
+    fn checkout_header(&self, num_batch: usize) -> Arc<Self::Header>;
 
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     fn token_chunk_size(&self) -> usize;
@@ -60,14 +65,14 @@ pub(crate) trait ModelRunInternal: ModelBase {
         tokens: Vec<Vec<u16>>,
         state: &Self::State,
         outputs: Vec<Option<OutputType>>,
-        hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
+        hooks: &HookMap<Self::Hook, Self::Tensor, Self::State, Self::Runtime, Self::Header>,
     ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>), TensorError>;
 
-    fn create_input<'a>(
+    fn create_input<'a, F: Float>(
         &self,
         embed: &TensorCpu<'a, f16>,
         tokens: &[Vec<u16>],
-    ) -> Result<TensorStack<'a, f16>, TensorError> {
+    ) -> Result<TensorStack<'a, F>, TensorError> {
         let info = self.info();
         let context = self.context();
 
@@ -80,7 +85,8 @@ pub(crate) trait ModelRunInternal: ModelBase {
                         .map(|&token| embed.slice(.., token as usize, .., ..))
                         .try_collect()?,
                 )
-                .unwrap_or_else(|_| context.zeros(Shape::new(info.num_emb, 1, 0, 1)));
+                .unwrap_or_else(|_| context.zeros(Shape::new(info.num_emb, 1, 0, 1)))
+                .map(|x| Hom::co_hom(*x));
                 stack.reshape(
                     TensorDimension::Full,
                     TensorDimension::Auto,
@@ -96,7 +102,11 @@ pub(crate) trait ModelRunInternal: ModelBase {
 pub trait ModelRun {
     type Hook: Hash;
     type State: ModelState;
+    type Tensor;
     type Runtime;
+    type Header;
+
+    fn tensor(&self) -> &Self::Tensor;
 
     /// Run the model for a batch of tokens as input.
     /// The length of `tokens` must match the number of batches in `state`.
@@ -110,23 +120,37 @@ pub trait ModelRun {
     /// Run the model for a batch of tokens as input, but with custom hooks.
     /// The length of `tokens` must match the number of batches in `state`.
     /// `tokens` may have slots with no tokens, for which `run` won't compute that batch and will return an empty vector in that corresponding slot.
+    #[allow(clippy::type_complexity)]
     fn run_with_hooks(
         &self,
         tokens: &mut Vec<ModelInput>,
         state: &Self::State,
-        hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
+        hooks: &HookMap<Self::Hook, Self::Tensor, Self::State, Self::Runtime, Self::Header>,
     ) -> impl Future<Output = Result<Vec<ModelOutput>, TensorError>>;
 }
 
-impl<Hook, Runtime, Model, State> ModelRun for Model
+impl<Hook, Model, Tensor, State, Runtime, Header> ModelRun for Model
 where
     Hook: Hash,
-    Model: ModelRunInternal<Hook = Hook, Runtime = Runtime, State = State>,
     State: super::ModelState,
+    Model: ModelRunInternal<
+        Hook = Hook,
+        Tensor = Tensor,
+        State = State,
+        Runtime = Runtime,
+        Header = Header,
+    >,
 {
     type Hook = Hook;
-    type Runtime = Runtime;
     type State = State;
+    type Tensor = Tensor;
+    type Runtime = Runtime;
+    type Header = Header;
+
+    #[inline]
+    fn tensor(&self) -> &Self::Tensor {
+        <Self as ModelRunInternal>::tensor(self)
+    }
 
     async fn run(
         &self,
@@ -141,7 +165,7 @@ where
         &self,
         tokens: &mut Vec<ModelInput>,
         state: &Self::State,
-        hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
+        hooks: &HookMap<Self::Hook, Self::Tensor, Self::State, Self::Runtime, Self::Header>,
     ) -> Result<Vec<ModelOutput>, TensorError> {
         let num_token: usize = tokens.iter().map(|input| input.tokens.len()).sum();
         let num_batch = state.num_batch();

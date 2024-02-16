@@ -147,7 +147,7 @@ async fn run(cli: Cli) -> Result<()> {
     println!("{:#?}", info);
 
     let context = create_context(&info).await?;
-    let model: v5::Model = load_model(
+    let model: v5::Model<f16> = load_model(
         &context,
         &map,
         cli.lora,
@@ -168,7 +168,11 @@ async fn run(cli: Cli) -> Result<()> {
         hooks.insert(
             v5::Hook::PostFfn(layer),
             Box::new(
-                move |_model, _state, runtime: &v5::Runtime| -> Result<TensorOp, TensorError> {
+                move |_model,
+                      _state,
+                      runtime: &v5::Runtime<_>,
+                      _header|
+                      -> Result<TensorOp, TensorError> {
                     // figure out how many tokens this run has
                     let shape = runtime.ffn_x.shape();
                     let num_token = shape[1];
@@ -222,7 +226,7 @@ async fn run(cli: Cli) -> Result<()> {
             &tensor.head.layer_norm.b,
             &buffer.ffn_x,
             None,
-            v5::Model::LN_EPS,
+            v5::Model::<f16>::LN_EPS,
         )?,
         tensor.head.w.matmul_mat_op(
             buffer.ffn_x.view(.., .., .., ..)?,

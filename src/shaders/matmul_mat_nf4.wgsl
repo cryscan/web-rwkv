@@ -18,7 +18,11 @@ struct Input {
 
 @group(0) @binding(4) var<storage, read> absmax: array<u32>;
 @group(0) @binding(5) var<storage, read> xa: array<u32>;                    // (B, M, K)
+#ifdef IN_FP16
 @group(0) @binding(6) var<storage, read> xb: array<vec4<u32>>;              // (B, N, K)
+#else
+@group(0) @binding(6) var<storage, read> xb: array<mat2x4<f32>>;            // (B, N, K)
+#endif
 #ifdef OUT_FP16
 @group(0) @binding(7) var<storage, read_write> output: array<vec2<u32>>;    // (B, N, M)
 #else
@@ -29,7 +33,11 @@ const TILE_SIZE: u32 = BLOCK_SIZE * 4u;
 const NF4_BLOCK_STEP: u32 = NF4_BLOCK_SIZE / 8u;
 
 var<workgroup> sa: array<array<u32, BLOCK_SIZE>, TILE_SIZE>;
+#ifdef IN_FP16
 var<workgroup> sb: array<array<vec4<u32>, BLOCK_SIZE>, TILE_SIZE>;
+#else
+var<workgroup> sb: array<array<mat2x4<f32>, BLOCK_SIZE>, TILE_SIZE>;
+#endif
 var<workgroup> q: array<vec4<f32>, 4u>;
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32, step: u32) -> u32 {
@@ -117,7 +125,11 @@ fn matmul(in: Input) {
             if all(vec2<u32>(x, y) < rb) {
                 sb[j][i] = xb[compute_index(vb, in.uid.z, y, x, 8u)];
             } else {
+#ifdef IN_FP16
                 sb[j][i] = vec4<u32>(0u);
+#else
+                sb[j][i] = mat2x4<f32>();
+#endif
             }
         }
         workgroupBarrier();
@@ -148,12 +160,21 @@ fn matmul(in: Input) {
                     a[2] * unpack_matrix_0(la[2]),
                     a[3] * unpack_matrix_0(la[3]),
                 );
+#ifdef IN_FP16
                 var bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x].xy),
                     unpack4x16float(sb[t.y + 1u][x].xy),
                     unpack4x16float(sb[t.y + 2u][x].xy),
                     unpack4x16float(sb[t.y + 3u][x].xy),
                 );
+#else
+                var bb = mat4x4<f32>(
+                    sb[t.y][x][0],
+                    sb[t.y + 1u][x][0],
+                    sb[t.y + 2u][x][0],
+                    sb[t.y + 3u][x][0],
+                );
+#endif
                 local_sum += transpose(aa) * bb;
 
                 aa = mat4x4<f32>(
@@ -162,12 +183,21 @@ fn matmul(in: Input) {
                     a[2] * unpack_matrix_1(la[2]),
                     a[3] * unpack_matrix_1(la[3]),
                 );
+#ifdef IN_FP16
                 bb = mat4x4<f32>(
                     unpack4x16float(sb[t.y][x].zw),
                     unpack4x16float(sb[t.y + 1u][x].zw),
                     unpack4x16float(sb[t.y + 2u][x].zw),
                     unpack4x16float(sb[t.y + 3u][x].zw),
                 );
+#else
+                bb = mat4x4<f32>(
+                    sb[t.y][x][1],
+                    sb[t.y + 1u][x][1],
+                    sb[t.y + 2u][x][1],
+                    sb[t.y + 3u][x][1],
+                );
+#endif
                 local_sum += transpose(aa) * bb;
             }
         }

@@ -540,7 +540,7 @@ impl TensorOp {
         matrix: &TensorGpu<u8, ReadWrite>,
         quant: &TensorGpu<f32, Uniform>,
         absmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorView<f16>,
+        input: TensorView<impl Float>,
         output: TensorView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
@@ -622,7 +622,7 @@ impl TensorOp {
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
     pub fn matmul_mat_fp16(
         matrix: TensorView<f16>,
-        input: TensorView<f16>,
+        input: TensorView<impl Float>,
         output: TensorView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
@@ -695,7 +695,7 @@ impl TensorOp {
     pub fn matmul_mat_int8(
         matrix: TensorView<u8>,
         minmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorView<f16>,
+        input: TensorView<impl Float>,
         output: TensorView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
@@ -779,7 +779,7 @@ impl TensorOp {
         matrix: TensorView<u8>,
         quant: &TensorGpu<f32, Uniform>,
         absmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorView<f16>,
+        input: TensorView<impl Float>,
         output: TensorView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {

@@ -15,6 +15,7 @@ use super::{
 use crate::{
     context::Context,
     model::RESCALE_LAYER,
+    num::{Float, Hom},
     tensor::{
         cache::ResourceCache,
         kind::{ReadBack, ReadWrite},
@@ -26,7 +27,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct Model<'a> {
+pub struct Model<'a, F: Float> {
     context: Context,
     info: ModelInfo,
 
@@ -36,8 +37,8 @@ pub struct Model<'a> {
     token_chunk_size: usize,
 
     tensor: ModelTensor<'a>,
-    runtime_cache: ResourceCache<usize, Runtime>,
-    header_cache: ResourceCache<usize, Header>,
+    runtime_cache: ResourceCache<usize, Runtime<F>>,
+    header_cache: ResourceCache<usize, Header<F>>,
     softmax_cache: ResourceCache<usize, Softmax>,
 }
 
@@ -102,31 +103,31 @@ pub struct Head {
 
 /// Runtime buffers.
 #[derive(Debug)]
-pub struct Runtime {
+pub struct Runtime<F: Float> {
     pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
-    pub input: TensorGpu<f16, ReadWrite>,
+    pub input: TensorGpu<F, ReadWrite>,
 
-    pub att_x: TensorGpu<f16, ReadWrite>,
-    pub att_kx: TensorGpu<f16, ReadWrite>,
-    pub att_vx: TensorGpu<f16, ReadWrite>,
-    pub att_rx: TensorGpu<f16, ReadWrite>,
+    pub att_x: TensorGpu<F, ReadWrite>,
+    pub att_kx: TensorGpu<F, ReadWrite>,
+    pub att_vx: TensorGpu<F, ReadWrite>,
+    pub att_rx: TensorGpu<F, ReadWrite>,
     pub att_k: TensorGpu<f32, ReadWrite>,
     pub att_v: TensorGpu<f32, ReadWrite>,
     pub att_r: TensorGpu<f32, ReadWrite>,
-    pub att_o: TensorGpu<f16, ReadWrite>,
+    pub att_o: TensorGpu<F, ReadWrite>,
 
-    pub ffn_x: TensorGpu<f16, ReadWrite>,
-    pub ffn_kx: TensorGpu<f16, ReadWrite>,
-    pub ffn_rx: TensorGpu<f16, ReadWrite>,
-    pub ffn_k: TensorGpu<f16, ReadWrite>,
-    pub ffn_v: TensorGpu<f16, ReadWrite>,
-    pub ffn_r: TensorGpu<f16, ReadWrite>,
+    pub ffn_x: TensorGpu<F, ReadWrite>,
+    pub ffn_kx: TensorGpu<F, ReadWrite>,
+    pub ffn_rx: TensorGpu<F, ReadWrite>,
+    pub ffn_k: TensorGpu<F, ReadWrite>,
+    pub ffn_v: TensorGpu<F, ReadWrite>,
+    pub ffn_r: TensorGpu<F, ReadWrite>,
 
     pub aux_x: TensorGpu<f32, ReadWrite>,
 }
 
-impl Runtime {
+impl<F: Float> Runtime<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize, max_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
@@ -399,12 +400,12 @@ impl super::BackedState for BackedState {
     }
 }
 
-impl<'a> Model<'a> {
+impl<'a, F: Float> Model<'a, F> {
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
 }
 
-impl FromBuilder for Model<'_> {
+impl<F: Float> FromBuilder for Model<'_, F> {
     type Builder<'a> = ModelBuilder<'a>;
     type Error = anyhow::Error;
 
@@ -562,9 +563,7 @@ impl FromBuilder for Model<'_> {
     }
 }
 
-impl<'a> ModelBase for Model<'a> {
-    type ModelTensor = ModelTensor<'a>;
-
+impl<'a, F: Float> ModelBase for Model<'a, F> {
     #[inline]
     fn context(&self) -> &Context {
         &self.context
@@ -574,14 +573,9 @@ impl<'a> ModelBase for Model<'a> {
     fn info(&self) -> &ModelInfo {
         &self.info
     }
-
-    #[inline]
-    fn tensor(&self) -> &Self::ModelTensor {
-        &self.tensor
-    }
 }
 
-impl ModelSoftmaxInternal for Model<'_> {
+impl<F: Float> ModelSoftmaxInternal for Model<'_, F> {
     #[inline]
     fn checkout_softmax(&self, num_batch: usize) -> Arc<Softmax> {
         self.softmax_cache.checkout(num_batch, || {
@@ -590,20 +584,27 @@ impl ModelSoftmaxInternal for Model<'_> {
     }
 }
 
-impl ModelRunInternal for Model<'_> {
+impl<'a, F: Float + Hom<f16>> ModelRunInternal for Model<'a, F> {
     type Hook = Hook;
-    type Runtime = Runtime;
     type State = ModelState;
+    type Tensor = ModelTensor<'a>;
+    type Runtime = Runtime<F>;
+    type Header = Header<F>;
 
     #[inline]
-    fn checkout_runtime(&self, num_token: usize) -> Arc<Runtime> {
+    fn tensor(&self) -> &Self::Tensor {
+        &self.tensor
+    }
+
+    #[inline]
+    fn checkout_runtime(&self, num_token: usize) -> Arc<Self::Runtime> {
         self.runtime_cache.checkout(num_token, || {
             Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
         })
     }
 
     #[inline]
-    fn checkout_header(&self, num_batch: usize) -> Arc<Header> {
+    fn checkout_header(&self, num_batch: usize) -> Arc<Self::Header> {
         self.header_cache.checkout(num_batch, || {
             Header::new(&self.context, &self.info, num_batch)
         })
@@ -624,7 +625,7 @@ impl ModelRunInternal for Model<'_> {
         tokens: Vec<Vec<u16>>,
         state: &ModelState,
         outputs: Vec<Option<OutputType>>,
-        hooks: &HookMap<Self::Hook, Self, Self::State, Self::Runtime>,
+        hooks: &HookMap<Self::Hook, Self::Tensor, Self::State, Self::Runtime, Self::Header>,
     ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>), TensorError> {
         let context = &self.context;
         let tensor = &self.tensor;
@@ -666,7 +667,7 @@ impl ModelRunInternal for Model<'_> {
         let hook_op = |hook: Hook| -> Result<TensorOp, TensorError> {
             hooks
                 .get(&hook)
-                .map(|f| f(self, state, &buffer))
+                .map(|f| f(&self.tensor, state, &buffer, &header))
                 .unwrap_or_else(|| Ok(TensorOp::List(vec![])))
         };
 
