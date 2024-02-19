@@ -33,7 +33,7 @@ log = "0.4"
 wasm-bindgen = "0.2"
 
 [dependencies.web-rwkv-derive]
-version = "0.2"
+version = "0.2.3"
 path = "crates/web-rwkv-derive"
 
 [dev-dependencies]
