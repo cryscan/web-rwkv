@@ -1,6 +1,6 @@
 [package]
 name = "web-rwkv"
-version = "0.6.11"
+version = "0.6.12"
 edition = "2021"
 authors = ["Zhenyuan Zhang <cryscan@umich.edu>"]
 license = "MIT OR Apache-2.0"

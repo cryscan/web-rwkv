@@ -2,12 +2,14 @@ use std::{collections::HashMap, convert::Infallible, future::Future};
 
 use anyhow::Result;
 use half::f16;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::wasm_bindgen;
-use web_rwkv_derive::{Deref, DerefMut};
 
-use self::{loader::Loader, run::ModelRun, softmax::ModelSoftmax};
+use self::{
+    loader::{Loader, Lora, Reader},
+    run::ModelRun,
+    softmax::ModelSoftmax,
+};
 use crate::{context::Context, num::Scalar, tensor::TensorError};
 
 pub mod loader;
@@ -201,59 +203,6 @@ pub enum Quant {
     NF4,
 }
 
-/// A LoRA that adds to the model when loading.
-#[derive(Debug, Clone)]
-pub struct Lora<'a> {
-    /// Binary safetensors LoRA content.
-    pub data: &'a [u8],
-    /// A list of LoRA blend patterns.
-    /// A blend pattern is a regex that matches the name of multiple tensors, and a blend factor.
-    /// When applying the patterns, they are applied in order.
-    pub blend: LoraBlend,
-}
-
-/// A list of LoRA blend patterns.
-#[derive(Debug, Clone, Deref, DerefMut)]
-pub struct LoraBlend(pub Vec<LoraBlendPattern>);
-
-impl LoraBlend {
-    /// Build a blend pattern that matches all tensors.
-    pub fn full(alpha: f32) -> Self {
-        let pattern = LoraBlendPattern::new(r".+", alpha).expect("default blend pattern");
-        Self(vec![pattern])
-    }
-}
-
-impl Default for LoraBlend {
-    fn default() -> Self {
-        Self::full(1.0)
-    }
-}
-
-/// A blend pattern is a regex that matches the name of multiple tensors, and a blend factor.
-#[derive(Debug, Clone)]
-pub struct LoraBlendPattern {
-    /// A regex pattern that matches tensors in the model.
-    pattern: Regex,
-    /// The blend factor.
-    alpha: f32,
-}
-
-impl LoraBlendPattern {
-    #[inline]
-    pub fn new(pattern: &str, alpha: f32) -> Result<Self> {
-        Ok(Self {
-            pattern: Regex::new(pattern)?,
-            alpha,
-        })
-    }
-
-    #[inline]
-    pub fn alpha(&self) -> f32 {
-        self.alpha
-    }
-}
-
 #[wasm_bindgen]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EmbedDevice {
@@ -264,7 +213,7 @@ pub enum EmbedDevice {
 
 pub struct ModelBuilder<'a> {
     context: Context,
-    data: &'a [u8],
+    model: &'a dyn Reader,
     lora: Vec<Lora<'a>>,
     quant: HashMap<usize, Quant>,
     embed_device: EmbedDevice,
@@ -283,10 +232,10 @@ struct PreparedModelBuilder<'a> {
 }
 
 impl<'a> ModelBuilder<'a> {
-    pub fn new(context: &Context, data: &'a [u8]) -> Self {
+    pub fn new(context: &Context, model: &'a dyn Reader) -> Self {
         Self {
             context: context.clone(),
-            data,
+            model,
             lora: vec![],
             quant: Default::default(),
             turbo: false,
@@ -298,7 +247,7 @@ impl<'a> ModelBuilder<'a> {
     fn prepare(self) -> Result<PreparedModelBuilder<'a>> {
         let ModelBuilder {
             context,
-            data,
+            model,
             lora,
             quant,
             embed_device,
@@ -306,8 +255,8 @@ impl<'a> ModelBuilder<'a> {
             token_chunk_size,
         } = self;
 
-        let loader = Loader::new(&context, data, lora)?;
-        let info = Loader::info(data)?;
+        let info = Loader::info(model)?;
+        let loader = Loader::new(&context, model, lora);
 
         let token_chunk_size = token_chunk_size
             .max(MIN_TOKEN_CHUNK_SIZE)

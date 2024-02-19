@@ -5,6 +5,7 @@ use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
 use itertools::Itertools;
 use memmap2::Mmap;
+use safetensors::SafeTensors;
 use std::{
     fs::File,
     io::{BufReader, Read},
@@ -13,10 +14,10 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::Loader,
+        loader::{Loader, Lora},
         run::{HookMap, ModelRun},
         softmax::ModelSoftmax,
-        v5, Lora, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput, ModelOutput, ModelVersion,
+        v5, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput, ModelOutput, ModelVersion,
         Quant, StateBuilder,
     },
     tensor::{
@@ -106,7 +107,8 @@ fn load_model<M: Model>(
         .map(|layer| (layer, Quant::Int8))
         .chain((0..quant_nf4).map(|layer| (layer, Quant::NF4)))
         .collect();
-    let model = ModelBuilder::new(context, data)
+    let model = SafeTensors::deserialize(data)?;
+    let model = ModelBuilder::new(context, &model)
         .with_quant(quant)
         .with_turbo(turbo)
         .with_token_chunk_size(token_chunk_size)
@@ -114,10 +116,11 @@ fn load_model<M: Model>(
     match lora {
         Some(lora) => {
             let file = File::open(lora)?;
-            let map = unsafe { Mmap::map(&file)? };
+            let data = unsafe { Mmap::map(&file)? };
+            let data = &SafeTensors::deserialize(&data)?;
             model
                 .add_lora(Lora {
-                    data: &map,
+                    data,
                     blend: Default::default(),
                 })
                 .build()
@@ -138,9 +141,10 @@ async fn run(cli: Cli) -> Result<()> {
     });
 
     let file = File::open(model)?;
-    let map = unsafe { Mmap::map(&file)? };
+    let data = unsafe { Mmap::map(&file)? };
 
-    let info = Loader::info(&map)?;
+    let model = SafeTensors::deserialize(&data)?;
+    let info = Loader::info(&model)?;
     if info.version != ModelVersion::V5 {
         bail!("this demo only supports v5");
     }
@@ -149,7 +153,7 @@ async fn run(cli: Cli) -> Result<()> {
     let context = create_context(&info).await?;
     let model: v5::Model<f16> = load_model(
         &context,
-        &map,
+        &data,
         cli.lora,
         cli.quant,
         cli.quant_nf4,

@@ -1,9 +1,13 @@
+use std::fmt::Debug;
+
 use anyhow::Result;
 use half::f16;
 use itertools::Itertools;
-use safetensors::SafeTensors;
+use regex::Regex;
+use safetensors::{tensor::TensorView, SafeTensorError, SafeTensors};
+use web_rwkv_derive::{Deref, DerefMut};
 
-use super::{Lora, ModelError, ModelInfo, ModelVersion};
+use super::{ModelError, ModelInfo, ModelVersion};
 use crate::{
     context::Context,
     tensor::{
@@ -14,10 +18,74 @@ use crate::{
     },
 };
 
-pub struct Loader<'a> {
-    context: Context,
-    model: SafeTensors<'a>,
-    lora: Vec<Lora<'a>>,
+/// Interface accessing a safetensors data blob.
+pub trait Reader {
+    fn names(&self) -> Vec<&String>;
+    fn tensor<'a>(&'a self, name: &str) -> Result<TensorView<'a>, SafeTensorError>;
+}
+
+impl Reader for SafeTensors<'_> {
+    #[inline]
+    fn names(&self) -> Vec<&String> {
+        self.names()
+    }
+
+    #[inline]
+    fn tensor(&self, name: &str) -> Result<TensorView<'_>, SafeTensorError> {
+        self.tensor(name)
+    }
+}
+
+/// A LoRA that adds to the model when loading.
+pub struct Lora<'a> {
+    /// Binary safetensors LoRA content.
+    pub data: &'a dyn Reader,
+    /// A list of LoRA blend patterns.
+    /// A blend pattern is a regex that matches the name of multiple tensors, and a blend factor.
+    /// When applying the patterns, they are applied in order.
+    pub blend: LoraBlend,
+}
+
+/// A list of LoRA blend patterns.
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct LoraBlend(pub Vec<LoraBlendPattern>);
+
+impl LoraBlend {
+    /// Build a blend pattern that matches all tensors.
+    pub fn full(alpha: f32) -> Self {
+        let pattern = LoraBlendPattern::new(r".+", alpha).expect("default blend pattern");
+        Self(vec![pattern])
+    }
+}
+
+impl Default for LoraBlend {
+    fn default() -> Self {
+        Self::full(1.0)
+    }
+}
+
+/// A blend pattern is a regex that matches the name of multiple tensors, and a blend factor.
+#[derive(Debug, Clone)]
+pub struct LoraBlendPattern {
+    /// A regex pattern that matches tensors in the model.
+    pattern: Regex,
+    /// The blend factor.
+    alpha: f32,
+}
+
+impl LoraBlendPattern {
+    #[inline]
+    pub fn new(pattern: &str, alpha: f32) -> Result<Self> {
+        Ok(Self {
+            pattern: Regex::new(pattern)?,
+            alpha,
+        })
+    }
+
+    #[inline]
+    pub fn alpha(&self) -> f32 {
+        self.alpha
+    }
 }
 
 struct LoraVector {
@@ -32,25 +100,34 @@ struct LoraMatrix {
     alpha: f32,
 }
 
+pub struct Loader<'a> {
+    context: Context,
+    model: &'a dyn Reader,
+    lora: Vec<Lora<'a>>,
+}
+
 impl<'a> Loader<'a> {
-    pub fn new(context: &Context, data: &'a [u8], lora: Vec<Lora<'a>>) -> Result<Loader<'a>> {
-        let model = SafeTensors::deserialize(data)?;
-        let lora = lora
-            .into_iter()
-            .map(|lora| -> Result<_> {
-                let _ = SafeTensors::deserialize(lora.data)?;
-                Ok(lora)
-            })
-            .try_collect()?;
-        Ok(Self {
+    pub fn new(context: &Context, model: &'a dyn Reader, lora: Vec<Lora<'a>>) -> Self {
+        // let model = SafeTensors::deserialize(data)?;
+        // let lora = lora
+        //     .into_iter()
+        //     .map(|lora| -> Result<_> {
+        //         let _ = SafeTensors::deserialize(lora.data)?;
+        //         Ok(lora)
+        //     })
+        //     .try_collect()?;
+        // Ok(Self {
+        //     context: context.clone(),
+        //     model,
+        // })
+        Self {
             context: context.clone(),
             model,
             lora,
-        })
+        }
     }
 
-    pub fn info(data: &'a [u8]) -> Result<ModelInfo> {
-        let model = SafeTensors::deserialize(data)?;
+    pub fn info<T: Reader + ?Sized>(model: &T) -> Result<ModelInfo> {
         let num_layer = {
             let mut r: usize = 0;
             for i in model.names() {
@@ -120,13 +197,12 @@ impl<'a> Loader<'a> {
         self.lora
             .iter()
             .filter_map(|lora| {
-                let data = SafeTensors::deserialize(lora.data).ok()?;
                 lora.blend
                     .iter()
                     .filter(|blend| blend.pattern.is_match(name))
                     .last()
                     .and_then(|blend| {
-                        data.tensor(name).ok().and_then(|tensor| {
+                        lora.data.tensor(name).ok().and_then(|tensor| {
                             let tensor = TensorCpu::<f16>::from_safetensors(&self.context, tensor)
                                 .ok()?
                                 .map(|x| x.to_f32())
@@ -147,42 +223,17 @@ impl<'a> Loader<'a> {
         self.lora
             .iter()
             .filter_map(|lora| {
-                let data = SafeTensors::deserialize(lora.data).ok()?;
                 lora.blend
                     .iter()
                     .filter(|blend| blend.pattern.is_match(name))
                     .last()
                     .and_then(|blend| {
-                        let context = &self.context;
-
-                        let a = data
-                            .tensor(&format!("{name}.lora.0"))
-                            .ok()
-                            .and_then(|tensor| TensorGpu::from_safetensors(context, tensor).ok())?;
-                        let b = data
-                            .tensor(&format!("{name}.lora.1"))
-                            .ok()
-                            .and_then(|tensor| TensorGpu::from_safetensors(context, tensor).ok())?;
-                        // let tensor =
-                        //     TensorGpu::init(context, Shape::new(a.shape()[1], b.shape()[1], 1, 1));
-
-                        // let mut encoder = context
-                        //     .device
-                        //     .create_command_encoder(&Default::default());
-
-                        // let op = TensorOp::matmul_mat_fp16(
-                        //     b.view(.., .., .., ..).ok()?,
-                        //     a.view(.., .., .., ..).ok()?,
-                        //     tensor.view(.., .., .., ..).ok()?,
-                        // )
-                        // .ok()?;
-                        // let mut pass =
-                        //     encoder.begin_compute_pass(&Default::default());
-                        // pass.execute_tensor_op(&op);
-                        // drop(pass);
-
-                        // context.queue.submit(Some(encoder.finish()));
-
+                        let a = lora.data.tensor(&format!("{name}.lora.0")).ok().and_then(
+                            |tensor| TensorGpu::from_safetensors(&self.context, tensor).ok(),
+                        )?;
+                        let b = lora.data.tensor(&format!("{name}.lora.1")).ok().and_then(
+                            |tensor| TensorGpu::from_safetensors(&self.context, tensor).ok(),
+                        )?;
                         let rank = a.shape()[0];
                         let alpha = blend.alpha;
 
