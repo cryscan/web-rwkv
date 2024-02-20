@@ -20,14 +20,14 @@ use crate::{
 
 /// Interface accessing a safetensors data blob.
 pub trait Reader {
-    fn names(&self) -> Vec<&String>;
+    fn names(&self) -> Vec<&str>;
     fn tensor<'a>(&'a self, name: &str) -> Result<TensorView<'a>, SafeTensorError>;
 }
 
 impl Reader for SafeTensors<'_> {
     #[inline]
-    fn names(&self) -> Vec<&String> {
-        self.names()
+    fn names(&self) -> Vec<&str> {
+        self.names().into_iter().map(AsRef::as_ref).collect()
     }
 
     #[inline]
