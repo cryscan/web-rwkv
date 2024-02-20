@@ -134,7 +134,11 @@ pub trait FromBuilder: Sized {
     fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
 }
 
-pub trait BackedState: for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible> {
+pub trait BackedState:
+    Serialize
+    + for<'a> Deserialize<'a>
+    + for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible>
+{
     fn num_batch(&self) -> usize;
     fn num_layer(&self) -> usize;
 

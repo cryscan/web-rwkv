@@ -441,7 +441,7 @@ impl super::ModelState for ModelState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackedState {
     pub num_batch: usize,
     pub chunk_size: usize,

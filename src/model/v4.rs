@@ -341,7 +341,7 @@ impl super::ModelState for ModelState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackedState {
     pub shape: Shape,
     pub data: Vec<f32>,
