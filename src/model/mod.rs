@@ -131,9 +131,14 @@ pub trait FromBuilder: Sized {
     type Builder<'a>;
     type Error;
 
-    fn from_builder(
-        builder: Self::Builder<'_>,
-    ) -> impl Future<Output = Result<Self, Self::Error>> + Send;
+    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
+}
+
+pub trait FromBuilderFuture: Sized {
+    type Builder<'a>;
+    type Error;
+
+    fn from_builder(builder: Self::Builder<'_>) -> impl Future<Output = Result<Self, Self::Error>>;
 }
 
 pub trait BackedState:
@@ -184,7 +189,7 @@ pub trait Model:
     ModelBase
     + ModelSoftmax
     + ModelRun
-    + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
+    + for<'a> FromBuilderFuture<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
 {
 }
 
@@ -192,7 +197,7 @@ impl<M> Model for M where
     M: ModelBase
         + ModelSoftmax
         + ModelRun
-        + for<'a> FromBuilder<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
+        + for<'a> FromBuilderFuture<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
 {
 }
 
@@ -307,7 +312,7 @@ impl<'a> ModelBuilder<'a> {
 
     pub async fn build<M>(self) -> Result<M>
     where
-        M: ModelBase + FromBuilder<Builder<'a> = Self, Error = anyhow::Error>,
+        M: ModelBase + FromBuilderFuture<Builder<'a> = Self, Error = anyhow::Error>,
     {
         M::from_builder(self).await
     }
@@ -344,11 +349,11 @@ impl StateBuilder {
         self
     }
 
-    pub async fn build<S: ModelState>(self) -> S {
-        S::from_builder(self).await.expect("build model state")
+    pub fn build<S: ModelState>(self) -> S {
+        S::from_builder(self).expect("build model state")
     }
 
-    pub async fn build_backed<B: BackedState>(self) -> B {
-        B::from_builder(self).await.expect("build backed state")
+    pub fn build_backed<B: BackedState>(self) -> B {
+        B::from_builder(self).expect("build backed state")
     }
 }

@@ -21,14 +21,14 @@ use crate::{
 };
 
 /// Interface accessing a safetensors data blob.
-pub trait Reader: Sync {
+pub trait Reader {
     fn names(&self) -> Vec<&str>;
     fn contains(&self, name: &str) -> bool;
 
     fn tensor<'a>(
         &'a self,
         name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<TensorView<'a>, SafeTensorError>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<TensorView<'a>, SafeTensorError>> + 'a>>;
 }
 
 impl Reader for SafeTensors<'_> {
@@ -46,7 +46,7 @@ impl Reader for SafeTensors<'_> {
     fn tensor(
         &self,
         name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<TensorView<'_>, SafeTensorError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<TensorView<'_>, SafeTensorError>> + '_>> {
         let name = name.to_string();
         Box::pin(async move { self.tensor(&name) })
     }

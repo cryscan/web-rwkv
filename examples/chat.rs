@@ -206,7 +206,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.token_chunk_size,
             )
             .await?;
-            let state: v4::ModelState = StateBuilder::new(&context, model.info()).build().await;
+            let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer, prompt, sampler).await
         }
         ModelVersion::V5 => {
@@ -221,7 +221,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.token_chunk_size,
             )
             .await?;
-            let state: v5::ModelState = StateBuilder::new(&context, model.info()).build().await;
+            let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer, prompt, sampler).await
         }
         ModelVersion::V6 => {
@@ -236,7 +236,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.token_chunk_size,
             )
             .await?;
-            let state: v6::ModelState = StateBuilder::new(&context, model.info()).build().await;
+            let state: v6::ModelState = StateBuilder::new(&context, model.info()).build();
             run_internal(model, state, tokenizer, prompt, sampler).await
         }
     }

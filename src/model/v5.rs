@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use super::{
     run::{Header, HookMap, ModelRunInternal},
     softmax::{ModelSoftmaxInternal, Softmax},
-    FromBuilder, ModelBase, ModelBuilder, ModelInfo, PreparedModelBuilder, Quant, StateBuilder,
-    MIN_TOKEN_CHUNK_SIZE,
+    FromBuilder, FromBuilderFuture, ModelBase, ModelBuilder, ModelInfo, PreparedModelBuilder,
+    Quant, StateBuilder, MIN_TOKEN_CHUNK_SIZE,
 };
 use crate::{
     context::Context,
@@ -245,7 +245,7 @@ impl FromBuilder for ModelState {
     type Builder<'a> = StateBuilder;
     type Error = Infallible;
 
-    async fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let StateBuilder {
             context,
             info,
@@ -412,7 +412,7 @@ impl FromBuilder for BackedState {
     type Builder<'a> = StateBuilder;
     type Error = Infallible;
 
-    async fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let StateBuilder {
             info,
             num_batch,
@@ -469,7 +469,7 @@ impl<'a, F: Float> Model<'a, F> {
     pub const GN_EPS: f32 = 64.0e-5;
 }
 
-impl<'a, F: Float> FromBuilder for Model<'a, F> {
+impl<'a, F: Float> FromBuilderFuture for Model<'a, F> {
     type Builder<'b> = ModelBuilder<'b>;
     type Error = anyhow::Error;
 

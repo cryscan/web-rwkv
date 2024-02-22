@@ -171,8 +171,7 @@ async fn run(cli: Cli) -> Result<()> {
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build()
-                .await;
+                .build();
             run_internal(model, state, tokenizer, cli.batch).await
         }
         ModelVersion::V5 => {
@@ -192,8 +191,7 @@ async fn run(cli: Cli) -> Result<()> {
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build()
-                .await;
+                .build();
             run_internal(model, state, tokenizer, cli.batch).await
         }
         ModelVersion::V6 => {
@@ -213,8 +211,7 @@ async fn run(cli: Cli) -> Result<()> {
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build()
-                .await;
+                .build();
             run_internal(model, state, tokenizer, cli.batch).await
         }
     }

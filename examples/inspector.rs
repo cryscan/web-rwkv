@@ -163,7 +163,7 @@ async fn run(cli: Cli) -> Result<()> {
         cli.token_chunk_size,
     )
     .await?;
-    let state: v5::ModelState = StateBuilder::new(&context, model.info()).build().await;
+    let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
 
     // create a buffer to store each layer's output
     let buffer = Buffer::new(&context, &info);
