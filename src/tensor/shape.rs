@@ -30,6 +30,18 @@ impl Shape {
         shape
     }
 
+    pub fn from_safetensors(shape: &[usize]) -> Result<Self, TensorError> {
+        let shape = match shape[..] {
+            [] => Shape::new(0, 0, 0, 0),
+            [x] => Shape::new(x, 1, 1, 1),
+            [y, x] => Shape::new(x, y, 1, 1),
+            [z, y, x] => Shape::new(x, y, z, 1),
+            [w, z, y, x] => Shape::new(x, y, z, w),
+            _ => return Err(TensorError::Deduce),
+        };
+        Ok(shape)
+    }
+
     pub fn len(&self) -> usize {
         self.0.into_iter().product()
     }

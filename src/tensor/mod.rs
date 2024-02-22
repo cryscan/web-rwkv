@@ -218,20 +218,19 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
     /// Create a tensor from safetensors.
     fn from_safetensors(
         context: &Context,
-        tensor: safetensors::tensor::TensorView<'a>,
+        shape: Vec<usize>,
+        data: impl Into<Cow<'a, [u8]>>,
     ) -> Result<Self, TensorError> {
-        if tensor.dtype() != T::DATA_TYPE {
-            return Err(TensorError::Type);
+        let shape = Shape::from_safetensors(&shape)?;
+        let data: Cow<'_, [u8]> = data.into();
+        match data {
+            Cow::Borrowed(data) => Self::from_data(context, shape, bytemuck::cast_slice(data)),
+            Cow::Owned(data) => {
+                let data = bytemuck::cast_slice(&data);
+                let data = Cow::Owned(data.to_vec());
+                Self::from_data(context, shape, data)
+            }
         }
-        let shape = match *tensor.shape() {
-            [] => Shape::new(0, 0, 0, 0),
-            [x] => Shape::new(x, 1, 1, 1),
-            [y, x] => Shape::new(x, y, 1, 1),
-            [z, y, x] => Shape::new(x, y, z, 1),
-            [w, z, y, x] => Shape::new(x, y, z, w),
-            _ => return Err(TensorError::Deduce),
-        };
-        Self::from_data(context, shape, bytemuck::cast_slice(tensor.data()))
     }
 }
 
