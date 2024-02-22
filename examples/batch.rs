@@ -81,7 +81,7 @@ fn load_tokenizer() -> Result<Tokenizer> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_model<M: Model>(
+async fn load_model<M: Model>(
     context: &Context,
     data: &[u8],
     lora: Option<PathBuf>,
@@ -112,8 +112,9 @@ fn load_model<M: Model>(
                     blend: Default::default(),
                 })
                 .build()
+                .await
         }
-        None => model.build(),
+        None => model.build().await,
     }
 }
 
@@ -147,7 +148,7 @@ async fn run(cli: Cli) -> Result<()> {
     let data = unsafe { Mmap::map(&file)? };
 
     let model = SafeTensors::deserialize(&data)?;
-    let info = Loader::info(&model)?;
+    let info = Loader::info(&model).await?;
     println!("{:#?}", info);
 
     let context = create_context(&info).await?;
@@ -163,13 +164,15 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.embed_device,
                 cli.turbo,
                 cli.token_chunk_size,
-            )?;
+            )
+            .await?;
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build();
+                .build()
+                .await;
             run_internal(model, state, tokenizer, cli.batch).await
         }
         ModelVersion::V5 => {
@@ -182,13 +185,15 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.embed_device,
                 cli.turbo,
                 cli.token_chunk_size,
-            )?;
+            )
+            .await?;
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build();
+                .build()
+                .await;
             run_internal(model, state, tokenizer, cli.batch).await
         }
         ModelVersion::V6 => {
@@ -201,13 +206,15 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.embed_device,
                 cli.turbo,
                 cli.token_chunk_size,
-            )?;
+            )
+            .await?;
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build();
+                .build()
+                .await;
             run_internal(model, state, tokenizer, cli.batch).await
         }
     }

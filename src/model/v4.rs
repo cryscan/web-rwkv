@@ -218,7 +218,7 @@ impl FromBuilder for ModelState {
     type Builder<'a> = StateBuilder;
     type Error = Infallible;
 
-    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+    async fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let StateBuilder {
             context,
             info,
@@ -351,7 +351,7 @@ impl FromBuilder for BackedState {
     type Builder<'a> = StateBuilder;
     type Error = Infallible;
 
-    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+    async fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let StateBuilder {
             info, num_batch, ..
         } = builder;
@@ -409,7 +409,7 @@ impl<F: Float> FromBuilder for Model<'_, F> {
     type Builder<'a> = ModelBuilder<'a>;
     type Error = anyhow::Error;
 
-    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+    async fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
         let PreparedModelBuilder {
             context,
             info,
@@ -418,129 +418,106 @@ impl<F: Float> FromBuilder for Model<'_, F> {
             embed_device,
             turbo,
             token_chunk_size,
-        } = builder.prepare()?;
+        } = builder.prepare().await?;
 
         let embed = Embed {
             layer_norm: LayerNorm {
-                w: loader.load_vector_f16("blocks.0.ln0.weight")?,
-                b: loader.load_vector_f16("blocks.0.ln0.bias")?,
+                w: loader.load_vector_f16("blocks.0.ln0.weight").await?,
+                b: loader.load_vector_f16("blocks.0.ln0.bias").await?,
             },
-            w: loader.load_embed()?,
+            w: loader.load_embed().await?,
             u: match embed_device {
                 super::EmbedDevice::Cpu => None,
-                super::EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight")?),
+                super::EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight").await?),
             },
         };
 
         let head = Head {
             layer_norm: LayerNorm {
-                w: loader.load_vector_f16("ln_out.weight")?,
-                b: loader.load_vector_f16("ln_out.bias")?,
+                w: loader.load_vector_f16("ln_out.weight").await?,
+                b: loader.load_vector_f16("ln_out.bias").await?,
             },
-            w: Matrix::Fp16(loader.load_matrix_f16("head.weight")?),
+            w: Matrix::Fp16(loader.load_matrix_f16("head.weight").await?),
         };
 
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
 
-        let matrix_f16_cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(0);
-        let load_matrix = |name: String, quant: Quant| -> Result<Matrix> {
-            match quant {
-                Quant::None => Ok(Matrix::Fp16(loader.load_matrix_f16(name)?)),
-                Quant::Int8 => {
-                    let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.checkout(shape, || context.tensor_init(shape));
-                    loader.load_in_place_matrix_f16(&buffer, &name)?;
-                    Ok(Matrix::quant_u8(&buffer)?)
-                }
-                Quant::NF4 => {
-                    let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.checkout(shape, || context.tensor_init(shape));
-                    loader.load_in_place_matrix_f16(&buffer, &name)?;
-                    Ok(Matrix::quant_nf4(&buffer)?)
-                }
-            }
-        };
-        let load_matrix_discount = |name: String, quant: Quant, discount: f32| -> Result<Matrix> {
-            match quant {
-                Quant::None => Ok(Matrix::Fp16(
-                    loader.load_matrix_f16_discount(name, discount)?,
-                )),
-                Quant::Int8 => {
-                    let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.checkout(shape, || context.tensor_init(shape));
-                    loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
-                    Ok(Matrix::quant_u8(&buffer)?)
-                }
-                Quant::NF4 => {
-                    let shape = loader.tensor_shape(&name)?;
-                    let buffer = matrix_f16_cache.checkout(shape, || context.tensor_init(shape));
-                    loader.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
-                    Ok(Matrix::quant_nf4(&buffer)?)
-                }
-            }
+        let cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(0);
+        let load_matrix = |name: String, quant: Quant| loader.load_matrix(&cache, name, quant);
+        let load_matrix_discount = |name: String, quant: Quant, discount: f32| {
+            loader.load_matrix_discount(&cache, name, quant, discount)
         };
 
-        let layers = (0..info.num_layer)
-            .map(|layer| {
-                let quant = quant.get(&layer).copied().unwrap_or_default();
-                let discount = 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32));
-                if matches!(quant, Quant::None) {
-                    matrix_f16_cache.clear();
-                }
+        let mut layers = vec![];
+        for layer in 0..info.num_layer {
+            let quant = quant.get(&layer).copied().unwrap_or_default();
+            let discount = 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32));
+            if matches!(quant, Quant::None) {
+                cache.clear();
+            }
 
-                let att_layer_norm = LayerNorm {
-                    w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
-                    b: loader.load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
-                };
+            let att_layer_norm = LayerNorm {
+                w: loader
+                    .load_vector_f16(format!("blocks.{layer}.ln1.weight"))
+                    .await?,
+                b: loader
+                    .load_vector_f16(format!("blocks.{layer}.ln1.bias"))
+                    .await?,
+            };
 
-                let att = format!("blocks.{layer}.att");
-                let time_decay = loader.load_vector_exp_f32(format!("{att}.time_decay"))?;
-                let time_first = loader.load_vector_f32(format!("{att}.time_first"))?;
-                let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k"))?;
-                let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v"))?;
-                let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r"))?;
+            let att = format!("blocks.{layer}.att");
+            let time_decay = loader
+                .load_vector_exp_f32(format!("{att}.time_decay"))
+                .await?;
+            let time_first = loader.load_vector_f32(format!("{att}.time_first")).await?;
+            let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k")).await?;
+            let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v")).await?;
+            let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r")).await?;
 
-                let att = Att {
-                    time_decay,
-                    time_first,
-                    time_mix_k,
-                    time_mix_v,
-                    time_mix_r,
-                    w_k: load_matrix(format!("{att}.key.weight"), quant)?,
-                    w_v: load_matrix(format!("{att}.value.weight"), quant)?,
-                    w_r: load_matrix(format!("{att}.receptance.weight"), quant)?,
-                    w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount)?,
-                };
+            let att = Att {
+                time_decay,
+                time_first,
+                time_mix_k,
+                time_mix_v,
+                time_mix_r,
+                w_k: load_matrix(format!("{att}.key.weight"), quant).await?,
+                w_v: load_matrix(format!("{att}.value.weight"), quant).await?,
+                w_r: load_matrix(format!("{att}.receptance.weight"), quant).await?,
+                w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount).await?,
+            };
 
-                let ffn_layer_norm = LayerNorm {
-                    w: loader.load_vector_f16(format!("blocks.{layer}.ln2.weight"))?,
-                    b: loader.load_vector_f16(format!("blocks.{layer}.ln2.bias"))?,
-                };
+            let ffn_layer_norm = LayerNorm {
+                w: loader
+                    .load_vector_f16(format!("blocks.{layer}.ln2.weight"))
+                    .await?,
+                b: loader
+                    .load_vector_f16(format!("blocks.{layer}.ln2.bias"))
+                    .await?,
+            };
 
-                let ffn = format!("blocks.{layer}.ffn");
-                let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
-                let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r"))?;
+            let ffn = format!("blocks.{layer}.ffn");
+            let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k")).await?;
+            let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r")).await?;
 
-                let ffn = Ffn {
-                    time_mix_k,
-                    time_mix_r,
-                    w_r: load_matrix(format!("{ffn}.receptance.weight"), quant)?,
-                    w_k: load_matrix(format!("{ffn}.key.weight"), quant)?,
-                    w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount)?,
-                };
+            let ffn = Ffn {
+                time_mix_k,
+                time_mix_r,
+                w_r: load_matrix(format!("{ffn}.receptance.weight"), quant).await?,
+                w_k: load_matrix(format!("{ffn}.key.weight"), quant).await?,
+                w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount).await?,
+            };
 
-                context.queue.submit(None);
-                context.device.poll(wgpu::MaintainBase::Wait);
+            context.queue.submit(None);
+            context.device.poll(wgpu::MaintainBase::Wait);
 
-                Ok(Layer {
-                    att_layer_norm,
-                    ffn_layer_norm,
-                    att,
-                    ffn,
-                })
+            layers.push(Layer {
+                att_layer_norm,
+                ffn_layer_norm,
+                att,
+                ffn,
             })
-            .collect::<Result<Vec<_>>>()?;
+        }
 
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);

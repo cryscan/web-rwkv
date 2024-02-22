@@ -131,7 +131,9 @@ pub trait FromBuilder: Sized {
     type Builder<'a>;
     type Error;
 
-    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
+    fn from_builder(
+        builder: Self::Builder<'_>,
+    ) -> impl Future<Output = Result<Self, Self::Error>> + Send;
 }
 
 pub trait BackedState:
@@ -248,7 +250,7 @@ impl<'a> ModelBuilder<'a> {
         }
     }
 
-    fn prepare(self) -> Result<PreparedModelBuilder<'a>> {
+    async fn prepare(self) -> Result<PreparedModelBuilder<'a>> {
         let ModelBuilder {
             context,
             model,
@@ -259,7 +261,7 @@ impl<'a> ModelBuilder<'a> {
             token_chunk_size,
         } = self;
 
-        let info = Loader::info(model)?;
+        let info = Loader::info(model).await?;
         let loader = Loader::new(&context, model, lora);
 
         let token_chunk_size = token_chunk_size
@@ -303,11 +305,11 @@ impl<'a> ModelBuilder<'a> {
         self
     }
 
-    pub fn build<M>(self) -> Result<M>
+    pub async fn build<M>(self) -> Result<M>
     where
         M: ModelBase + FromBuilder<Builder<'a> = Self, Error = anyhow::Error>,
     {
-        M::from_builder(self)
+        M::from_builder(self).await
     }
 }
 
@@ -342,11 +344,11 @@ impl StateBuilder {
         self
     }
 
-    pub fn build<S: ModelState>(self) -> S {
-        S::from_builder(self).expect("build model state")
+    pub async fn build<S: ModelState>(self) -> S {
+        S::from_builder(self).await.expect("build model state")
     }
 
-    pub fn build_backed<B: BackedState>(self) -> B {
-        B::from_builder(self).expect("build backed state")
+    pub async fn build_backed<B: BackedState>(self) -> B {
+        B::from_builder(self).await.expect("build backed state")
     }
 }

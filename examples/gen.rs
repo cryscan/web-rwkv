@@ -70,7 +70,7 @@ fn load_tokenizer() -> Result<Tokenizer> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_model<M: Model>(
+async fn load_model<M: Model>(
     context: &Context,
     data: &[u8],
     lora: Option<PathBuf>,
@@ -101,8 +101,9 @@ fn load_model<M: Model>(
                     blend: Default::default(),
                 })
                 .build()
+                .await
         }
-        None => model.build(),
+        None => model.build().await,
     }
 }
 
@@ -121,7 +122,7 @@ async fn run(cli: Cli) -> Result<()> {
     let data = unsafe { Mmap::map(&file)? };
 
     let model = SafeTensors::deserialize(&data)?;
-    let info = Loader::info(&model)?;
+    let info = Loader::info(&model).await?;
     println!("{:#?}", info);
 
     let context = create_context(&info).await?;
@@ -137,8 +138,9 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.embed_device,
                 cli.turbo,
                 cli.token_chunk_size,
-            )?;
-            let state: v4::ModelState = StateBuilder::new(&context, model.info()).build();
+            )
+            .await?;
+            let state: v4::ModelState = StateBuilder::new(&context, model.info()).build().await;
             run_internal(model, state, tokenizer).await
         }
         ModelVersion::V5 => {
@@ -151,8 +153,9 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.embed_device,
                 cli.turbo,
                 cli.token_chunk_size,
-            )?;
-            let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
+            )
+            .await?;
+            let state: v5::ModelState = StateBuilder::new(&context, model.info()).build().await;
             run_internal(model, state, tokenizer).await
         }
         ModelVersion::V6 => {
@@ -165,8 +168,9 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.embed_device,
                 cli.turbo,
                 cli.token_chunk_size,
-            )?;
-            let state: v6::ModelState = StateBuilder::new(&context, model.info()).build();
+            )
+            .await?;
+            let state: v6::ModelState = StateBuilder::new(&context, model.info()).build().await;
             run_internal(model, state, tokenizer).await
         }
     }
