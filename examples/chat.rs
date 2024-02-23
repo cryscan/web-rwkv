@@ -9,6 +9,7 @@ use safetensors::SafeTensors;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
+    convert::Infallible,
     fs::File,
     io::{BufReader, Read, Write},
     path::PathBuf,
@@ -16,9 +17,9 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::{Loader, Lora, Reader},
-        v4, v5, v6, Build, BuildFuture, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput,
-        ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
+        loader::{Loader, Lora},
+        v4, v5, v6, Build, BuildFuture, Model, ModelBuilder, ModelInfo, ModelInput, ModelOutput,
+        ModelState, ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -111,7 +112,7 @@ fn load_tokenizer() -> Result<Tokenizer> {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn load_model<'a>(
+async fn load_model<'a, M, S>(
     context: &Context,
     data: &'a [u8],
     lora: Option<&'a [u8]>,
@@ -120,27 +121,40 @@ async fn load_model<'a>(
     embed_device: Option<EmbedDevice>,
     turbo: bool,
     token_chunk_size: usize,
-) -> Result<ModelBuilder<impl Reader + 'a>> {
+) -> Result<(M, S)>
+where
+    M: Model<State = S>,
+    S: ModelState,
+    ModelBuilder<SafeTensors<'a>>: BuildFuture<M, Error = anyhow::Error>,
+    StateBuilder: Build<S, Error = Infallible>,
+{
     let quant = (0..quant)
         .map(|layer| (layer, Quant::Int8))
         .chain((0..quant_nf4).map(|layer| (layer, Quant::NF4)))
         .collect();
+
     let model = SafeTensors::deserialize(data)?;
     let model = ModelBuilder::new(context, model)
         .with_quant(quant)
         .with_turbo(turbo)
         .with_token_chunk_size(token_chunk_size)
         .with_embed_device(embed_device.unwrap_or_default().into());
-    match lora {
+    let model: M = match lora {
         Some(lora) => {
             let data = SafeTensors::deserialize(lora)?;
-            Ok(model.add_lora(Lora {
-                data,
-                blend: Default::default(),
-            }))
+            model
+                .add_lora(Lora {
+                    data,
+                    blend: Default::default(),
+                })
+                .build()
+                .await?
         }
-        None => Ok(model),
-    }
+        None => model.build().await?,
+    };
+
+    let state: S = StateBuilder::new(context, model.info()).build()?;
+    Ok((model, state))
 }
 
 fn load_prompt(path: Option<PathBuf>) -> Result<Prompt> {
@@ -197,33 +211,48 @@ async fn run(cli: Cli) -> Result<()> {
     let lora = lora.as_deref();
 
     let context = create_context(&info).await?;
-    let model = load_model(
-        &context,
-        &data,
-        lora,
-        cli.quant,
-        cli.quant_nf4,
-        cli.embed_device,
-        cli.turbo,
-        cli.token_chunk_size,
-    )
-    .await?;
-
     match info.version {
         ModelVersion::V4 => {
-            let model = <ModelBuilder<_> as BuildFuture<v4::Model<f16>>>::build(model).await?;
-            let state = StateBuilder::new(&context, model.info()).build()?;
-            run_internal(model, state, tokenizer, prompt, sampler).await
+            let (model, state) = load_model(
+                &context,
+                &data,
+                lora,
+                cli.quant,
+                cli.quant_nf4,
+                cli.embed_device,
+                cli.turbo,
+                cli.token_chunk_size,
+            )
+            .await?;
+            run_internal::<v4::Model<f16>, _>(model, state, tokenizer, prompt, sampler).await
         }
         ModelVersion::V5 => {
-            let model = <ModelBuilder<_> as BuildFuture<v5::Model<f16>>>::build(model).await?;
-            let state = StateBuilder::new(&context, model.info()).build()?;
-            run_internal(model, state, tokenizer, prompt, sampler).await
+            let (model, state) = load_model(
+                &context,
+                &data,
+                lora,
+                cli.quant,
+                cli.quant_nf4,
+                cli.embed_device,
+                cli.turbo,
+                cli.token_chunk_size,
+            )
+            .await?;
+            run_internal::<v5::Model<f16>, _>(model, state, tokenizer, prompt, sampler).await
         }
         ModelVersion::V6 => {
-            let model = <ModelBuilder<_> as BuildFuture<v6::Model<f16>>>::build(model).await?;
-            let state = StateBuilder::new(&context, model.info()).build()?;
-            run_internal(model, state, tokenizer, prompt, sampler).await
+            let (model, state) = load_model(
+                &context,
+                &data,
+                lora,
+                cli.quant,
+                cli.quant_nf4,
+                cli.embed_device,
+                cli.turbo,
+                cli.token_chunk_size,
+            )
+            .await?;
+            run_internal::<v6::Model<f16>, _>(model, state, tokenizer, prompt, sampler).await
         }
     }
 }

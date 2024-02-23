@@ -27,11 +27,7 @@ pub trait Reader {
     fn names(&self) -> Vec<&str>;
     fn contains(&self, name: &str) -> bool;
 
-    #[allow(clippy::type_complexity)]
-    fn tensor(
-        &self,
-        name: &str,
-    ) -> impl Future<Output = Result<ReaderTensor, SafeTensorError>> + Send;
+    fn tensor(&self, name: &str) -> impl Future<Output = Result<ReaderTensor, SafeTensorError>>;
 }
 
 impl Reader for SafeTensors<'_> {

@@ -136,7 +136,7 @@ pub trait Build<T> {
 pub trait BuildFuture<T> {
     type Error;
 
-    fn build(self) -> impl Future<Output = Result<T, Self::Error>> + Send;
+    fn build(self) -> impl Future<Output = Result<T, Self::Error>>;
 }
 
 pub trait BackedState: Serialize + for<'a> Deserialize<'a> {
