@@ -14,11 +14,11 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::{Loader, Lora},
+        loader::{Loader, Lora, Reader},
         run::{HookMap, ModelRun},
         softmax::ModelSoftmax,
-        v5, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput, ModelOutput, ModelVersion,
-        Quant, StateBuilder,
+        v5, Build, BuildFuture, ModelBase, ModelBuilder, ModelInfo, ModelInput, ModelOutput,
+        ModelVersion, Quant, StateBuilder,
     },
     tensor::{
         kind::{ReadBack, ReadWrite},
@@ -93,40 +93,35 @@ fn load_tokenizer() -> Result<Tokenizer> {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn load_model<M: Model>(
+async fn load_model<'a>(
     context: &Context,
-    data: &[u8],
-    lora: Option<PathBuf>,
+    data: &'a [u8],
+    lora: Option<&'a [u8]>,
     quant: usize,
     quant_nf4: usize,
     embed_device: Option<EmbedDevice>,
     turbo: bool,
     token_chunk_size: usize,
-) -> Result<M> {
+) -> Result<ModelBuilder<impl Reader + 'a>> {
     let quant = (0..quant)
         .map(|layer| (layer, Quant::Int8))
         .chain((0..quant_nf4).map(|layer| (layer, Quant::NF4)))
         .collect();
     let model = SafeTensors::deserialize(data)?;
-    let model = ModelBuilder::new(context, &model)
+    let model = ModelBuilder::new(context, model)
         .with_quant(quant)
         .with_turbo(turbo)
         .with_token_chunk_size(token_chunk_size)
         .with_embed_device(embed_device.unwrap_or_default().into());
     match lora {
         Some(lora) => {
-            let file = File::open(lora)?;
-            let data = unsafe { Mmap::map(&file)? };
-            let data = &SafeTensors::deserialize(&data)?;
-            model
-                .add_lora(Lora {
-                    data,
-                    blend: Default::default(),
-                })
-                .build()
-                .await
+            let data = SafeTensors::deserialize(lora)?;
+            Ok(model.add_lora(Lora {
+                data,
+                blend: Default::default(),
+            }))
         }
-        None => model.build().await,
+        None => Ok(model),
     }
 }
 
@@ -151,11 +146,21 @@ async fn run(cli: Cli) -> Result<()> {
     }
     println!("{:#?}", info);
 
+    let lora = match cli.lora {
+        Some(lora) => {
+            let file = File::open(lora)?;
+            let data = unsafe { Mmap::map(&file)? };
+            Some(data)
+        }
+        None => None,
+    };
+    let lora = lora.as_deref();
+
     let context = create_context(&info).await?;
-    let model: v5::Model<f16> = load_model(
+    let model = load_model(
         &context,
         &data,
-        cli.lora,
+        lora,
         cli.quant,
         cli.quant_nf4,
         cli.embed_device,
@@ -163,7 +168,8 @@ async fn run(cli: Cli) -> Result<()> {
         cli.token_chunk_size,
     )
     .await?;
-    let state: v5::ModelState = StateBuilder::new(&context, model.info()).build();
+    let model = <ModelBuilder<_> as BuildFuture<v5::Model<f16>>>::build(model).await?;
+    let state = StateBuilder::new(&context, model.info()).build()?;
 
     // create a buffer to store each layer's output
     let buffer = Buffer::new(&context, &info);

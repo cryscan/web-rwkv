@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible, future::Future};
+use std::{collections::HashMap, future::Future};
 
 use anyhow::Result;
 use half::f16;
@@ -127,25 +127,19 @@ pub enum OutputType {
     Full,
 }
 
-pub trait FromBuilder: Sized {
-    type Builder<'a>;
+pub trait Build<T> {
     type Error;
 
-    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error>;
+    fn build(self) -> Result<T, Self::Error>;
 }
 
-pub trait FromBuilderFuture: Sized {
-    type Builder<'a>;
+pub trait BuildFuture<T> {
     type Error;
 
-    fn from_builder(builder: Self::Builder<'_>) -> impl Future<Output = Result<Self, Self::Error>>;
+    fn build(self) -> impl Future<Output = Result<T, Self::Error>> + Send;
 }
 
-pub trait BackedState:
-    Serialize
-    + for<'a> Deserialize<'a>
-    + for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible>
-{
+pub trait BackedState: Serialize + for<'a> Deserialize<'a> {
     fn num_batch(&self) -> usize;
     fn num_layer(&self) -> usize;
 
@@ -153,7 +147,7 @@ pub trait BackedState:
     fn embed(&self, batch: usize, layer: usize) -> Vec<f32>;
 }
 
-pub trait ModelState: for<'a> FromBuilder<Builder<'a> = StateBuilder, Error = Infallible> {
+pub trait ModelState {
     type BackedState: BackedState;
 
     fn num_batch(&self) -> usize;
@@ -185,21 +179,9 @@ pub trait ModelBase {
     fn info(&self) -> &ModelInfo;
 }
 
-pub trait Model:
-    ModelBase
-    + ModelSoftmax
-    + ModelRun
-    + for<'a> FromBuilderFuture<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
-{
-}
+pub trait Model: ModelBase + ModelSoftmax + ModelRun {}
 
-impl<M> Model for M where
-    M: ModelBase
-        + ModelSoftmax
-        + ModelRun
-        + for<'a> FromBuilderFuture<Builder<'a> = ModelBuilder<'a>, Error = anyhow::Error>
-{
-}
+impl<M> Model for M where M: ModelBase + ModelSoftmax + ModelRun {}
 
 /// Quantization of a layer.
 #[wasm_bindgen]
@@ -222,28 +204,28 @@ pub enum EmbedDevice {
     Gpu,
 }
 
-pub struct ModelBuilder<'a> {
+pub struct ModelBuilder<R: Reader> {
     context: Context,
-    model: &'a dyn Reader,
-    lora: Vec<Lora<'a>>,
+    model: R,
+    lora: Vec<Lora<R>>,
     quant: HashMap<usize, Quant>,
     embed_device: EmbedDevice,
     turbo: bool,
     token_chunk_size: usize,
 }
 
-struct PreparedModelBuilder<'a> {
+struct PreparedModelBuilder<R: Reader> {
     context: Context,
     info: ModelInfo,
-    loader: Loader<'a>,
+    loader: Loader<R>,
     quant: HashMap<usize, Quant>,
     embed_device: EmbedDevice,
     turbo: bool,
     token_chunk_size: usize,
 }
 
-impl<'a> ModelBuilder<'a> {
-    pub fn new(context: &Context, model: &'a dyn Reader) -> Self {
+impl<R: Reader> ModelBuilder<R> {
+    pub fn new(context: &Context, model: R) -> Self {
         Self {
             context: context.clone(),
             model,
@@ -255,7 +237,7 @@ impl<'a> ModelBuilder<'a> {
         }
     }
 
-    async fn prepare(self) -> Result<PreparedModelBuilder<'a>> {
+    async fn prepare(self) -> Result<PreparedModelBuilder<R>> {
         let ModelBuilder {
             context,
             model,
@@ -266,8 +248,12 @@ impl<'a> ModelBuilder<'a> {
             token_chunk_size,
         } = self;
 
-        let info = Loader::info(model).await?;
-        let loader = Loader::new(&context, model, lora);
+        let info = Loader::info(&model).await?;
+        let loader = Loader {
+            context: context.clone(),
+            model,
+            lora,
+        };
 
         let token_chunk_size = token_chunk_size
             .max(MIN_TOKEN_CHUNK_SIZE)
@@ -290,7 +276,7 @@ impl<'a> ModelBuilder<'a> {
         self
     }
 
-    pub fn add_lora(mut self, value: Lora<'a>) -> Self {
+    pub fn add_lora(mut self, value: Lora<R>) -> Self {
         self.lora.push(value);
         self
     }
@@ -308,13 +294,6 @@ impl<'a> ModelBuilder<'a> {
     pub fn with_token_chunk_size(mut self, value: usize) -> Self {
         self.token_chunk_size = value;
         self
-    }
-
-    pub async fn build<M>(self) -> Result<M>
-    where
-        M: ModelBase + FromBuilderFuture<Builder<'a> = Self, Error = anyhow::Error>,
-    {
-        M::from_builder(self).await
     }
 }
 
@@ -347,13 +326,5 @@ impl StateBuilder {
     pub fn with_chunk_size(mut self, value: usize) -> Self {
         self.chunk_size = value;
         self
-    }
-
-    pub fn build<S: ModelState>(self) -> S {
-        S::from_builder(self).expect("build model state")
-    }
-
-    pub fn build_backed<B: BackedState>(self) -> B {
-        B::from_builder(self).expect("build backed state")
     }
 }

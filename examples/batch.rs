@@ -27,9 +27,9 @@ use std::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
-        loader::{Loader, Lora},
-        v4, v5, v6, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput, ModelOutput, ModelState,
-        ModelVersion, Quant, StateBuilder,
+        loader::{Loader, Lora, Reader},
+        v4, v5, v6, Build, BuildFuture, Model, ModelBase, ModelBuilder, ModelInfo, ModelInput,
+        ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -81,40 +81,35 @@ fn load_tokenizer() -> Result<Tokenizer> {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn load_model<M: Model>(
+async fn load_model<'a>(
     context: &Context,
-    data: &[u8],
-    lora: Option<PathBuf>,
+    data: &'a [u8],
+    lora: Option<&'a [u8]>,
     quant: usize,
     quant_nf4: usize,
     embed_device: Option<EmbedDevice>,
     turbo: bool,
     token_chunk_size: usize,
-) -> Result<M> {
+) -> Result<ModelBuilder<impl Reader + 'a>> {
     let quant = (0..quant)
         .map(|layer| (layer, Quant::Int8))
         .chain((0..quant_nf4).map(|layer| (layer, Quant::NF4)))
         .collect();
     let model = SafeTensors::deserialize(data)?;
-    let model = ModelBuilder::new(context, &model)
+    let model = ModelBuilder::new(context, model)
         .with_quant(quant)
         .with_turbo(turbo)
         .with_token_chunk_size(token_chunk_size)
         .with_embed_device(embed_device.unwrap_or_default().into());
     match lora {
         Some(lora) => {
-            let file = File::open(lora)?;
-            let data = unsafe { Mmap::map(&file)? };
-            let data = &SafeTensors::deserialize(&data)?;
-            model
-                .add_lora(Lora {
-                    data,
-                    blend: Default::default(),
-                })
-                .build()
-                .await
+            let data = SafeTensors::deserialize(lora)?;
+            Ok(model.add_lora(Lora {
+                data,
+                blend: Default::default(),
+            }))
         }
-        None => model.build().await,
+        None => Ok(model),
     }
 }
 
@@ -151,67 +146,58 @@ async fn run(cli: Cli) -> Result<()> {
     let info = Loader::info(&model).await?;
     println!("{:#?}", info);
 
+    let lora = match cli.lora {
+        Some(lora) => {
+            let file = File::open(lora)?;
+            let data = unsafe { Mmap::map(&file)? };
+            Some(data)
+        }
+        None => None,
+    };
+    let lora = lora.as_deref();
+
     let context = create_context(&info).await?;
+    let model = load_model(
+        &context,
+        &data,
+        lora,
+        cli.quant,
+        cli.quant_nf4,
+        cli.embed_device,
+        cli.turbo,
+        cli.token_chunk_size,
+    )
+    .await?;
 
     match info.version {
         ModelVersion::V4 => {
-            let model: v4::Model<f16> = load_model(
-                &context,
-                &data,
-                cli.lora,
-                cli.quant,
-                cli.quant_nf4,
-                cli.embed_device,
-                cli.turbo,
-                cli.token_chunk_size,
-            )
-            .await?;
+            let model = <ModelBuilder<_> as BuildFuture<v4::Model<f16>>>::build(model).await?;
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build();
+                .build()?;
             run_internal(model, state, tokenizer, cli.batch).await
         }
         ModelVersion::V5 => {
-            let model: v5::Model<f16> = load_model(
-                &context,
-                &data,
-                cli.lora,
-                cli.quant,
-                cli.quant_nf4,
-                cli.embed_device,
-                cli.turbo,
-                cli.token_chunk_size,
-            )
-            .await?;
+            let model = <ModelBuilder<_> as BuildFuture<v5::Model<f16>>>::build(model).await?;
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build();
+                .build()?;
             run_internal(model, state, tokenizer, cli.batch).await
         }
         ModelVersion::V6 => {
-            let model: v6::Model<f16> = load_model(
-                &context,
-                &data,
-                cli.lora,
-                cli.quant,
-                cli.quant_nf4,
-                cli.embed_device,
-                cli.turbo,
-                cli.token_chunk_size,
-            )
-            .await?;
+            let model = <ModelBuilder<_> as BuildFuture<v6::Model<f16>>>::build(model).await?;
             // The model state should keep the same batch as input.
             // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
             let state = StateBuilder::new(&context, model.info())
                 .with_num_batch(cli.batch)
                 .with_chunk_size(4)
-                .build();
+                .build()?;
             run_internal(model, state, tokenizer, cli.batch).await
         }
     }

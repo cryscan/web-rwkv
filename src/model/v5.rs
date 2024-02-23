@@ -6,10 +6,11 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use super::{
+    loader::Reader,
     run::{Header, HookMap, ModelRunInternal},
     softmax::{ModelSoftmaxInternal, Softmax},
-    FromBuilder, FromBuilderFuture, ModelBase, ModelBuilder, ModelInfo, PreparedModelBuilder,
-    Quant, StateBuilder, MIN_TOKEN_CHUNK_SIZE,
+    Build, BuildFuture, ModelBase, ModelBuilder, ModelInfo, PreparedModelBuilder, Quant,
+    StateBuilder, MIN_TOKEN_CHUNK_SIZE,
 };
 use crate::{
     context::Context,
@@ -241,17 +242,16 @@ impl DeepClone for ModelState {
     }
 }
 
-impl FromBuilder for ModelState {
-    type Builder<'a> = StateBuilder;
+impl Build<ModelState> for StateBuilder {
     type Error = Infallible;
 
-    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+    fn build(self) -> Result<ModelState, Self::Error> {
         let StateBuilder {
             context,
             info,
             num_batch,
             chunk_size,
-        } = builder;
+        } = self;
         let num_chunk = (info.num_layer + chunk_size - 1) / chunk_size;
         let head_size = info.num_emb / info.num_head;
         let state = (0..num_chunk)
@@ -268,7 +268,7 @@ impl FromBuilder for ModelState {
                     .expect("state creation")
             })
             .collect();
-        Ok(Self {
+        Ok(ModelState {
             info,
             num_batch,
             chunk_size,
@@ -408,17 +408,16 @@ pub struct BackedState {
     pub data: Vec<(Shape, Vec<f32>)>,
 }
 
-impl FromBuilder for BackedState {
-    type Builder<'a> = StateBuilder;
+impl Build<BackedState> for StateBuilder {
     type Error = Infallible;
 
-    fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+    fn build(self) -> Result<BackedState, Self::Error> {
         let StateBuilder {
             info,
             num_batch,
             chunk_size,
             ..
-        } = builder;
+        } = self;
         let head_size = info.num_emb / info.num_head;
         let shape = Shape::new(info.num_emb, chunk_size * (head_size + 2), num_batch, 1);
         let data = (0..info.num_layer)
@@ -430,7 +429,7 @@ impl FromBuilder for BackedState {
             })
             .map(|x| (shape, x))
             .collect();
-        Ok(Self {
+        Ok(BackedState {
             num_batch,
             chunk_size,
             head_size,
@@ -469,11 +468,10 @@ impl<'a, F: Float> Model<'a, F> {
     pub const GN_EPS: f32 = 64.0e-5;
 }
 
-impl<'a, F: Float> FromBuilderFuture for Model<'a, F> {
-    type Builder<'b> = ModelBuilder<'b>;
+impl<'a, R: Reader + Send + Sync, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
     type Error = anyhow::Error;
 
-    async fn from_builder(builder: Self::Builder<'_>) -> Result<Self, Self::Error> {
+    async fn build(self) -> Result<Model<'a, F>, Self::Error> {
         let PreparedModelBuilder {
             context,
             info,
@@ -482,7 +480,7 @@ impl<'a, F: Float> FromBuilderFuture for Model<'a, F> {
             embed_device,
             turbo,
             token_chunk_size,
-        } = builder.prepare().await?;
+        } = self.prepare().await?;
 
         let embed = Embed {
             layer_norm: LayerNorm {
@@ -616,7 +614,7 @@ impl<'a, F: Float> FromBuilderFuture for Model<'a, F> {
             head,
             layers,
         };
-        Ok(Self {
+        Ok(Model {
             context,
             info,
             turbo,

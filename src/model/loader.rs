@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Debug, future::Future, pin::Pin};
+use std::{borrow::Cow, future::Future};
 
 use anyhow::Result;
 use half::f16;
@@ -31,7 +31,7 @@ pub trait Reader {
     fn tensor(
         &self,
         name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ReaderTensor, SafeTensorError>> + Send + '_>>;
+    ) -> impl Future<Output = Result<ReaderTensor, SafeTensorError>> + Send;
 }
 
 impl Reader for SafeTensors<'_> {
@@ -46,24 +46,20 @@ impl Reader for SafeTensors<'_> {
     }
 
     #[inline]
-    fn tensor(
-        &self,
-        name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ReaderTensor, SafeTensorError>> + Send + '_>> {
+    async fn tensor(&self, name: &str) -> Result<ReaderTensor, SafeTensorError> {
         let name = name.to_string();
-        Box::pin(async move {
-            let tensor = self.tensor(&name)?;
-            let shape = tensor.shape().to_vec();
-            let data = Cow::from(tensor.data());
-            Ok((shape, data))
-        })
+        let tensor = self.tensor(&name)?;
+        let shape = tensor.shape().to_vec();
+        let data = Cow::from(tensor.data());
+        Ok((shape, data))
     }
 }
 
 /// A LoRA that adds to the model when loading.
-pub struct Lora<'a> {
+#[derive(Clone)]
+pub struct Lora<R: Reader> {
     /// Binary safetensors LoRA content.
-    pub data: &'a dyn Reader,
+    pub data: R,
     /// A list of LoRA blend patterns.
     /// A blend pattern is a regex that matches the name of multiple tensors, and a blend factor.
     /// When applying the patterns, they are applied in order.
@@ -124,34 +120,15 @@ struct LoraMatrix {
     alpha: f32,
 }
 
-pub struct Loader<'a> {
-    context: Context,
-    model: &'a dyn Reader,
-    lora: Vec<Lora<'a>>,
+#[derive(Clone)]
+pub struct Loader<R: Reader> {
+    pub context: Context,
+    pub model: R,
+    pub lora: Vec<Lora<R>>,
 }
 
-impl<'a> Loader<'a> {
-    pub fn new(context: &Context, model: &'a dyn Reader, lora: Vec<Lora<'a>>) -> Self {
-        // let model = SafeTensors::deserialize(data)?;
-        // let lora = lora
-        //     .into_iter()
-        //     .map(|lora| -> Result<_> {
-        //         let _ = SafeTensors::deserialize(lora.data)?;
-        //         Ok(lora)
-        //     })
-        //     .try_collect()?;
-        // Ok(Self {
-        //     context: context.clone(),
-        //     model,
-        // })
-        Self {
-            context: context.clone(),
-            model,
-            lora,
-        }
-    }
-
-    pub async fn info<T: Reader + ?Sized>(model: &T) -> Result<ModelInfo> {
+impl<R: Reader> Loader<R> {
+    pub async fn info(model: &R) -> Result<ModelInfo> {
         let num_layer = {
             let mut r: usize = 0;
             for i in model.names() {
