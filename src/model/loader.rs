@@ -20,16 +20,18 @@ use crate::{
     },
 };
 
+pub type ReaderTensor<'a> = (Vec<usize>, Cow<'a, [u8]>);
+
 /// Interface accessing a safetensors data blob.
 pub trait Reader {
     fn names(&self) -> Vec<&str>;
     fn contains(&self, name: &str) -> bool;
 
     #[allow(clippy::type_complexity)]
-    fn tensor<'a>(
-        &'a self,
+    fn tensor(
+        &self,
         name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<(Vec<usize>, Cow<'a, [u8]>), SafeTensorError>> + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<ReaderTensor, SafeTensorError>> + Send + '_>>;
 }
 
 impl Reader for SafeTensors<'_> {
@@ -47,8 +49,7 @@ impl Reader for SafeTensors<'_> {
     fn tensor(
         &self,
         name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<(Vec<usize>, Cow<'_, [u8]>), SafeTensorError>> + '_>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<ReaderTensor, SafeTensorError>> + Send + '_>> {
         let name = name.to_string();
         Box::pin(async move {
             let tensor = self.tensor(&name)?;
