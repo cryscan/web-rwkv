@@ -468,7 +468,7 @@ impl<'a, F: Float> Model<'a, F> {
     pub const GN_EPS: f32 = 64.0e-5;
 }
 
-impl<'a, R: Reader + Send + Sync, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
+impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
     type Error = anyhow::Error;
 
     async fn build(self) -> Result<Model<'a, F>, Self::Error> {
