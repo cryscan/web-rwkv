@@ -131,7 +131,7 @@ async fn run(cli: Cli) -> Result<()> {
     let data = unsafe { Mmap::map(&file)? };
 
     let model = SafeTensors::deserialize(&data)?;
-    let info = Loader::info(&model).await?;
+    let info = Loader::info(&model)?;
     println!("{:#?}", info);
 
     let lora = match cli.lora {

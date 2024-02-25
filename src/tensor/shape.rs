@@ -30,7 +30,7 @@ impl Shape {
         shape
     }
 
-    pub fn from_safetensors(shape: &[usize]) -> Result<Self, TensorError> {
+    pub fn from_slice_rev(shape: &[usize]) -> Result<Self, TensorError> {
         let shape = match shape[..] {
             [] => Shape::new(0, 0, 0, 0),
             [x] => Shape::new(x, 1, 1, 1),

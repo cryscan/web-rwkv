@@ -154,7 +154,7 @@ async fn run(cli: Cli) -> Result<()> {
     let data = unsafe { Mmap::map(&file)? };
 
     let model = SafeTensors::deserialize(&data)?;
-    let info = Loader::info(&model).await?;
+    let info = Loader::info(&model)?;
     if info.version != ModelVersion::V5 {
         bail!("this demo only supports v5");
     }

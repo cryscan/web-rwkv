@@ -248,7 +248,7 @@ impl<R: Reader> ModelBuilder<R> {
             token_chunk_size,
         } = self;
 
-        let info = Loader::info(&model).await?;
+        let info = Loader::info(&model)?;
         let loader = Loader {
             context: context.clone(),
             model,
