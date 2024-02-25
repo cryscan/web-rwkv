@@ -1,4 +1,5 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
+use derive_getters::Getters;
 use std::collections::BTreeMap;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::JsError;
@@ -31,7 +32,7 @@ impl std::fmt::Display for TokenizerError {
 impl std::error::Error for TokenizerError {}
 
 #[wasm_bindgen]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Getters)]
 pub struct Tokenizer {
     first_bytes_to_lengths: Vec<Box<[u16]>>,
     bytes_to_token_index: HashMap<Vec<u8>, u16>,
