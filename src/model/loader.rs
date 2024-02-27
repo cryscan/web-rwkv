@@ -14,7 +14,7 @@ use crate::{
         cache::ResourceCache,
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{TensorOp, TensorPass},
+        ops::{TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
         TensorCpu, TensorGpu, TensorInit, TensorReshape, TensorShape,
     },
@@ -23,6 +23,7 @@ use crate::{
 pub type ReaderTensor<'a> = (Dtype, Vec<usize>, Cow<'a, [u8]>);
 
 /// Interface accessing a safetensors data blob.
+#[trait_variant::make(ReaderSend: Send)]
 pub trait Reader {
     fn names(&self) -> Vec<&str>;
     fn contains(&self, name: &str) -> bool;
@@ -30,7 +31,7 @@ pub trait Reader {
     fn tensor(&self, name: &str) -> impl Future<Output = Result<ReaderTensor, SafeTensorError>>;
 }
 
-impl Reader for SafeTensors<'_> {
+impl ReaderSend for SafeTensors<'_> {
     #[inline]
     fn names(&self) -> Vec<&str> {
         self.names().into_iter().map(AsRef::as_ref).collect()
@@ -57,7 +58,7 @@ impl Reader for SafeTensors<'_> {
 
 /// A LoRA that adds to the model when loading.
 #[derive(Clone)]
-pub struct Lora<R: Reader> {
+pub struct Lora<R> {
     /// Binary safetensors LoRA content.
     pub data: R,
     /// A list of LoRA blend patterns.
@@ -121,7 +122,7 @@ struct LoraMatrix {
 }
 
 #[derive(Clone)]
-pub struct Loader<R: Reader> {
+pub struct Loader<R> {
     pub context: Context,
     pub model: R,
     pub lora: Vec<Lora<R>>,
@@ -265,17 +266,14 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
     ) -> Result<TensorGpu<f32, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
+        let context = &self.context;
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor = TensorCpu::<f16>::from_reader(&self.context, tensor)?
             .map(|x| x.to_f32())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
             .into();
 
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&Default::default());
-
+        let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
@@ -283,7 +281,6 @@ impl<R: Reader> Loader<R> {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
         }
-
         self.context.queue.submit(Some(encoder.finish()));
         Ok(tensor)
     }
@@ -293,17 +290,14 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
     ) -> Result<TensorGpu<f32, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
+        let context = &self.context;
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor = TensorCpu::<f16>::from_reader(&self.context, tensor)?
             .map(|x| -x.to_f32().exp())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
             .into();
 
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&Default::default());
-
+        let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
@@ -311,7 +305,6 @@ impl<R: Reader> Loader<R> {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
         }
-
         self.context.queue.submit(Some(encoder.finish()));
         Ok(tensor)
     }
@@ -321,18 +314,15 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
     ) -> Result<TensorGpu<f32, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
+        let context = &self.context;
         let tensor = self.model.tensor(name.as_ref()).await?;
-        let tensor = TensorCpu::<f16>::from_reader(&self.context, tensor)?
+        let tensor = TensorCpu::<f16>::from_reader(context, tensor)?
             .map(|x| -x.to_f32().exp())
             .map(|x| x.exp())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
             .into();
 
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&Default::default());
-
+        let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
@@ -340,7 +330,6 @@ impl<R: Reader> Loader<R> {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
         }
-
         self.context.queue.submit(Some(encoder.finish()));
         Ok(tensor)
     }
@@ -368,7 +357,6 @@ impl<R: Reader> Loader<R> {
             let tensor_f16: TensorGpu<f16, _> = context.tensor_init(tensor_f32.shape());
 
             let mut encoder = context.device.create_command_encoder(&Default::default());
-
             for lora in lora {
                 let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
@@ -396,26 +384,31 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
     ) -> Result<TensorGpu<f16, ReadWrite>> {
         let context = &self.context;
-        let lora = self.lora_matrices(name.as_ref()).await?;
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor = TensorGpu::from_reader(&self.context, tensor)?;
 
-        if !lora.is_empty() {
-            let mut encoder = context.device.create_command_encoder(&Default::default());
-            for lora in lora {
-                let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend_lora(
-                    &factor,
-                    lora.y.view(.., .., .., ..)?,
-                    lora.x.view(.., .., .., ..)?,
-                    tensor.view(.., .., .., ..)?,
-                )?;
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.execute_tensor_op(&op);
-            }
-            context.queue.submit(Some(encoder.finish()));
-        };
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for lora in self.lora_matrices(name.as_ref()).await? {
+            let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
+            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+            let op = TensorOp::blend_lora(
+                &factor,
+                lora.y.view(.., .., .., ..)?,
+                lora.x.view(.., .., .., ..)?,
+                tensor.view(.., .., .., ..)?,
+            )?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
+        }
+        for lora in self.lora_vectors(name.as_ref()).await? {
+            let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
+            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+            let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
+        }
+        context.queue.submit(Some(encoder.finish()));
+
         Ok(tensor)
     }
 
@@ -426,28 +419,32 @@ impl<R: Reader> Loader<R> {
     ) -> Result<TensorGpu<f16, ReadWrite>> {
         let context = &self.context;
 
-        let lora = self.lora_matrices(name.as_ref()).await?;
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor = TensorCpu::<f16>::from_reader(context, tensor)?
             .map(|x| f16::from_f32(discount * x.to_f32()));
         let tensor = TensorGpu::from(tensor);
 
-        if !lora.is_empty() {
-            let mut encoder = context.device.create_command_encoder(&Default::default());
-            for lora in lora {
-                let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend_lora(
-                    &factor,
-                    lora.y.view(.., .., .., ..)?,
-                    lora.x.view(.., .., .., ..)?,
-                    tensor.view(.., .., .., ..)?,
-                )?;
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.execute_tensor_op(&op);
-            }
-            context.queue.submit(Some(encoder.finish()));
-        };
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for lora in self.lora_matrices(name.as_ref()).await? {
+            let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
+            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+            let op = TensorOp::blend_lora(
+                &factor,
+                lora.y.view(.., .., .., ..)?,
+                lora.x.view(.., .., .., ..)?,
+                tensor.view(.., .., .., ..)?,
+            )?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
+        }
+        for lora in self.lora_vectors(name.as_ref()).await? {
+            let factor = vec![discount * lora.alpha, 1.0, 0.0, 0.0];
+            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+            let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
+        }
+        context.queue.submit(Some(encoder.finish()));
 
         Ok(tensor)
     }
@@ -458,27 +455,31 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
     ) -> Result<()> {
         let context = &self.context;
-        let lora = self.lora_matrices(name.as_ref()).await?;
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor = TensorCpu::from_reader(context, tensor)?;
         matrix.load(&tensor)?;
 
-        if !lora.is_empty() {
-            let mut encoder = context.device.create_command_encoder(&Default::default());
-            for lora in lora {
-                let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend_lora(
-                    &factor,
-                    lora.y.view(.., .., .., ..)?,
-                    lora.x.view(.., .., .., ..)?,
-                    matrix.view(.., .., .., ..)?,
-                )?;
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.execute_tensor_op(&op);
-            }
-            context.queue.submit(Some(encoder.finish()));
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for lora in self.lora_matrices(name.as_ref()).await? {
+            let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
+            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+            let op = TensorOp::blend_lora(
+                &factor,
+                lora.y.view(.., .., .., ..)?,
+                lora.x.view(.., .., .., ..)?,
+                matrix.view(.., .., .., ..)?,
+            )?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
         }
+        for lora in self.lora_vectors(name.as_ref()).await? {
+            let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
+            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+            let op = TensorOp::blend(&factor, &lora.tensor, matrix)?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
+        }
+        context.queue.submit(Some(encoder.finish()));
 
         Ok(())
     }
@@ -492,38 +493,65 @@ impl<R: Reader> Loader<R> {
         use TensorDimension::{Dimension, Full};
         let context = &self.context;
 
-        let lora = self.lora_matrices(name.as_ref()).await?;
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor = TensorCpu::<f16>::from_reader(context, tensor)?
             .map(|x| f16::from_f32(discount * x.to_f32()))
             .reshape(Full, Full, Dimension(1), Dimension(1))?;
         matrix.load(&tensor)?;
 
-        if !lora.is_empty() {
-            let mut encoder = context.device.create_command_encoder(&Default::default());
-            for lora in lora {
-                let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend_lora(
-                    &factor,
-                    lora.y.view(.., .., .., ..)?,
-                    lora.x.view(.., .., .., ..)?,
-                    matrix.view(.., .., .., ..)?,
-                )?;
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.execute_tensor_op(&op);
-            }
-            context.queue.submit(Some(encoder.finish()));
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for lora in self.lora_matrices(name.as_ref()).await? {
+            let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
+            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+            let op = TensorOp::blend_lora(
+                &factor,
+                lora.y.view(.., .., .., ..)?,
+                lora.x.view(.., .., .., ..)?,
+                matrix.view(.., .., .., ..)?,
+            )?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
         }
+        for lora in self.lora_vectors(name.as_ref()).await? {
+            let factor = vec![discount * lora.alpha, 1.0, 0.0, 0.0];
+            let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+            let op = TensorOp::blend(&factor, &lora.tensor, matrix)?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
+        }
+        context.queue.submit(Some(encoder.finish()));
 
         Ok(())
     }
 
     pub async fn load_embed<'b>(&self) -> Result<TensorCpu<'b, f16>> {
-        let (dt, shape, tensor) = self.model.tensor("emb.weight").await?;
-        let tensor = tensor.to_vec();
-        let tensor = TensorCpu::<f16>::from_reader(&self.context, (dt, shape, tensor.into()))?;
-        Ok(tensor)
+        let context = &self.context;
+        let name = "emb.weight";
+
+        let (dt, shape, tensor) = self.model.tensor(name).await?;
+        let lora = self.lora_vectors(name).await?;
+
+        if lora.is_empty() {
+            let tensor = Cow::from(tensor.to_vec());
+            let tensor = TensorCpu::from_reader(context, (dt, shape, tensor))?;
+            Ok(tensor)
+        } else {
+            let tensor = TensorGpu::from_reader(context, (dt, shape, tensor))?;
+            let mut encoder = context.device.create_command_encoder(&Default::default());
+            for lora in lora {
+                let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
+                let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
+                let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.execute_tensor_op(&op);
+            }
+
+            let map = TensorGpu::init(context, tensor.shape());
+            encoder.copy_tensor(&tensor, &map)?;
+
+            context.queue.submit(Some(encoder.finish()));
+            Ok(map.back_async().await)
+        }
     }
 
     pub async fn load_head(&self, chunk_size: usize) -> Result<Vec<TensorGpu<f16, ReadWrite>>> {
