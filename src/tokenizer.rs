@@ -1,35 +1,19 @@
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use derive_getters::Getters;
 use std::collections::BTreeMap;
+use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::JsError;
 
-#[derive(Debug, JsError)]
+#[derive(Debug, Error, JsError)]
 pub enum TokenizerError {
+    #[error("failed to parse vocabulary: {0}")]
     FailedToParseVocabulary(serde_json::Error),
+    #[error("no matching token found")]
     NoMatchingTokenFound,
+    #[error("out of range token: {0}")]
     OutOfRangeToken(u16),
 }
-
-impl std::fmt::Display for TokenizerError {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            TokenizerError::FailedToParseVocabulary(error) => {
-                write!(fmt, "failed to parse vocabulary: {error}")?;
-            }
-            TokenizerError::NoMatchingTokenFound => {
-                write!(fmt, "no matching token found")?;
-            }
-            TokenizerError::OutOfRangeToken(token) => {
-                write!(fmt, "out of range token: {token}")?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl std::error::Error for TokenizerError {}
 
 #[wasm_bindgen]
 #[derive(Debug, Clone, Getters)]

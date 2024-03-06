@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{
@@ -91,22 +92,13 @@ pub struct ContextBuilder {
 }
 
 #[wasm_bindgen]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum CreateEnvironmentError {
+    #[error("failed to request adaptor")]
     RequestAdapterFailed,
+    #[error("failed to request device")]
     RequestDeviceFailed,
 }
-
-impl std::fmt::Display for CreateEnvironmentError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CreateEnvironmentError::RequestAdapterFailed => write!(f, "failed to request adaptor"),
-            CreateEnvironmentError::RequestDeviceFailed => write!(f, "failed to request device"),
-        }
-    }
-}
-
-impl std::error::Error for CreateEnvironmentError {}
 
 impl<'a> ContextBuilder {
     pub fn new(adapter: Adapter) -> Self {

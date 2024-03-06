@@ -1,6 +1,7 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
+use thiserror::Error;
 use web_rwkv_derive::JsError;
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -94,48 +95,31 @@ impl<K: Kind> Device for Gpu<K> {
     type Data = TensorBuffer;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, JsError)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error, JsError)]
 pub enum TensorError {
+    #[error("list must not be empty")]
     Empty,
+    #[error("data type mismatch")]
     Type,
+    #[error("data size not match: {0} vs. {1}")]
     Size(usize, usize),
+    #[error("batch size not match: {0} vs. {1}")]
     Batch(usize, usize),
+    #[error("tensor shape not match: {0} vs. {1}")]
     Shape(Shape, Shape),
+    #[error("cannot deduce dimension")]
     Deduce,
-    BatchOutOfRange {
-        batch: usize,
-        max: usize,
-    },
+    #[error("batch {batch} out of range of max {max}")]
+    BatchOutOfRange { batch: usize, max: usize },
+    #[error("slice {start}..{end} out of range for dimension size {dim}")]
     SliceOutOfRange {
         dim: usize,
         start: usize,
         end: usize,
     },
+    #[error("slice not contiguous")]
     Contiguous,
 }
-
-impl std::fmt::Display for TensorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TensorError::Empty => write!(f, "list must not be empty"),
-            TensorError::Type => write!(f, "data type mismatch"),
-            TensorError::Size(a, b) => write!(f, "data size not match: {a} vs. {b}"),
-            TensorError::Batch(a, b) => write!(f, "batch size not match: {a} vs. {b}"),
-            TensorError::Shape(a, b) => write!(f, "tensor shape not match: {a} vs. {b}"),
-            TensorError::Deduce => write!(f, "cannot deduce dimension"),
-            TensorError::BatchOutOfRange { batch, max } => {
-                write!(f, "batch {batch} out of range of max {max}")
-            }
-            TensorError::SliceOutOfRange { dim, start, end } => write!(
-                f,
-                "slice {start}..{end} out of range for dimension size {dim}",
-            ),
-            TensorError::Contiguous => write!(f, "slice not contiguous"),
-        }
-    }
-}
-
-impl std::error::Error for TensorError {}
 
 /// Data defining a tensor view in shader.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]

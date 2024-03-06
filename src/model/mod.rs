@@ -3,6 +3,7 @@ use std::{collections::HashMap, future::Future};
 use anyhow::Result;
 use half::f16;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use self::{
@@ -31,22 +32,13 @@ pub enum ModelVersion {
 }
 
 #[wasm_bindgen]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
 pub enum ModelError {
+    #[error("invalid model version")]
     InvalidVersion,
+    #[error("no viable chunk size found")]
     NoViableChunkSize,
 }
-
-impl std::fmt::Display for ModelError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ModelError::InvalidVersion => write!(f, "invalid model version"),
-            ModelError::NoViableChunkSize => write!(f, "no viable chunk size found"),
-        }
-    }
-}
-
-impl std::error::Error for ModelError {}
 
 #[wasm_bindgen]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
