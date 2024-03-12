@@ -1,4 +1,4 @@
-use std::{convert::Infallible, sync::Arc};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use half::f16;
@@ -549,7 +549,7 @@ impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
 
-        let cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(0);
+        let cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(Duration::ZERO);
         let load_matrix = |name: String, quant: Quant| loader.load_matrix(&cache, name, quant);
         let load_matrix_discount = |name: String, quant: Quant, discount: f32| {
             loader.load_matrix_discount(&cache, name, quant, discount)
@@ -680,9 +680,9 @@ impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
             turbo,
             token_chunk_size,
             tensor,
-            runtime_cache: ResourceCache::new(1),
-            header_cache: ResourceCache::new(1),
-            softmax_cache: ResourceCache::new(1),
+            runtime_cache: Default::default(),
+            header_cache: Default::default(),
+            softmax_cache: Default::default(),
         })
     }
 }

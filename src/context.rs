@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, sync::Arc, time::Duration};
 
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -14,7 +14,7 @@ use wgpu::{
 use crate::{
     model::ModelInfo,
     tensor::{
-        cache::ResourceCache,
+        cache::{RefCountCache, ResourceCache},
         shape::{IntoBytes, Shape},
         View,
     },
@@ -77,9 +77,7 @@ pub struct ContextInternal {
     pub queue: Queue,
 
     pipeline_cache: ResourceCache<PipelineKey, CachedPipeline>,
-
-    shape_cache: ResourceCache<Shape, Buffer>,
-    view_cache: ResourceCache<View, Buffer>,
+    buffer_cache: RefCountCache<usize, Buffer>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -134,9 +132,8 @@ impl<'a> ContextBuilder {
                 adapter,
                 device,
                 queue,
-                pipeline_cache: ResourceCache::new(0),
-                shape_cache: Default::default(),
-                view_cache: Default::default(),
+                pipeline_cache: ResourceCache::new(Duration::ZERO),
+                buffer_cache: Default::default(),
             }
             .into(),
         ))
@@ -270,7 +267,7 @@ impl Context {
     }
 
     pub fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
-        self.shape_cache.checkout(shape, || {
+        self.buffer_cache.checkout(shape.into_bytes().len(), || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &shape.into_bytes(),
@@ -280,7 +277,7 @@ impl Context {
     }
 
     pub fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.view_cache.checkout(view, || {
+        self.buffer_cache.checkout(view.into_bytes().len(), || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &view.into_bytes(),
