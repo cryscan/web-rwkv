@@ -1,4 +1,4 @@
-use std::{convert::Infallible, marker::PhantomData, time::Duration};
+use std::{convert::Infallible, marker::PhantomData};
 
 use anyhow::Result;
 use half::f16;
@@ -17,7 +17,6 @@ use crate::{
     model::RESCALE_LAYER,
     num::{Float, Hom},
     tensor::{
-        cache::ResourceCache,
         kind::{ReadBack, ReadWrite},
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
@@ -439,19 +438,15 @@ impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
 
-        let cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(Duration::ZERO);
-        let load_matrix = |name: String, quant: Quant| loader.load_matrix(&cache, name, quant);
+        let load_matrix = |name: String, quant: Quant| loader.load_matrix(name, quant);
         let load_matrix_discount = |name: String, quant: Quant, discount: f32| {
-            loader.load_matrix_discount(&cache, name, quant, discount)
+            loader.load_matrix_discount(name, quant, discount)
         };
 
         let mut layers = vec![];
         for layer in 0..info.num_layer {
             let quant = quant.get(&layer).copied().unwrap_or_default();
             let discount = 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32));
-            if matches!(quant, Quant::None) {
-                cache.clear();
-            }
 
             let att_layer_norm = LayerNorm {
                 w: loader

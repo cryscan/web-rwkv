@@ -11,7 +11,6 @@ use super::{ModelError, ModelInfo, ModelVersion, Quant};
 use crate::{
     context::Context,
     tensor::{
-        cache::ResourceCache,
         kind::ReadWrite,
         matrix::Matrix,
         ops::{TensorCommand, TensorOp, TensorPass},
@@ -575,24 +574,19 @@ impl<R: Reader> Loader<R> {
         Ok(head)
     }
 
-    pub async fn load_matrix(
-        &self,
-        cache: &ResourceCache<Shape, TensorGpu<f16, ReadWrite>>,
-        name: String,
-        quant: Quant,
-    ) -> Result<Matrix> {
+    pub async fn load_matrix(&self, name: String, quant: Quant) -> Result<Matrix> {
         let context = &self.context;
         match quant {
             Quant::None => Ok(Matrix::Fp16(self.load_matrix_f16(name).await?)),
             Quant::Int8 => {
                 let shape = self.tensor_shape(&name)?;
-                let buffer = cache.checkout(shape, || context.tensor_init(shape));
+                let buffer = context.tensor_init(shape);
                 self.load_in_place_matrix_f16(&buffer, &name).await?;
                 Ok(Matrix::quant_u8(&buffer)?)
             }
             Quant::NF4 => {
                 let shape = self.tensor_shape(&name)?;
-                let buffer = cache.checkout(shape, || context.tensor_init(shape));
+                let buffer = context.tensor_init(shape);
                 self.load_in_place_matrix_f16(&buffer, &name).await?;
                 Ok(Matrix::quant_nf4(&buffer)?)
             }
@@ -601,7 +595,6 @@ impl<R: Reader> Loader<R> {
 
     pub async fn load_matrix_discount(
         &self,
-        cache: &ResourceCache<Shape, TensorGpu<f16, ReadWrite>>,
         name: String,
         quant: Quant,
         discount: f32,
@@ -613,14 +606,14 @@ impl<R: Reader> Loader<R> {
             )),
             Quant::Int8 => {
                 let shape = self.tensor_shape(&name)?;
-                let buffer = cache.checkout(shape, || context.tensor_init(shape));
+                let buffer = context.tensor_init(shape);
                 self.load_in_place_matrix_f16_discount(&buffer, &name, discount)
                     .await?;
                 Ok(Matrix::quant_u8(&buffer)?)
             }
             Quant::NF4 => {
                 let shape = self.tensor_shape(&name)?;
-                let buffer = cache.checkout(shape, || context.tensor_init(shape));
+                let buffer = context.tensor_init(shape);
                 self.load_in_place_matrix_f16_discount(&buffer, &name, discount)
                     .await?;
                 Ok(Matrix::quant_nf4(&buffer)?)
