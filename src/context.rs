@@ -1,4 +1,8 @@
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -14,7 +18,7 @@ use wgpu::{
 use crate::{
     model::ModelInfo,
     tensor::{
-        cache::{RefCountCache, ResourceCache},
+        cache::ResourceCache,
         shape::{IntoBytes, Shape},
         View,
     },
@@ -76,8 +80,8 @@ pub struct ContextInternal {
     pub device: Device,
     pub queue: Queue,
 
-    pipeline_cache: ResourceCache<PipelineKey, CachedPipeline>,
-    buffer_cache: RefCountCache<usize, Buffer>,
+    pipeline_cache: Mutex<HashMap<PipelineKey, Arc<CachedPipeline>>>,
+    buffer_cache: ResourceCache<usize, Buffer>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -132,7 +136,7 @@ impl<'a> ContextBuilder {
                 adapter,
                 device,
                 queue,
-                pipeline_cache: ResourceCache::new(Duration::ZERO),
+                pipeline_cache: Default::default(),
                 buffer_cache: Default::default(),
             }
             .into(),
@@ -231,39 +235,46 @@ impl Context {
         let mut context = Context::new();
         context.macros = macros.0.into_iter().collect();
 
-        self.pipeline_cache.checkout(key, move || {
-            let shader = process_str(source.as_ref(), &mut context).unwrap();
-            let module = &self.device.create_shader_module(ShaderModuleDescriptor {
-                label: Some(name),
-                source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
-            });
-
-            let layout = layout.map(|entries| {
-                let layout = self
-                    .device
-                    .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                        label: None,
-                        entries,
-                    });
-                self.device
-                    .create_pipeline_layout(&PipelineLayoutDescriptor {
-                        label: None,
-                        bind_group_layouts: &[&layout],
-                        push_constant_ranges: &[],
-                    })
-            });
-
-            let pipeline = self
-                .device
-                .create_compute_pipeline(&ComputePipelineDescriptor {
+        let mut cache = self.pipeline_cache.lock().unwrap();
+        match cache.get(&key) {
+            Some(pipeline) => pipeline.clone(),
+            None => {
+                let shader = process_str(source.as_ref(), &mut context).unwrap();
+                let module = &self.device.create_shader_module(ShaderModuleDescriptor {
                     label: Some(name),
-                    layout: layout.as_ref(),
-                    module,
-                    entry_point,
+                    source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
                 });
-            let layout = pipeline.get_bind_group_layout(0);
-            CachedPipeline { pipeline, layout }
-        })
+
+                let layout = layout.map(|entries| {
+                    let layout = self
+                        .device
+                        .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                            label: None,
+                            entries,
+                        });
+                    self.device
+                        .create_pipeline_layout(&PipelineLayoutDescriptor {
+                            label: None,
+                            bind_group_layouts: &[&layout],
+                            push_constant_ranges: &[],
+                        })
+                });
+
+                let pipeline = self
+                    .device
+                    .create_compute_pipeline(&ComputePipelineDescriptor {
+                        label: Some(name),
+                        layout: layout.as_ref(),
+                        module,
+                        entry_point,
+                    });
+                let layout = pipeline.get_bind_group_layout(0);
+                let pipeline = Arc::new(CachedPipeline { pipeline, layout });
+
+                cache.insert(key, pipeline.clone());
+                pipeline
+            }
+        }
     }
 
     pub fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
