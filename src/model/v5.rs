@@ -1,4 +1,4 @@
-use std::{convert::Infallible, sync::Arc};
+use std::{convert::Infallible, marker::PhantomData};
 
 use anyhow::Result;
 use half::f16;
@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use super::{
     loader::Reader,
     run::{Header, HookMap, ModelRunInternal},
-    softmax::{ModelSoftmaxInternal, Softmax},
     Build, BuildFuture, ModelBase, ModelBuilder, ModelInfo, PreparedModelBuilder, Quant,
     StateBuilder, MIN_TOKEN_CHUNK_SIZE,
 };
@@ -17,13 +16,12 @@ use crate::{
     model::{OutputType, RESCALE_LAYER},
     num::Float,
     tensor::{
-        cache::ResourceCache,
         kind::{ReadBack, ReadWrite},
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
-        DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorReshape,
-        TensorShape, TensorView,
+        DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView,
+        TensorReshape, TensorShape,
     },
 };
 
@@ -38,9 +36,7 @@ pub struct Model<'a, F: Float> {
     token_chunk_size: usize,
 
     tensor: ModelTensor<'a>,
-    runtime_cache: ResourceCache<usize, Runtime<F>>,
-    header_cache: ResourceCache<usize, Header<F>>,
-    softmax_cache: ResourceCache<usize, Softmax>,
+    _phantom: PhantomData<F>,
 }
 
 #[derive(Debug)]
@@ -208,7 +204,7 @@ pub struct ModelState {
 }
 
 impl ModelState {
-    fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+    fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let chunk = layer / self.chunk_size;
         let offset = layer % self.chunk_size;
         let head_size = self.info.num_emb / self.info.num_head;
@@ -218,7 +214,7 @@ impl ModelState {
         self.state[chunk].view(.., start..end, .., ..)
     }
 
-    fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+    fn ffn(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let chunk = layer / self.chunk_size;
         let offset = layer % self.chunk_size;
         let head_size = self.info.num_emb / self.info.num_head;
@@ -505,19 +501,15 @@ impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
         context.queue.submit(None);
         context.device.poll(wgpu::MaintainBase::Wait);
 
-        let cache = ResourceCache::<Shape, TensorGpu<f16, ReadWrite>>::new(0);
-        let load_matrix = |name: String, quant: Quant| loader.load_matrix(&cache, name, quant);
+        let load_matrix = |name: String, quant: Quant| loader.load_matrix(name, quant);
         let load_matrix_discount = |name: String, quant: Quant, discount: f32| {
-            loader.load_matrix_discount(&cache, name, quant, discount)
+            loader.load_matrix_discount(name, quant, discount)
         };
 
         let mut layers = vec![];
         for layer in 0..info.num_layer {
             let quant = quant.get(&layer).copied().unwrap_or_default();
             let discount = 2.0_f32.powi(-((layer / RESCALE_LAYER) as i32));
-            if matches!(quant, Quant::None) {
-                cache.clear();
-            }
 
             let att_layer_norm = LayerNorm {
                 w: loader
@@ -620,9 +612,7 @@ impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
             turbo,
             token_chunk_size,
             tensor,
-            runtime_cache: ResourceCache::new(1),
-            header_cache: ResourceCache::new(1),
-            softmax_cache: ResourceCache::new(1),
+            _phantom: PhantomData,
         })
     }
 }
@@ -639,15 +629,6 @@ impl<'a, F: Float> ModelBase for Model<'a, F> {
     }
 }
 
-impl<F: Float> ModelSoftmaxInternal for Model<'_, F> {
-    #[inline]
-    fn checkout_softmax(&self, num_batch: usize) -> Arc<Softmax> {
-        self.softmax_cache.checkout(num_batch, || {
-            Softmax::new(&self.context, &self.info, num_batch)
-        })
-    }
-}
-
 impl<'a, F: Float> ModelRunInternal for Model<'a, F> {
     type Hook = Hook;
     type State = ModelState;
@@ -661,17 +642,13 @@ impl<'a, F: Float> ModelRunInternal for Model<'a, F> {
     }
 
     #[inline]
-    fn checkout_runtime(&self, num_token: usize) -> Arc<Self::Runtime> {
-        self.runtime_cache.checkout(num_token, || {
-            Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
-        })
+    fn checkout_runtime(&self, num_token: usize) -> Self::Runtime {
+        Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
     }
 
     #[inline]
-    fn checkout_header(&self, num_batch: usize) -> Arc<Self::Header> {
-        self.header_cache.checkout(num_batch, || {
-            Header::new(&self.context, &self.info, num_batch)
-        })
+    fn checkout_header(&self, num_batch: usize) -> Self::Header {
+        Header::new(&self.context, &self.info, num_batch)
     }
 
     #[inline]

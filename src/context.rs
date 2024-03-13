@@ -1,4 +1,8 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -6,9 +10,9 @@ use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, Backends, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
-    BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features,
-    Limits, PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
-    ShaderModuleDescriptor,
+    BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
+    DeviceDescriptor, Features, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
+    RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
 use crate::{
@@ -76,10 +80,8 @@ pub struct ContextInternal {
     pub device: Device,
     pub queue: Queue,
 
-    pipeline_cache: ResourceCache<PipelineKey, CachedPipeline>,
-
-    shape_cache: ResourceCache<Shape, Buffer>,
-    view_cache: ResourceCache<View, Buffer>,
+    pipeline_cache: Mutex<HashMap<PipelineKey, Arc<CachedPipeline>>>,
+    buffer_cache: ResourceCache<usize, Buffer>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -134,9 +136,8 @@ impl<'a> ContextBuilder {
                 adapter,
                 device,
                 queue,
-                pipeline_cache: ResourceCache::new(0),
-                shape_cache: Default::default(),
-                view_cache: Default::default(),
+                pipeline_cache: Default::default(),
+                buffer_cache: Default::default(),
             }
             .into(),
         ))
@@ -234,58 +235,111 @@ impl Context {
         let mut context = Context::new();
         context.macros = macros.0.into_iter().collect();
 
-        self.pipeline_cache.checkout(key, move || {
-            let shader = process_str(source.as_ref(), &mut context).unwrap();
-            let module = &self.device.create_shader_module(ShaderModuleDescriptor {
-                label: Some(name),
-                source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
-            });
-
-            let layout = layout.map(|entries| {
-                let layout = self
-                    .device
-                    .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                        label: None,
-                        entries,
-                    });
-                self.device
-                    .create_pipeline_layout(&PipelineLayoutDescriptor {
-                        label: None,
-                        bind_group_layouts: &[&layout],
-                        push_constant_ranges: &[],
-                    })
-            });
-
-            let pipeline = self
-                .device
-                .create_compute_pipeline(&ComputePipelineDescriptor {
+        let mut cache = self.pipeline_cache.lock().unwrap();
+        match cache.get(&key) {
+            Some(pipeline) => pipeline.clone(),
+            None => {
+                let shader = process_str(source.as_ref(), &mut context).unwrap();
+                let module = &self.device.create_shader_module(ShaderModuleDescriptor {
                     label: Some(name),
-                    layout: layout.as_ref(),
-                    module,
-                    entry_point,
+                    source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
                 });
-            let layout = pipeline.get_bind_group_layout(0);
-            CachedPipeline { pipeline, layout }
-        })
+
+                let layout = layout.map(|entries| {
+                    let layout = self
+                        .device
+                        .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                            label: None,
+                            entries,
+                        });
+                    self.device
+                        .create_pipeline_layout(&PipelineLayoutDescriptor {
+                            label: None,
+                            bind_group_layouts: &[&layout],
+                            push_constant_ranges: &[],
+                        })
+                });
+
+                let pipeline = self
+                    .device
+                    .create_compute_pipeline(&ComputePipelineDescriptor {
+                        label: Some(name),
+                        layout: layout.as_ref(),
+                        module,
+                        entry_point,
+                    });
+                let layout = pipeline.get_bind_group_layout(0);
+                let pipeline = Arc::new(CachedPipeline { pipeline, layout });
+
+                cache.insert(key, pipeline.clone());
+                pipeline
+            }
+        }
     }
 
     pub fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
-        self.shape_cache.checkout(shape, || {
-            self.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: &shape.into_bytes(),
-                usage: BufferUsages::UNIFORM,
-            })
-        })
+        let view = View {
+            shape,
+            stride: shape,
+            offset: Shape::new(0, 0, 0, 0),
+        };
+        self.buffer_cache.checkout(
+            shape.into_bytes().len(),
+            |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
+            || {
+                self.device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: &view.into_bytes(),
+                    usage: BufferUsages::UNIFORM,
+                })
+            },
+        )
     }
 
     pub fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.view_cache.checkout(view, || {
-            self.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: &view.into_bytes(),
-                usage: BufferUsages::UNIFORM,
-            })
-        })
+        self.buffer_cache.checkout(
+            view.into_bytes().len(),
+            |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
+            || {
+                self.device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: &view.into_bytes(),
+                    usage: BufferUsages::UNIFORM,
+                })
+            },
+        )
+    }
+
+    pub fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
+        self.buffer_cache.checkout(
+            contents.len(),
+            |buffer| {
+                if usage.contains(BufferUsages::STORAGE) {
+                    self.queue.write_buffer(buffer, 0, contents);
+                }
+            },
+            || {
+                self.device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents,
+                    usage,
+                })
+            },
+        )
+    }
+
+    pub fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
+        self.buffer_cache.checkout(
+            size,
+            |_| (),
+            || {
+                self.device.create_buffer(&BufferDescriptor {
+                    label: None,
+                    size: size as u64,
+                    usage,
+                    mapped_at_creation: false,
+                })
+            },
+        )
     }
 }

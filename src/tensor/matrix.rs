@@ -7,7 +7,7 @@ use crate::{
         kind::{ReadWrite, Uniform},
         ops::{TensorOp, TensorPass},
         shape::Shape,
-        TensorError, TensorGpu, TensorShape, TensorView,
+        TensorError, TensorGpu, TensorGpuView, TensorShape,
     },
 };
 
@@ -28,8 +28,8 @@ pub enum Matrix {
 impl Matrix {
     pub fn matmul_vec_op(
         &self,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
@@ -41,8 +41,8 @@ impl Matrix {
 
     pub fn matmul_mat_op(
         &self,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
@@ -60,8 +60,8 @@ impl Matrix {
 
     pub fn matmul_op(
         &self,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
         turbo: bool,
     ) -> Result<TensorOp, TensorError> {

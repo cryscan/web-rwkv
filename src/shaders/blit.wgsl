@@ -1,7 +1,7 @@
 struct View {
+    shape: vec4<u32>,
     stride: vec4<u32>,
     offset: vec4<u32>,
-    shape: vec4<u32>,  
 };
 
 @group(0) @binding(0) var<uniform> source: View;

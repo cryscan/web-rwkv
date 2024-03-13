@@ -5,7 +5,7 @@ use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, CommandEncoder, Compu
 
 use super::{
     kind::{Kind, ReadWrite, Uniform},
-    Shape, TensorError, TensorGpu, TensorScalar, TensorShape, TensorView,
+    Shape, TensorError, TensorGpu, TensorGpuView, TensorScalar, TensorShape,
 };
 use crate::{
     context::{CachedPipeline, Macros},
@@ -395,8 +395,8 @@ impl TensorOp {
     /// - `output` shape: `[R, T, B]`.
     pub fn matmul_vec_fp16(
         matrix: &TensorGpu<f16, ReadWrite>,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
@@ -462,8 +462,8 @@ impl TensorOp {
     pub fn matmul_vec_int8(
         matrix: &TensorGpu<u8, ReadWrite>,
         minmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
@@ -540,8 +540,8 @@ impl TensorOp {
         matrix: &TensorGpu<u8, ReadWrite>,
         quant: &TensorGpu<f32, Uniform>,
         absmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
@@ -621,9 +621,9 @@ impl TensorOp {
     ///
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
     pub fn matmul_mat_fp16(
-        matrix: TensorView<f16>,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        matrix: TensorGpuView<f16>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
@@ -693,10 +693,10 @@ impl TensorOp {
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
     #[allow(clippy::too_many_arguments)]
     pub fn matmul_mat_int8(
-        matrix: TensorView<u8>,
+        matrix: TensorGpuView<u8>,
         minmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
@@ -776,11 +776,11 @@ impl TensorOp {
     ///
     /// Note: `K` must be multiples of 256; `M` and `N` must be multiples of 8.
     pub fn matmul_mat_nf4(
-        matrix: TensorView<u8>,
+        matrix: TensorGpuView<u8>,
         quant: &TensorGpu<f32, Uniform>,
         absmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
@@ -852,8 +852,8 @@ impl TensorOp {
     }
 
     pub fn add(
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -907,8 +907,8 @@ impl TensorOp {
     }
 
     pub fn mul(
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -963,8 +963,8 @@ impl TensorOp {
 
     pub fn token_shift(
         cursors: &TensorGpu<u32, ReadWrite>,
-        time_mix: TensorView<impl Float>,
-        sx: TensorView<f32>,
+        time_mix: TensorGpuView<impl Float>,
+        sx: TensorGpuView<f32>,
         input: &TensorGpu<impl Float, ReadWrite>,
         output: &TensorGpu<impl Float, ReadWrite>,
         reversed: bool,
@@ -1041,7 +1041,7 @@ impl TensorOp {
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        state: TensorView<f32>,
+        state: TensorGpuView<f32>,
         k: &TensorGpu<T, ReadWrite>,
         v: &TensorGpu<T, ReadWrite>,
         r: &TensorGpu<T, ReadWrite>,
@@ -1124,7 +1124,7 @@ impl TensorOp {
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        state: TensorView<f32>,
+        state: TensorGpuView<f32>,
         k: &TensorGpu<T, ReadWrite>,
         v: &TensorGpu<T, ReadWrite>,
         r: &TensorGpu<T, ReadWrite>,
@@ -1209,7 +1209,7 @@ impl TensorOp {
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        state: TensorView<f32>,
+        state: TensorGpuView<f32>,
         k: &TensorGpu<T, ReadWrite>,
         v: &TensorGpu<T, ReadWrite>,
         r: &TensorGpu<T, ReadWrite>,
@@ -1454,7 +1454,7 @@ impl TensorOp {
 
     pub fn channel_mix<T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
-        state: TensorView<f32>,
+        state: TensorGpuView<f32>,
         r: &TensorGpu<T, ReadWrite>,
         v: &TensorGpu<T, ReadWrite>,
         x: &TensorGpu<T, ReadWrite>,
@@ -1522,8 +1522,8 @@ impl TensorOp {
 
     /// Copy the content of `input` into `output` of the same shape.
     pub fn blit(
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1576,8 +1576,8 @@ impl TensorOp {
 
     /// Repeat the content of `input` into `output` along the token and batch axes.
     pub fn broadcast(
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1630,8 +1630,8 @@ impl TensorOp {
 
     /// Swap the `token` and `batch` axes.
     pub fn transpose(
-        input: TensorView<impl Float>,
-        output: TensorView<impl Float>,
+        input: TensorGpuView<impl Float>,
+        output: TensorGpuView<impl Float>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1743,9 +1743,9 @@ impl TensorOp {
 
     pub fn blend_lora(
         factor: &TensorGpu<f32, Uniform>,
-        xa: TensorView<f16>,
-        xb: TensorView<f16>,
-        output: TensorView<f16>,
+        xa: TensorGpuView<f16>,
+        xb: TensorGpuView<f16>,
+        output: TensorGpuView<f16>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 

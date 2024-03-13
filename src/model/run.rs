@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future, hash::Hash, sync::Arc};
+use std::{collections::HashMap, future::Future, hash::Hash};
 
 use anyhow::Result;
 use half::f16;
@@ -50,8 +50,8 @@ pub(crate) trait ModelRunInternal: ModelBase {
 
     fn tensor(&self) -> &Self::Tensor;
 
-    fn checkout_runtime(&self, num_batch: usize) -> Arc<Self::Runtime>;
-    fn checkout_header(&self, num_batch: usize) -> Arc<Self::Header>;
+    fn checkout_runtime(&self, num_batch: usize) -> Self::Runtime;
+    fn checkout_header(&self, num_batch: usize) -> Self::Header;
 
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     fn token_chunk_size(&self) -> usize;
