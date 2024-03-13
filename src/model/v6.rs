@@ -22,8 +22,8 @@ use crate::{
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
-        DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorReshape,
-        TensorShape, TensorView,
+        DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView,
+        TensorReshape, TensorShape,
     },
 };
 
@@ -249,7 +249,7 @@ pub struct ModelState {
 }
 
 impl ModelState {
-    fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+    fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let chunk = layer / self.chunk_size;
         let offset = layer % self.chunk_size;
         let head_size = self.info.num_emb / self.info.num_head;
@@ -259,7 +259,7 @@ impl ModelState {
         self.state[chunk].view(.., start..end, .., ..)
     }
 
-    fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+    fn ffn(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let chunk = layer / self.chunk_size;
         let offset = layer % self.chunk_size;
         let head_size = self.info.num_emb / self.info.num_head;

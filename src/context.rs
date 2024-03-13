@@ -267,10 +267,15 @@ impl Context {
     }
 
     pub fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
+        let view = View {
+            shape,
+            stride: shape,
+            offset: Shape::new(0, 0, 0, 0),
+        };
         self.buffer_cache.checkout(shape.into_bytes().len(), || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
-                contents: &shape.into_bytes(),
+                contents: &view.into_bytes(),
                 usage: BufferUsages::UNIFORM,
             })
         })

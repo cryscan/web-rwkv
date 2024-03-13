@@ -23,7 +23,8 @@ use crate::{
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::Shape,
-        DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorShape, TensorView,
+        DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView,
+        TensorShape,
     },
 };
 
@@ -197,13 +198,13 @@ impl ModelState {
         self.0.context()
     }
 
-    fn att(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+    fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let start = 5 * layer;
         let end = start + 4;
         self.view(.., start..end, .., ..)
     }
 
-    fn ffn(&self, layer: usize) -> Result<TensorView<f32>, TensorError> {
+    fn ffn(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let start = 5 * layer + 4;
         self.view(.., start..=start, .., ..)
     }

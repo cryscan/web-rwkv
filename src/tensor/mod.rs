@@ -124,17 +124,17 @@ pub enum TensorError {
 /// Data defining a tensor view in shader.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct View {
+    pub shape: Shape,
     pub stride: Shape,
     pub offset: Shape,
-    pub shape: Shape,
 }
 
 impl IntoBytes for View {
     fn into_bytes(self) -> Vec<u8> {
         [
+            self.shape.into_bytes(),
             self.stride.into_bytes(),
             self.offset.into_bytes(),
-            self.shape.into_bytes(),
         ]
         .concat()
     }
@@ -730,20 +730,20 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
 
 /// Like a reference to a tensor, but refer to a sub-chunk of it.
 #[derive(Debug, Clone)]
-pub struct TensorView<'a, T: Scalar> {
+pub struct TensorGpuView<'a, T: Scalar> {
     tensor: &'a TensorGpu<T, ReadWrite>,
     meta: Arc<Buffer>,
     view: View,
 }
 
-impl<T: Scalar> TensorShape for TensorView<'_, T> {
+impl<T: Scalar> TensorShape for TensorGpuView<'_, T> {
     #[inline]
     fn shape(&self) -> Shape {
         self.view.shape
     }
 }
 
-impl<T: Scalar> TensorView<'_, T> {
+impl<T: Scalar> TensorGpuView<'_, T> {
     #[inline]
     pub fn tensor(&self) -> &TensorGpu<T, ReadWrite> {
         self.tensor
@@ -774,11 +774,11 @@ impl<T: Scalar> TensorView<'_, T> {
     }
 }
 
-impl<T: Scalar> TensorScalar for TensorView<'_, T> {
+impl<T: Scalar> TensorScalar for TensorGpuView<'_, T> {
     type T = T;
 }
 
-impl<F: Float> TensorView<'_, F> {
+impl<F: Float> TensorGpuView<'_, F> {
     #[inline]
     pub const fn def(&self) -> &'static str {
         F::DEF
@@ -793,7 +793,7 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
         y: impl TensorAxis,
         z: impl TensorAxis,
         w: impl TensorAxis,
-    ) -> Result<TensorView<'_, T>, TensorError> {
+    ) -> Result<TensorGpuView<'_, T>, TensorError> {
         let slice = (x, y, z, w);
         let (start, end) = slice.shape_bounds(self.shape)?;
         let view = View {
@@ -802,7 +802,7 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
             shape: end - start,
         };
         let meta = self.context.checkout_view_uniform(view);
-        Ok(TensorView {
+        Ok(TensorGpuView {
             tensor: self,
             meta,
             view,
