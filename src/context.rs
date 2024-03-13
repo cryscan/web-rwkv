@@ -6,9 +6,9 @@ use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, Backends, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
-    BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features,
-    Limits, PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
-    ShaderModuleDescriptor,
+    BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
+    DeviceDescriptor, Features, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
+    RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
 use crate::{
@@ -272,22 +272,47 @@ impl Context {
             stride: shape,
             offset: Shape::new(0, 0, 0, 0),
         };
-        self.buffer_cache.checkout(shape.into_bytes().len(), || {
+        let f = || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &view.into_bytes(),
                 usage: BufferUsages::UNIFORM,
             })
-        })
+        };
+        self.buffer_cache.checkout(shape.into_bytes().len(), f)
     }
 
     pub fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.buffer_cache.checkout(view.into_bytes().len(), || {
+        let f = || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &view.into_bytes(),
                 usage: BufferUsages::UNIFORM,
             })
-        })
+        };
+        self.buffer_cache.checkout(view.into_bytes().len(), f)
+    }
+
+    pub fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
+        let f = || {
+            self.device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents,
+                usage,
+            })
+        };
+        self.buffer_cache.checkout(contents.len(), f)
+    }
+
+    pub fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
+        let f = || {
+            self.device.create_buffer(&BufferDescriptor {
+                label: None,
+                size: size as u64,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        self.buffer_cache.checkout(size, f)
     }
 }

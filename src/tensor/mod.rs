@@ -3,10 +3,7 @@ use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 use itertools::Itertools;
 use thiserror::Error;
 use web_rwkv_derive::JsError;
-use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
-    BindingResource, Buffer, BufferBinding, BufferDescriptor, MapMode,
-};
+use wgpu::{BindingResource, Buffer, BufferBinding, MapMode};
 
 use self::{
     kind::{Kind, ReadBack, ReadWrite, Uniform},
@@ -395,16 +392,8 @@ impl<'a, T: Scalar, K: Kind> TensorInit<'a, T> for TensorGpu<T, K> {
 
     /// Initialize a GPU tensor with a given shape.
     fn init(context: &Context, shape: Shape) -> Self {
-        let size = shape.len() as u64 * T::size() as u64;
-        let buffer = context
-            .device
-            .create_buffer(&BufferDescriptor {
-                label: None,
-                size,
-                usage: K::buffer_usages(),
-                mapped_at_creation: false,
-            })
-            .into();
+        let size = shape.len() * T::size();
+        let buffer = context.checkout_buffer(size, K::buffer_usages());
 
         Self {
             context: context.clone(),
@@ -457,14 +446,7 @@ impl<T: Scalar, K: Kind> From<TensorCpu<'_, T>> for TensorGpu<T, K> {
         } = value;
         let meta = context.checkout_shape_uniform(shape);
         let contents = bytemuck::cast_slice(&data);
-        let buffer = context
-            .device
-            .create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents,
-                usage: K::buffer_usages(),
-            })
-            .into();
+        let buffer = context.checkout_buffer_init(contents, K::buffer_usages());
 
         Self {
             context,
