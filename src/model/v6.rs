@@ -1,4 +1,4 @@
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use std::{convert::Infallible, marker::PhantomData, time::Duration};
 
 use anyhow::Result;
 use half::f16;
@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use super::{
     loader::Reader,
     run::{Header, HookMap, ModelRunInternal},
-    softmax::{ModelSoftmaxInternal, Softmax},
     Build, BuildFuture, ModelBase, ModelBuilder, ModelInfo, OutputType, PreparedModelBuilder,
     Quant, StateBuilder, MIN_TOKEN_CHUNK_SIZE,
 };
@@ -38,9 +37,7 @@ pub struct Model<'a, F: Float> {
     token_chunk_size: usize,
 
     tensor: ModelTensor<'a>,
-    runtime_cache: ResourceCache<usize, Runtime<F>>,
-    header_cache: ResourceCache<usize, Header<F>>,
-    softmax_cache: ResourceCache<usize, Softmax>,
+    _phantom: PhantomData<F>,
 }
 
 #[derive(Debug)]
@@ -680,9 +677,7 @@ impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
             turbo,
             token_chunk_size,
             tensor,
-            runtime_cache: Default::default(),
-            header_cache: Default::default(),
-            softmax_cache: Default::default(),
+            _phantom: PhantomData,
         })
     }
 }
@@ -699,15 +694,6 @@ impl<'a, F: Float> ModelBase for Model<'a, F> {
     }
 }
 
-impl<F: Float> ModelSoftmaxInternal for Model<'_, F> {
-    #[inline]
-    fn checkout_softmax(&self, num_batch: usize) -> Arc<Softmax> {
-        self.softmax_cache.checkout(num_batch, || {
-            Softmax::new(&self.context, &self.info, num_batch)
-        })
-    }
-}
-
 impl<'a, F: Float> ModelRunInternal for Model<'a, F> {
     type Hook = Hook;
     type State = ModelState;
@@ -721,17 +707,13 @@ impl<'a, F: Float> ModelRunInternal for Model<'a, F> {
     }
 
     #[inline]
-    fn checkout_runtime(&self, num_token: usize) -> Arc<Self::Runtime> {
-        self.runtime_cache.checkout(num_token, || {
-            Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
-        })
+    fn checkout_runtime(&self, num_token: usize) -> Self::Runtime {
+        Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
     }
 
     #[inline]
-    fn checkout_header(&self, num_batch: usize) -> Arc<Self::Header> {
-        self.header_cache.checkout(num_batch, || {
-            Header::new(&self.context, &self.info, num_batch)
-        })
+    fn checkout_header(&self, num_batch: usize) -> Self::Header {
+        Header::new(&self.context, &self.info, num_batch)
     }
 
     #[inline]

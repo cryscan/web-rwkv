@@ -1,4 +1,4 @@
-use std::{future::Future, sync::Arc};
+use std::future::Future;
 
 use anyhow::Result;
 use itertools::Itertools;
@@ -30,10 +30,6 @@ impl Softmax {
     }
 }
 
-pub(crate) trait ModelSoftmaxInternal: ModelBase {
-    fn checkout_softmax(&self, num_batch: usize) -> Arc<Softmax>;
-}
-
 pub trait ModelSoftmax {
     /// Softmax of the input tensors.
     fn softmax(
@@ -42,7 +38,7 @@ pub trait ModelSoftmax {
     ) -> impl Future<Output = Result<Vec<ModelOutput>, TensorError>>;
 }
 
-impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
+impl<M: ModelBase> ModelSoftmax for M {
     async fn softmax(&self, input: Vec<ModelOutput>) -> Result<Vec<ModelOutput>, TensorError> {
         let context = self.context();
         let info = self.info();
@@ -78,7 +74,7 @@ impl<Model: ModelSoftmaxInternal> ModelSoftmax for Model {
         )?;
 
         let num_batch = input.shape()[2];
-        let softmax = self.checkout_softmax(num_batch);
+        let softmax = Softmax::new(context, info, num_batch);
         softmax.buffer.load(&input)?;
 
         let op = TensorOp::softmax(&softmax.buffer)?;
