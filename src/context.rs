@@ -272,36 +272,45 @@ impl Context {
             stride: shape,
             offset: Shape::new(0, 0, 0, 0),
         };
-        let f = || {
+        let hit = |buffer: &Buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes());
+        let miss = || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &view.into_bytes(),
                 usage: BufferUsages::UNIFORM,
             })
         };
-        self.buffer_cache.checkout(shape.into_bytes().len(), f)
+        self.buffer_cache
+            .checkout(shape.into_bytes().len(), hit, miss)
     }
 
     pub fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
-        let f = || {
+        let hit = |buffer: &Buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes());
+        let miss = || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents: &view.into_bytes(),
                 usage: BufferUsages::UNIFORM,
             })
         };
-        self.buffer_cache.checkout(view.into_bytes().len(), f)
+        self.buffer_cache
+            .checkout(view.into_bytes().len(), hit, miss)
     }
 
     pub fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
-        let f = || {
+        let hit = |buffer: &Buffer| {
+            if usage.contains(BufferUsages::STORAGE) {
+                self.queue.write_buffer(buffer, 0, contents);
+            }
+        };
+        let miss = || {
             self.device.create_buffer_init(&BufferInitDescriptor {
                 label: None,
                 contents,
                 usage,
             })
         };
-        self.buffer_cache.checkout(contents.len(), f)
+        self.buffer_cache.checkout(contents.len(), hit, miss)
     }
 
     pub fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
@@ -313,6 +322,6 @@ impl Context {
                 mapped_at_creation: false,
             })
         };
-        self.buffer_cache.checkout(size, f)
+        self.buffer_cache.checkout(size, |_| (), f)
     }
 }
