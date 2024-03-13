@@ -283,56 +283,63 @@ impl Context {
             stride: shape,
             offset: Shape::new(0, 0, 0, 0),
         };
-        let hit = |buffer: &Buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes());
-        let miss = || {
-            self.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: &view.into_bytes(),
-                usage: BufferUsages::UNIFORM,
-            })
-        };
-        self.buffer_cache
-            .checkout(shape.into_bytes().len(), hit, miss)
+        self.buffer_cache.checkout(
+            shape.into_bytes().len(),
+            |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
+            || {
+                self.device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: &view.into_bytes(),
+                    usage: BufferUsages::UNIFORM,
+                })
+            },
+        )
     }
 
     pub fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
-        let hit = |buffer: &Buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes());
-        let miss = || {
-            self.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: &view.into_bytes(),
-                usage: BufferUsages::UNIFORM,
-            })
-        };
-        self.buffer_cache
-            .checkout(view.into_bytes().len(), hit, miss)
+        self.buffer_cache.checkout(
+            view.into_bytes().len(),
+            |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
+            || {
+                self.device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents: &view.into_bytes(),
+                    usage: BufferUsages::UNIFORM,
+                })
+            },
+        )
     }
 
     pub fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
-        let hit = |buffer: &Buffer| {
-            if usage.contains(BufferUsages::STORAGE) {
-                self.queue.write_buffer(buffer, 0, contents);
-            }
-        };
-        let miss = || {
-            self.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents,
-                usage,
-            })
-        };
-        self.buffer_cache.checkout(contents.len(), hit, miss)
+        self.buffer_cache.checkout(
+            contents.len(),
+            |buffer| {
+                if usage.contains(BufferUsages::STORAGE) {
+                    self.queue.write_buffer(buffer, 0, contents);
+                }
+            },
+            || {
+                self.device.create_buffer_init(&BufferInitDescriptor {
+                    label: None,
+                    contents,
+                    usage,
+                })
+            },
+        )
     }
 
     pub fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
-        let f = || {
-            self.device.create_buffer(&BufferDescriptor {
-                label: None,
-                size: size as u64,
-                usage,
-                mapped_at_creation: false,
-            })
-        };
-        self.buffer_cache.checkout(size, |_| (), f)
+        self.buffer_cache.checkout(
+            size,
+            |_| (),
+            || {
+                self.device.create_buffer(&BufferDescriptor {
+                    label: None,
+                    size: size as u64,
+                    usage,
+                    mapped_at_creation: false,
+                })
+            },
+        )
     }
 }
