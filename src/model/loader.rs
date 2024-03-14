@@ -267,7 +267,7 @@ impl<R: Reader> Loader<R> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref()).await?;
-        let tensor = TensorCpu::<f16>::from_reader(&self.context, tensor)?
+        let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(&self.context, tensor)?
             .map(|x| x.to_f32())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
             .into();
@@ -276,6 +276,15 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
+
+            let shape = lora.tensor.shape();
+            let tensor = tensor.reshape(
+                Dimension(shape[0]),
+                Dimension(shape[1]),
+                Dimension(1),
+                Dimension(1),
+            )?;
+
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
@@ -291,7 +300,7 @@ impl<R: Reader> Loader<R> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref()).await?;
-        let tensor = TensorCpu::<f16>::from_reader(&self.context, tensor)?
+        let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(&self.context, tensor)?
             .map(|x| -x.to_f32().exp())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
             .into();
@@ -300,6 +309,15 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
+
+            let shape = lora.tensor.shape();
+            let tensor = tensor.reshape(
+                Dimension(shape[0]),
+                Dimension(shape[1]),
+                Dimension(1),
+                Dimension(1),
+            )?;
+
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
@@ -315,7 +333,7 @@ impl<R: Reader> Loader<R> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref()).await?;
-        let tensor = TensorCpu::<f16>::from_reader(context, tensor)?
+        let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(&self.context, tensor)?
             .map(|x| -x.to_f32().exp())
             .map(|x| x.exp())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
@@ -325,6 +343,15 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = TensorGpu::from_data(&self.context, Shape::new(4, 1, 1, 1), &factor)?;
+
+            let shape = lora.tensor.shape();
+            let tensor = tensor.reshape(
+                Dimension(shape[0]),
+                Dimension(shape[1]),
+                Dimension(1),
+                Dimension(1),
+            )?;
+
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
@@ -359,7 +386,16 @@ impl<R: Reader> Loader<R> {
             for lora in lora {
                 let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
                 let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
-                let op = TensorOp::blend(&factor, &lora.tensor, &tensor_f32)?;
+
+                let shape = lora.tensor.shape();
+                let tensor = tensor_f32.reshape(
+                    Dimension(shape[0]),
+                    Dimension(shape[1]),
+                    Dimension(1),
+                    Dimension(1),
+                )?;
+
+                let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
             }
