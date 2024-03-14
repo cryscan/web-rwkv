@@ -1717,15 +1717,15 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: input.binding(),
+                    resource: factor.binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: output.binding(),
+                    resource: input.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: factor.binding(),
+                    resource: output.binding(),
                 },
             ],
         })];

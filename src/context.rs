@@ -81,7 +81,7 @@ pub struct ContextInternal {
     pub queue: Queue,
 
     pipeline_cache: Mutex<HashMap<PipelineKey, Arc<CachedPipeline>>>,
-    buffer_cache: ResourceCache<usize, Buffer>,
+    buffer_cache: ResourceCache<(usize, BufferUsages), Buffer>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -284,7 +284,7 @@ impl Context {
             offset: Shape::new(0, 0, 0, 0),
         };
         self.buffer_cache.checkout(
-            shape.into_bytes().len(),
+            (view.into_bytes().len(), BufferUsages::UNIFORM),
             |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
             || {
                 self.device.create_buffer_init(&BufferInitDescriptor {
@@ -298,7 +298,7 @@ impl Context {
 
     pub fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
         self.buffer_cache.checkout(
-            view.into_bytes().len(),
+            (view.into_bytes().len(), BufferUsages::UNIFORM),
             |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
             || {
                 self.device.create_buffer_init(&BufferInitDescriptor {
@@ -312,7 +312,7 @@ impl Context {
 
     pub fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
         self.buffer_cache.checkout(
-            contents.len(),
+            (contents.len(), usage),
             |buffer| {
                 if usage.contains(BufferUsages::STORAGE) {
                     self.queue.write_buffer(buffer, 0, contents);
@@ -330,7 +330,7 @@ impl Context {
 
     pub fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
         self.buffer_cache.checkout(
-            size,
+            (size, usage),
             |_| (),
             || {
                 self.device.create_buffer(&BufferDescriptor {
