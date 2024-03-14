@@ -74,17 +74,12 @@ impl LoraBlend {
     /// Build a blend pattern that replaces all vectors, and adds to all matrices with `alpha`.
     #[inline]
     pub fn full(alpha: f32) -> Self {
-        Self::new().add_vectors(1.0).add_matrices(alpha)
+        Self::default().add_nominal(1.0).add_matrices(alpha)
     }
 
+    /// Build a blend pattern that interpolates tensors with factor `alpha` from 0 to 1.
     #[inline]
-    pub fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    /// Build a blend pattern that interpolates vectors with factor `alpha` from 0 to 1.
-    #[inline]
-    pub fn add_vectors(mut self, alpha: f32) -> Self {
+    pub fn add_nominal(mut self, alpha: f32) -> Self {
         let pattern = LoraBlendPattern::new(r".+", alpha).unwrap();
         self.push(pattern);
         self
@@ -93,8 +88,11 @@ impl LoraBlend {
     /// Build a blend pattern that adds to all matrices with `alpha`.
     #[inline]
     pub fn add_matrices(mut self, alpha: f32) -> Self {
-        let pattern =
-            LoraBlendPattern::new(r"blocks\.([0-9]+)\.(att|ffn)\.(\w+)\.weight", alpha).unwrap();
+        let pattern = LoraBlendPattern::new(
+            r"blocks\.([0-9]+)\.(att|ffn)\.(key|value|receptance|gate|output)\.weight",
+            alpha,
+        )
+        .unwrap();
         self.push(pattern);
         self
     }
@@ -102,7 +100,7 @@ impl LoraBlend {
 
 impl Default for LoraBlend {
     fn default() -> Self {
-        Self::full(0.0)
+        Self(Vec::new())
     }
 }
 
