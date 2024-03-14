@@ -239,7 +239,7 @@ impl<R: Reader> Loader<R> {
             let alpha = blend.alpha;
             vectors.push(LoraVector { tensor, alpha });
 
-            log::info!("loaded LoRA {name}, alpha: {alpha}");
+            log::info!("loaded LoRA vector {name}, alpha: {alpha}");
         }
         Ok(vectors)
     }
@@ -260,6 +260,7 @@ impl<R: Reader> Loader<R> {
                 continue;
             };
 
+            let name = name.split('.').filter(|x| !x.contains("weight")).join(".");
             let Ok(x) = lora.data.tensor(&format!("{name}.lora.0")).await else {
                 continue;
             };
@@ -273,7 +274,7 @@ impl<R: Reader> Loader<R> {
             let alpha = blend.alpha;
             matrices.push(LoraMatrix { x, y, rank, alpha });
 
-            log::info!("loaded LoRA {name}, alpha: {alpha}");
+            log::info!("loaded LoRA matrix {name}, alpha: {alpha}, rank: {rank}");
         }
         Ok(matrices)
     }
