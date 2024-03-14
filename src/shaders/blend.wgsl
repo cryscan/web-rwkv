@@ -17,7 +17,7 @@ struct View {
 @group(0) @binding(4) var<storage, read_write> output: array<vec2<u32>>;    // (B, T, C)
 #else
 @group(0) @binding(4) var<storage, read_write> output: array<vec4<f32>>;    // (B, T, C)
-#endifx
+#endif
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x >> 2u;
