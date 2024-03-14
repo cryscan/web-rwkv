@@ -71,16 +71,38 @@ pub struct Lora<R> {
 pub struct LoraBlend(pub Vec<LoraBlendPattern>);
 
 impl LoraBlend {
-    /// Build a blend pattern that matches all tensors.
+    /// Build a blend pattern that replaces all vectors, and adds to all matrices with `alpha`.
+    #[inline]
     pub fn full(alpha: f32) -> Self {
-        let pattern = LoraBlendPattern::new(r".+", alpha).expect("default blend pattern");
-        Self(vec![pattern])
+        Self::new().add_vectors(1.0).add_matrices(alpha)
+    }
+
+    #[inline]
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Build a blend pattern that interpolates vectors with factor `alpha` from 0 to 1.
+    #[inline]
+    pub fn add_vectors(mut self, alpha: f32) -> Self {
+        let pattern = LoraBlendPattern::new(r".+", alpha).unwrap();
+        self.push(pattern);
+        self
+    }
+
+    /// Build a blend pattern that adds to all matrices with `alpha`.
+    #[inline]
+    pub fn add_matrices(mut self, alpha: f32) -> Self {
+        let pattern =
+            LoraBlendPattern::new(r"blocks\.([0-9]+)\.(att|ffn)\.(\w+)\.weight", alpha).unwrap();
+        self.push(pattern);
+        self
     }
 }
 
 impl Default for LoraBlend {
     fn default() -> Self {
-        Self::full(1.0)
+        Self::full(0.0)
     }
 }
 
