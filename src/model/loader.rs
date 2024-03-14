@@ -281,8 +281,8 @@ impl<R: Reader> Loader<R> {
             let tensor = tensor.reshape(
                 Dimension(shape[0]),
                 Dimension(shape[1]),
-                Dimension(1),
-                Dimension(1),
+                Dimension(shape[2]),
+                Dimension(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -314,8 +314,8 @@ impl<R: Reader> Loader<R> {
             let tensor = tensor.reshape(
                 Dimension(shape[0]),
                 Dimension(shape[1]),
-                Dimension(1),
-                Dimension(1),
+                Dimension(shape[2]),
+                Dimension(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -348,8 +348,8 @@ impl<R: Reader> Loader<R> {
             let tensor = tensor.reshape(
                 Dimension(shape[0]),
                 Dimension(shape[1]),
-                Dimension(1),
-                Dimension(1),
+                Dimension(shape[2]),
+                Dimension(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -391,8 +391,8 @@ impl<R: Reader> Loader<R> {
                 let tensor = tensor_f32.reshape(
                     Dimension(shape[0]),
                     Dimension(shape[1]),
-                    Dimension(1),
-                    Dimension(1),
+                    Dimension(shape[2]),
+                    Dimension(shape[3]),
                 )?;
 
                 let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
