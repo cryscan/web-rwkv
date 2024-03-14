@@ -67,7 +67,7 @@ pub struct Lora<R> {
 }
 
 /// A list of LoRA blend patterns.
-#[derive(Debug, Clone, Deref, DerefMut)]
+#[derive(Debug, Default, Clone, Deref, DerefMut)]
 pub struct LoraBlend(pub Vec<LoraBlendPattern>);
 
 impl LoraBlend {
@@ -96,11 +96,14 @@ impl LoraBlend {
         self.push(pattern);
         self
     }
-}
 
-impl Default for LoraBlend {
-    fn default() -> Self {
-        Self(Vec::new())
+    /// Build a blend pattern that adds to all matrices in a layer with `alpha`.
+    pub fn add_layer_matrices(mut self, layer: usize, alpha: f32) -> Self {
+        let pattern =
+            format!(r"blocks\.{layer}\.(att|ffn)\.(key|value|receptance|gate|output)\.weight");
+        let pattern = LoraBlendPattern::new(&pattern, alpha).unwrap();
+        self.push(pattern);
+        self
     }
 }
 
