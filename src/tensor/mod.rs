@@ -216,12 +216,6 @@ pub trait TensorFrom<From> {
     fn transfer_from(context: &Context, value: From) -> Self;
 }
 
-impl<T> TensorFrom<T> for T {
-    fn transfer_from(_context: &Context, value: T) -> Self {
-        value
-    }
-}
-
 pub trait TensorInto<Into> {
     fn transfer_into(self, context: &Context) -> Into;
 }
@@ -349,6 +343,12 @@ impl<'a, T: Scalar> TensorInit<'a, T> for TensorCpu<'a, T> {
     }
 }
 
+impl<'a, T: Scalar> TensorFrom<TensorCpu<'a, T>> for TensorCpu<'a, T> {
+    fn transfer_from(_context: &Context, value: TensorCpu<'a, T>) -> Self {
+        value
+    }
+}
+
 impl<'a, T: Scalar> DeepClone for TensorCpu<'a, T> {
     fn deep_clone(&self) -> Self {
         self.clone()
@@ -396,6 +396,34 @@ impl<'a, T: Scalar, K: Kind> TensorFrom<TensorCpu<'a, T>> for TensorGpu<T, K> {
             },
             phantom: PhantomData,
         }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Scalar> TensorFrom<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
+    fn transfer_from(context: &Context, value: TensorGpu<T, ReadWrite>) -> Self {
+        if value.context == *context {
+            value
+        } else {
+            let map = value.context.tensor_init(value.shape);
+
+            let mut encoder = value
+                .context
+                .device
+                .create_command_encoder(&Default::default());
+            encoder.copy_tensor(&value, &map).unwrap();
+            value.context.queue.submit(Some(encoder.finish()));
+
+            let backed = map.back();
+            backed.transfer_into(context)
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<T: Scalar> TensorFrom<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
+    fn transfer_from(_context: &Context, value: TensorGpu<T, ReadWrite>) -> Self {
+        value
     }
 }
 
