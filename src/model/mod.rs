@@ -250,7 +250,6 @@ impl<R: Reader> ModelBuilder<R> {
         let token_chunk_size = token_chunk_size
             .max(MIN_TOKEN_CHUNK_SIZE)
             .next_power_of_two();
-        log::info!("token chunk size: {token_chunk_size}");
 
         Ok(PreparedModelBuilder {
             context,
