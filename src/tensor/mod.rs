@@ -23,12 +23,13 @@ pub mod shape;
 
 /// Buffer of the tensor on GPU.
 #[derive(Debug, Clone)]
-pub struct TensorBuffer {
+pub struct TensorGpuData {
+    pub context: Context,
     pub meta: Arc<Buffer>,
     pub buffer: Arc<Buffer>,
 }
 
-impl TensorBuffer {
+impl TensorGpuData {
     #[inline]
     pub fn meta_binding(&self) -> BindingResource {
         BindingResource::Buffer(BufferBinding {
@@ -89,7 +90,7 @@ impl<'a, T: Scalar> Device for Cpu<'a, T> {
 }
 
 impl<K: Kind> Device for Gpu<K> {
-    type Data = TensorBuffer;
+    type Data = TensorGpuData;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error, JsError)]
@@ -189,32 +190,48 @@ pub trait TensorScalar {
 
 pub trait TensorInit<'a, T: Scalar>: Sized {
     /// Init the tensor with given shape and contents.
-    fn from_data(
-        context: &Context,
-        shape: Shape,
-        data: impl Into<Cow<'a, [T]>>,
-    ) -> Result<Self, TensorError>;
+    fn from_data(shape: Shape, data: impl Into<Cow<'a, [T]>>) -> Result<Self, TensorError>;
     /// Init the tensor with given shape.
-    fn init(context: &Context, shape: Shape) -> Self;
+    fn init(shape: Shape) -> Self;
 
     /// Create a tensor from safetensors reader.
-    fn from_reader(
-        context: &Context,
-        (dt, shape, data): ReaderTensor<'a>,
-    ) -> Result<Self, TensorError> {
+    fn from_reader((dt, shape, data): ReaderTensor<'a>) -> Result<Self, TensorError> {
         if T::DATA_TYPE != dt {
             return Err(TensorError::Type);
         }
 
         let shape = Shape::from_slice_rev(&shape)?;
         match data {
-            Cow::Borrowed(data) => Self::from_data(context, shape, bytemuck::cast_slice(data)),
+            Cow::Borrowed(data) => Self::from_data(shape, bytemuck::cast_slice(data)),
             Cow::Owned(data) => {
                 let data = bytemuck::cast_slice(&data);
                 let data = Cow::Owned(data.to_vec());
-                Self::from_data(context, shape, data)
+                Self::from_data(shape, data)
             }
         }
+    }
+}
+
+pub trait TensorFrom<From> {
+    fn transfer_from(context: &Context, value: From) -> Self;
+}
+
+impl<T> TensorFrom<T> for T {
+    fn transfer_from(_context: &Context, value: T) -> Self {
+        value
+    }
+}
+
+pub trait TensorInto<Into> {
+    fn transfer_into(self, context: &Context) -> Into;
+}
+
+impl<From, Into> TensorInto<Into> for From
+where
+    Into: TensorFrom<From>,
+{
+    fn transfer_into(self, context: &Context) -> Into {
+        Into::transfer_from(context, self)
     }
 }
 
@@ -238,15 +255,9 @@ pub trait TensorReshape: Sized {
     ) -> Result<Self, TensorError>;
 }
 
-pub trait TensorTransfer: Sized {
-    /// Transfer the tensor to another (may be the same) context.
-    fn transfer(self, context: &Context) -> Result<Self, TensorError>;
-}
-
 /// A tensor on either CPU or GPU.
 #[derive(Debug)]
 pub struct Tensor<D: Device, T: Scalar> {
-    context: Context,
     shape: Shape,
     data: D::Data,
     phantom: PhantomData<T>,
@@ -258,7 +269,6 @@ pub type TensorGpu<T, K> = Tensor<Gpu<K>, T>;
 impl<D: Device, T: Scalar> Clone for Tensor<D, T> {
     fn clone(&self) -> Self {
         Self {
-            context: self.context.clone(),
             shape: self.shape,
             data: self.data.clone(),
             phantom: PhantomData,
@@ -316,17 +326,12 @@ impl<D: Device, F: Float> Tensor<D, F> {
 }
 
 impl<'a, T: Scalar> TensorInit<'a, T> for TensorCpu<'a, T> {
-    fn from_data(
-        context: &Context,
-        shape: Shape,
-        data: impl Into<Cow<'a, [T]>>,
-    ) -> Result<Self, TensorError> {
+    fn from_data(shape: Shape, data: impl Into<Cow<'a, [T]>>) -> Result<Self, TensorError> {
         let data = data.into();
         if shape.len() != data.len() {
             return Err(TensorError::Size(shape.len(), data.len()));
         }
         Ok(Self {
-            context: context.clone(),
             shape,
             data,
             phantom: PhantomData,
@@ -334,8 +339,13 @@ impl<'a, T: Scalar> TensorInit<'a, T> for TensorCpu<'a, T> {
     }
 
     #[inline]
-    fn init(context: &Context, shape: Shape) -> Self {
-        context.zeros(shape)
+    fn init(shape: Shape) -> Self {
+        let data = vec![T::zero(); shape.len()].into();
+        Self {
+            shape,
+            data,
+            phantom: PhantomData,
+        }
     }
 }
 
@@ -369,37 +379,19 @@ impl<T: Scalar> TensorReshape for TensorCpu<'_, T> {
     }
 }
 
-impl<T: Scalar> TensorTransfer for TensorCpu<'_, T> {
-    fn transfer(self, context: &Context) -> Result<Self, TensorError> {
-        Ok(Self {
-            context: context.clone(),
-            shape: self.shape,
-            data: self.data,
-            phantom: PhantomData,
-        })
-    }
-}
-
-impl<'a, T: Scalar, K: Kind> TensorInit<'a, T> for TensorGpu<T, K> {
-    #[inline]
-    fn from_data(
-        context: &Context,
-        shape: Shape,
-        data: impl Into<Cow<'a, [T]>>,
-    ) -> Result<Self, TensorError> {
-        TensorCpu::from_data(context, shape, data).map(Into::into)
-    }
-
-    /// Initialize a GPU tensor with a given shape.
-    fn init(context: &Context, shape: Shape) -> Self {
-        let size = shape.len() * T::size();
-        let buffer = context.checkout_buffer(size, K::buffer_usages());
+impl<'a, T: Scalar, K: Kind> TensorFrom<TensorCpu<'a, T>> for TensorGpu<T, K> {
+    fn transfer_from(context: &Context, value: TensorCpu<'a, T>) -> Self {
+        let Tensor { shape, data, .. } = value;
+        let context = context.clone();
+        let meta = context.checkout_shape_uniform(shape);
+        let contents = bytemuck::cast_slice(&data);
+        let buffer = context.checkout_buffer_init(contents, K::buffer_usages());
 
         Self {
-            context: context.clone(),
             shape,
-            data: TensorBuffer {
-                meta: context.checkout_shape_uniform(shape),
+            data: TensorGpuData {
+                context,
+                meta,
                 buffer,
             },
             phantom: PhantomData,
@@ -424,45 +416,28 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
         w: TensorDimension,
     ) -> Result<Self, TensorError> {
         let shape = TensorDimension::deduce(self.shape, x, y, z, w)?;
-        let meta = self.context.checkout_shape_uniform(shape);
+        let context = self.context.clone();
+        let meta = context.checkout_shape_uniform(shape);
+        let buffer = self.buffer.clone();
         Ok(Self {
             shape,
-            data: TensorBuffer {
+            data: TensorGpuData {
+                context,
                 meta,
-                buffer: self.data.buffer.clone(),
+                buffer,
             },
             ..self.clone()
         })
     }
 }
 
-impl<T: Scalar, K: Kind> From<TensorCpu<'_, T>> for TensorGpu<T, K> {
-    fn from(value: TensorCpu<T>) -> Self {
-        let Tensor {
-            context,
-            shape,
-            data,
-            ..
-        } = value;
-        let meta = context.checkout_shape_uniform(shape);
-        let contents = bytemuck::cast_slice(&data);
-        let buffer = context.checkout_buffer_init(contents, K::buffer_usages());
-
-        Self {
-            context,
-            shape,
-            data: TensorBuffer { meta, buffer },
-            phantom: PhantomData,
-        }
-    }
-}
-
 impl<T: Scalar> TensorGpu<T, ReadBack> {
     pub fn back<'a>(self) -> TensorCpu<'a, T> {
         let Tensor {
-            context,
             shape,
-            data: TensorBuffer { buffer, .. },
+            data: TensorGpuData {
+                context, buffer, ..
+            },
             ..
         } = self;
 
@@ -481,7 +456,6 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         buffer.unmap();
 
         TensorCpu {
-            context,
             shape,
             data: Cow::from(data),
             phantom: PhantomData,
@@ -490,9 +464,10 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
 
     pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
         let Tensor {
-            context,
             shape,
-            data: TensorBuffer { buffer, .. },
+            data: TensorGpuData {
+                context, buffer, ..
+            },
             ..
         } = self;
 
@@ -511,7 +486,6 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         buffer.unmap();
 
         TensorCpu {
-            context,
             shape,
             data: Cow::from(data),
             phantom: PhantomData,
@@ -571,23 +545,15 @@ impl<T: Scalar> std::ops::Index<(usize, usize, usize, usize)> for TensorCpu<'_, 
 impl<'a, T: Scalar> TensorCpu<'a, T> {
     /// Apply a map `f` to every element in the tensor.
     pub fn map<U: Scalar>(self, f: impl FnMut(&T) -> U) -> TensorCpu<'a, U> {
-        let Self {
-            context,
-            shape,
-            data,
-            ..
-        } = self;
+        let Self { shape, data, .. } = self;
         let data = data.iter().map(f).collect_vec();
-        TensorCpu::from_data(&context, shape, data).expect("this never happens")
+        TensorCpu::from_data(shape, data).expect("this never happens")
     }
 
     /// Repeat the tensor along a given axis.
     pub fn repeat(self, axis: usize, repeat: usize) -> Self {
         let Self {
-            context,
-            mut shape,
-            data,
-            ..
+            mut shape, data, ..
         } = self;
         let data = data.to_vec();
         let num_chunk: usize = shape.iter().skip(axis + 1).product();
@@ -605,7 +571,6 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
             .into();
         shape[axis] *= repeat;
         Self {
-            context,
             shape,
             data,
             phantom: PhantomData,
@@ -633,8 +598,8 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
 
     /// Concat a batch of tensors.
     pub fn stack(batches: Vec<Self>) -> Result<Self, TensorError> {
-        let (context, mut shape) = match batches.first() {
-            Some(batch) => (batch.context.clone(), batch.shape),
+        let mut shape = match batches.first() {
+            Some(batch) => batch.shape,
             None => return Err(TensorError::Empty),
         };
 
@@ -652,7 +617,6 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
             .concat()
             .into();
         Ok(Self {
-            context,
             shape,
             data,
             phantom: PhantomData,
@@ -677,7 +641,6 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         };
 
         Ok(Self {
-            context: self.context.clone(),
             shape,
             data,
             phantom: PhantomData,
@@ -702,7 +665,6 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         };
 
         Ok(Self {
-            context: self.context,
             shape,
             data,
             phantom: PhantomData,
@@ -737,7 +699,7 @@ impl<T: Scalar> TensorGpuView<'_, T> {
     }
 
     #[inline]
-    pub fn data(&self) -> &TensorBuffer {
+    pub fn data(&self) -> &TensorGpuData {
         &self.tensor.data
     }
 
@@ -837,8 +799,8 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
     type Error = TensorError;
 
     fn try_from(value: Vec<TensorCpu<T>>) -> Result<Self, Self::Error> {
-        let (context, shape) = match value.first() {
-            Some(batch) => (batch.context.clone(), batch.shape),
+        let shape = match value.first() {
+            Some(batch) => batch.shape,
             None => return Err(TensorError::Empty),
         };
 
@@ -881,7 +843,6 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
 
         Ok(Self {
             tensor: Tensor {
-                context,
                 shape,
                 data: data.into(),
                 phantom: PhantomData,
@@ -894,29 +855,33 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
 
 impl<'a> Context {
     #[inline]
-    pub fn zeros<T: Scalar, Tensor: TensorInit<'a, T>>(&self, shape: Shape) -> Tensor {
-        let data = vec![T::zero(); shape.len()];
-        Tensor::from_data(self, shape, data).unwrap()
+    pub fn zeros<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(&self, shape: Shape) -> Tensor {
+        Tensor::transfer_from(self, TensorCpu::init(shape))
     }
 
     #[inline]
-    pub fn ones<T: Scalar, Tensor: TensorInit<'a, T>>(&self, shape: Shape) -> Tensor {
+    pub fn ones<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(&self, shape: Shape) -> Tensor {
         let data = vec![T::one(); shape.len()];
-        Tensor::from_data(self, shape, data).unwrap()
+        let tensor = TensorCpu::from_data(shape, data).unwrap();
+        Tensor::transfer_from(self, tensor)
     }
 
     #[inline]
-    pub fn tensor_from_data<T: Scalar, Tensor: TensorInit<'a, T>>(
+    pub fn tensor_from_data<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(
         &self,
         shape: Shape,
         data: impl Into<Cow<'a, [T]>>,
     ) -> Result<Tensor, TensorError> {
-        Tensor::from_data(self, shape, data)
+        let tensor = TensorCpu::from_data(shape, data)?;
+        Ok(Tensor::transfer_from(self, tensor))
     }
 
     #[inline]
-    pub fn tensor_init<T: Scalar, Tensor: TensorInit<'a, T>>(&self, shape: Shape) -> Tensor {
-        Tensor::init(self, shape)
+    pub fn tensor_init<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(
+        &self,
+        shape: Shape,
+    ) -> Tensor {
+        Tensor::transfer_from(self, TensorCpu::init(shape))
     }
 }
 
@@ -937,35 +902,15 @@ mod sealed {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use wgpu::PowerPreference;
 
     use super::Shape;
-    use crate::{
-        context::{Context, ContextBuilder, Instance},
-        tensor::{TensorCpu, TensorInit, TensorShape},
-    };
-
-    #[tokio::main]
-    async fn create_context() -> Result<Context> {
-        let instance = Instance::new();
-        let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
-        let context = ContextBuilder::new(adapter)
-            // .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
-            .build()
-            .await?;
-        Ok(context)
-    }
+    use crate::tensor::{TensorCpu, TensorInit, TensorShape};
 
     #[test]
     fn test_repeat() -> Result<()> {
-        let context = match create_context() {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
-
         let shape = Shape::new(5, 1, 2, 1);
         let x: Vec<_> = (0..10).map(|x| x as f32).collect();
-        let x = TensorCpu::from_data(&context, shape, x)?;
+        let x = TensorCpu::from_data(shape, x)?;
 
         let y = x.clone().repeat(1, 3);
         let ans = [

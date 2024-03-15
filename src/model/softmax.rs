@@ -58,7 +58,7 @@ impl<M: ModelBase> ModelSoftmax for M {
             })
             .map(|(batch, data)| {
                 let shape = Shape::new(info.num_vocab, 1, data.len(), 1);
-                TensorCpu::from_data(context, shape, data.concat()).map(|tensor| (batch, tensor))
+                TensorCpu::from_data(shape, data.concat()).map(|tensor| (batch, tensor))
             })
             .try_collect()?;
         let input = TensorCpu::stack(

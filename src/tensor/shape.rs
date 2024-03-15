@@ -403,7 +403,7 @@ mod tests {
 
         let shape = Shape::new(4, 2, 3, 1);
         let x = (0..shape.len()).map(|x| x as f32).collect_vec();
-        let x = TensorCpu::from_data(&context, shape, x)?;
+        let x = TensorCpu::from_data(shape, x)?;
 
         let y: Vec<_> = x.slice(.., 1..2, 1..2, ..)?.into();
         assert_eq!(y, vec![12.0, 13.0, 14.0, 15.0]);
