@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     context::Context,
-    num::{Float, Hom},
+    num::{CoHom, Float},
     tensor::{
         kind::{ReadBack, ReadWrite},
         ops::TensorOp,
@@ -86,7 +86,7 @@ pub(crate) trait ModelRunInternal: ModelBase {
                         .try_collect()?,
                 )
                 .unwrap_or_else(|_| context.zeros(Shape::new(info.num_emb, 1, 0, 1)))
-                .map(|x| Hom::co_hom(*x));
+                .map(|x| CoHom::co_hom(*x));
                 stack.reshape(
                     TensorDimension::Full,
                     TensorDimension::Auto,

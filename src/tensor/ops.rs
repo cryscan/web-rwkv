@@ -2138,21 +2138,15 @@ mod tests {
         let shape = Shape::new(C, T, B, 1);
 
         let x_dev: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
-        let x_map = context.tensor_init(x_dev.shape());
-
         let softmax = TensorOp::softmax(&x_dev)?;
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
-
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&softmax);
         drop(pass);
-
-        encoder.copy_tensor(&x_dev, &x_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = x_map.back();
-        let x_host = Vec::from(x_host);
+        let x_host = x_dev.back().to_vec();
 
         let mut ans = vec![];
         for x in &x.into_iter().chunks(C) {
@@ -2203,7 +2197,6 @@ mod tests {
 
         let shape = Shape::new(C, T, B, 1);
         let x_dev = context.tensor_from_data(shape, &x)?;
-        let x_map = context.tensor_init(shape);
 
         let shape = Shape::new(C, 1, 1, 1);
         let w_dev = context.tensor_from_data(shape, &w[..1000])?;
@@ -2211,7 +2204,6 @@ mod tests {
 
         let shape = Shape::new(4, T, B, 1);
         let s_dev = context.tensor_init(shape);
-        let s_map = context.tensor_init(shape);
 
         let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, Some(&s_dev), EPS)?;
 
@@ -2220,13 +2212,10 @@ mod tests {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&layer_norm);
         drop(pass);
-
-        encoder.copy_tensor(&x_dev, &x_map)?;
-        encoder.copy_tensor(&s_dev, &s_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = x_map.back().to_vec();
-        let s_host = s_map.back().to_vec();
+        let x_host = x_dev.back().to_vec();
+        let s_host = s_dev.back().to_vec();
 
         let mut ans = vec![];
         let mut ans_stats = vec![];
@@ -2316,7 +2305,6 @@ mod tests {
             context.tensor_from_data(input_shape, input_f32.clone())?;
         let input_f16_dev: TensorGpu<f16, _> = context.tensor_init(input_shape);
         let output_dev: TensorGpu<_, _> = context.tensor_init(output_shape);
-        let output_map = context.tensor_init(output_shape);
 
         let ops = TensorOp::List(vec![
             TensorOp::blit(
@@ -2344,11 +2332,9 @@ mod tests {
         drop(pass);
 
         // profiler.resolve_queries(&mut encoder);
-
-        encoder.copy_tensor(&output_dev, &output_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = output_map.back();
+        let output_host = output_dev.back();
         let output_host = Vec::from(output_host);
 
         // profiler.end_frame().unwrap();
@@ -2703,10 +2689,6 @@ mod tests {
         let input_dev: TensorGpu<_, _> =
             context.tensor_from_data(input_shape, input_f16.clone())?;
         let output_dev: TensorGpu<_, _> = context.tensor_init(output_shape);
-        let output_map = context.tensor_init(output_shape);
-
-        let matrix_u4_map = context.tensor_init(matrix_u4_shape);
-        let absmax_map = context.tensor_init(absmax_shape);
 
         // let ops = TensorOp::List(vec![
         //     TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
@@ -2737,15 +2719,11 @@ mod tests {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
-
-        encoder.copy_tensor(&matrix_u4_dev, &matrix_u4_map)?;
-        encoder.copy_tensor(&absmax_dev, &absmax_map)?;
-        encoder.copy_tensor(&output_dev, &output_map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let matrix_u4_host = matrix_u4_map.back().to_vec();
-        let absmax_host = absmax_map.back().to_vec();
-        let output_host = output_map.back().to_vec();
+        let matrix_u4_host = matrix_u4_dev.back().to_vec();
+        let absmax_host = absmax_dev.back().to_vec();
+        let output_host = output_dev.back().to_vec();
 
         let mut truth = vec![0.0; output_host.len()];
         for token in 0..T {
@@ -2819,7 +2797,6 @@ mod tests {
         let output = vec![0.0; 24];
         let output: TensorGpu<_, _> = context.tensor_from_data(Shape::new(4, 3, 2, 1), output)?;
 
-        let map = context.tensor_init(output.shape());
         let mut ops = vec![];
 
         let input = (0..8).map(|x| x as f32).collect_vec();
@@ -2841,11 +2818,9 @@ mod tests {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
-
-        encoder.copy_tensor(&output, &map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = map.back();
+        let output_host = output.back();
         let output_host = Vec::from(output_host);
 
         assert_eq!(
@@ -2870,8 +2845,6 @@ mod tests {
         let output = vec![0.0; 36];
         let output: TensorGpu<_, _> = context.tensor_from_data(Shape::new(4, 3, 3, 1), output)?;
 
-        let map = context.tensor_init(output.shape());
-
         let input = (0..24).map(|x| x as f32).collect_vec();
         let input: TensorGpu<_, _> = context.tensor_from_data(Shape::new(4, 3, 2, 1), input)?;
 
@@ -2882,11 +2855,9 @@ mod tests {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&ops);
         drop(pass);
-
-        encoder.copy_tensor(&output, &map)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = map.back();
+        let output_host = output.back();
         let output_host: Vec<f32> = Vec::from(output_host);
 
         assert_eq!(

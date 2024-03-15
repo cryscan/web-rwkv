@@ -1,6 +1,7 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use web_rwkv_derive::JsError;
 use wgpu::{BindingResource, Buffer, BufferBinding, MapMode};
@@ -402,20 +403,9 @@ impl<'a, T: Scalar, K: Kind> TensorFrom<TensorCpu<'a, T>> for TensorGpu<T, K> {
 #[cfg(not(target_arch = "wasm32"))]
 impl<T: Scalar> TensorFrom<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
     fn transfer_from(context: &Context, value: TensorGpu<T, ReadWrite>) -> Self {
-        if value.context == *context {
-            value
-        } else {
-            let map = value.context.tensor_init(value.shape);
-
-            let mut encoder = value
-                .context
-                .device
-                .create_command_encoder(&Default::default());
-            encoder.copy_tensor(&value, &map).unwrap();
-            value.context.queue.submit(Some(encoder.finish()));
-
-            let backed = map.back();
-            backed.transfer_into(context)
+        match context {
+            context if context == &value.context => value,
+            _ => value.back().transfer_into(context),
         }
     }
 }
@@ -518,6 +508,30 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
             data: Cow::from(data),
             phantom: PhantomData,
         }
+    }
+}
+
+impl<T: Scalar> TensorGpu<T, ReadWrite> {
+    pub fn back<'a>(&self) -> TensorCpu<'a, T> {
+        let context = &self.context;
+        let map = context.tensor_init(self.shape);
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        encoder.copy_tensor(self, &map).unwrap();
+        context.queue.submit(Some(encoder.finish()));
+
+        map.back()
+    }
+
+    pub async fn back_async<'a>(&self) -> TensorCpu<'a, T> {
+        let context = &self.context;
+        let map = context.tensor_init(self.shape);
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        encoder.copy_tensor(self, &map).unwrap();
+        context.queue.submit(Some(encoder.finish()));
+
+        map.back_async().await
     }
 }
 
@@ -878,6 +892,32 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
             cursors,
             // redirect,
         })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(serialize = "T: Serialize"))]
+#[serde(bound(deserialize = "T: Deserialize<'de>"))]
+pub struct TensorBlob<'a, T: Scalar> {
+    pub shape: Shape,
+    pub data: <Cpu<'a, T> as Device>::Data,
+}
+
+impl<'a, T: Scalar> From<TensorCpu<'a, T>> for TensorBlob<'a, T> {
+    fn from(value: TensorCpu<'a, T>) -> Self {
+        let TensorCpu { shape, data, .. } = value;
+        Self { shape, data }
+    }
+}
+
+impl<'a, T: Scalar> From<TensorBlob<'a, T>> for TensorCpu<'a, T> {
+    fn from(value: TensorBlob<'a, T>) -> Self {
+        let TensorBlob { shape, data } = value;
+        Self {
+            shape,
+            data,
+            phantom: PhantomData,
+        }
     }
 }
 

@@ -95,7 +95,7 @@ impl Scalar for u32 {
     const DATA_TYPE: Dtype = Dtype::U32;
 }
 
-pub trait Float: Scalar + Hom<f16> + Hom<f32> {
+pub trait Float: Scalar + Hom<f16> + Hom<f32> + CoHom<f16> + CoHom<f32> {
     const DEF: &'static str;
 }
 
@@ -107,18 +107,13 @@ impl Float for f16 {
     const DEF: &'static str = "FP16";
 }
 
-pub trait Hom<T> {
-    fn hom(self) -> T;
-    fn co_hom(value: T) -> Self;
+pub trait Hom<Into> {
+    fn hom(self) -> Into;
 }
 
 impl Hom<f32> for f32 {
     fn hom(self) -> f32 {
         self
-    }
-
-    fn co_hom(value: f32) -> Self {
-        value
     }
 }
 
@@ -126,19 +121,11 @@ impl Hom<f16> for f32 {
     fn hom(self) -> f16 {
         f16::from_f32(self)
     }
-
-    fn co_hom(value: f16) -> Self {
-        value.to_f32()
-    }
 }
 
 impl Hom<f32> for f16 {
     fn hom(self) -> f32 {
         self.to_f32()
-    }
-
-    fn co_hom(value: f32) -> Self {
-        Self::from_f32(value)
     }
 }
 
@@ -146,9 +133,18 @@ impl Hom<f16> for f16 {
     fn hom(self) -> f16 {
         self
     }
+}
 
-    fn co_hom(value: f16) -> Self {
-        value
+pub trait CoHom<From> {
+    fn co_hom(value: From) -> Self;
+}
+
+impl<From, Into> CoHom<From> for Into
+where
+    From: Hom<Into>,
+{
+    fn co_hom(value: From) -> Self {
+        value.hom()
     }
 }
 
