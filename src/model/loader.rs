@@ -239,7 +239,7 @@ impl<R: Reader> Loader<R> {
             let alpha = blend.alpha;
             vectors.push(LoraVector { tensor, alpha });
 
-            log::info!("loaded LoRA vector {name}, alpha: {alpha}");
+            log::info!("vector (LoRA) {name}, alpha: {alpha}");
         }
         Ok(vectors)
     }
@@ -274,7 +274,7 @@ impl<R: Reader> Loader<R> {
             let alpha = blend.alpha;
             matrices.push(LoraMatrix { x, y, rank, alpha });
 
-            log::info!("loaded LoRA matrix {name}, alpha: {alpha}, rank: {rank}");
+            log::info!("matrix (LoRA) {name}, alpha: {alpha}, rank: {rank}");
         }
         Ok(matrices)
     }
@@ -452,8 +452,8 @@ impl<R: Reader> Loader<R> {
             let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
             let op = TensorOp::blend_lora(
                 &factor,
-                lora.y.view(.., .., .., ..)?,
                 lora.x.view(.., .., .., ..)?,
+                lora.y.view(.., .., .., ..)?,
                 tensor.view(.., .., .., ..)?,
             )?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -477,7 +477,6 @@ impl<R: Reader> Loader<R> {
         discount: f32,
     ) -> Result<TensorGpu<f16, ReadWrite>> {
         let context = &self.context;
-
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor = TensorCpu::<f16>::from_reader(context, tensor)?
             .map(|x| f16::from_f32(discount * x.to_f32()));
@@ -489,8 +488,8 @@ impl<R: Reader> Loader<R> {
             let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
             let op = TensorOp::blend_lora(
                 &factor,
-                lora.y.view(.., .., .., ..)?,
                 lora.x.view(.., .., .., ..)?,
+                lora.y.view(.., .., .., ..)?,
                 tensor.view(.., .., .., ..)?,
             )?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -524,8 +523,8 @@ impl<R: Reader> Loader<R> {
             let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
             let op = TensorOp::blend_lora(
                 &factor,
-                lora.y.view(.., .., .., ..)?,
                 lora.x.view(.., .., .., ..)?,
+                lora.y.view(.., .., .., ..)?,
                 matrix.view(.., .., .., ..)?,
             )?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -564,8 +563,8 @@ impl<R: Reader> Loader<R> {
             let factor = TensorGpu::from_data(context, Shape::new(4, 1, 1, 1), &factor)?;
             let op = TensorOp::blend_lora(
                 &factor,
-                lora.y.view(.., .., .., ..)?,
                 lora.x.view(.., .., .., ..)?,
+                lora.y.view(.., .., .., ..)?,
                 matrix.view(.., .., .., ..)?,
             )?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
