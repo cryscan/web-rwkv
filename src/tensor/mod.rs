@@ -4,7 +4,7 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use web_rwkv_derive::JsError;
-use wgpu::{BindingResource, Buffer, BufferBinding, MapMode};
+use wgpu::{BindingResource, Buffer, BufferBinding};
 
 use self::{
     kind::{Kind, ReadBack, ReadWrite, Uniform},
@@ -450,6 +450,7 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
 }
 
 impl<T: Scalar> TensorGpu<T, ReadBack> {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn back<'a>(self) -> TensorCpu<'a, T> {
         let Tensor {
             shape,
@@ -460,18 +461,15 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         } = self;
 
         let (sender, receiver) = flume::unbounded();
+        let _ = context.buffer_reader().send((buffer, sender));
 
-        let slice = buffer.slice(..);
-        slice.map_async(MapMode::Read, move |v| sender.send(v).unwrap());
-
-        context.device.poll(wgpu::MaintainBase::Wait);
-        receiver.recv().unwrap().unwrap();
-
-        let data = {
-            let map = slice.get_mapped_range();
-            Vec::from(bytemuck::cast_slice(&map))
+        let data = receiver.recv().unwrap();
+        let data = unsafe {
+            let data = std::mem::ManuallyDrop::new(data);
+            let len = data.len() / std::mem::size_of::<T>();
+            let slice = core::slice::from_raw_parts(data.as_ptr() as *const T, len);
+            Vec::from(slice)
         };
-        buffer.unmap();
 
         TensorCpu {
             shape,
@@ -480,6 +478,34 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
+        let Tensor {
+            shape,
+            data: TensorGpuData {
+                context, buffer, ..
+            },
+            ..
+        } = self;
+
+        let (sender, receiver) = flume::unbounded();
+        let _ = context.buffer_reader().send((buffer, sender));
+        let data = receiver.recv_async().await.unwrap();
+        let data = unsafe {
+            let data = std::mem::ManuallyDrop::new(data);
+            let len = data.len() / std::mem::size_of::<T>();
+            let slice = core::slice::from_raw_parts(data.as_ptr() as *const T, len);
+            Vec::from(slice)
+        };
+
+        TensorCpu {
+            shape,
+            data: Cow::from(data),
+            phantom: PhantomData,
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
     pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
         let Tensor {
             shape,

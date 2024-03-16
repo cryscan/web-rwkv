@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use flume::Sender;
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
@@ -11,7 +12,7 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, Backends, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
     BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
-    DeviceDescriptor, Features, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
+    DeviceDescriptor, Features, Limits, MapMode, PipelineLayoutDescriptor, PowerPreference, Queue,
     RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
@@ -82,6 +83,10 @@ pub struct ContextInternal {
 
     pipeline_cache: Mutex<HashMap<PipelineKey, Arc<CachedPipeline>>>,
     buffer_cache: ResourceCache<(usize, BufferUsages), Buffer>,
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::type_complexity)]
+    buffer_reader: Sender<(Arc<Buffer>, Sender<Box<[u8]>>)>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -130,17 +135,34 @@ impl<'a> ContextBuilder {
             .await
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
-        Ok(Context(
-            ContextInternal {
-                id: uid::Id::new(),
-                adapter,
-                device,
-                queue,
-                pipeline_cache: Default::default(),
-                buffer_cache: Default::default(),
-            }
-            .into(),
-        ))
+        #[cfg(not(target_arch = "wasm32"))]
+        let (sender, receiver) = flume::unbounded();
+
+        let context = Arc::new(ContextInternal {
+            id: uid::Id::new(),
+            adapter,
+            device,
+            queue,
+            pipeline_cache: Default::default(),
+            buffer_cache: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            buffer_reader: sender,
+        });
+        let context = Context(context);
+
+        // start a thread for reading back buffers
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let context = context.clone();
+            std::thread::spawn(move || {
+                while let Ok((buffer, sender)) = receiver.recv() {
+                    let data = context.read_back_buffer(buffer);
+                    let _ = sender.send(data);
+                }
+            });
+        }
+
+        Ok(context)
     }
 
     pub fn with_limits(mut self, limits: Limits) -> Self {
@@ -341,5 +363,29 @@ impl Context {
                 })
             },
         )
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::type_complexity)]
+    pub fn buffer_reader(&self) -> Sender<(Arc<Buffer>, Sender<Box<[u8]>>)> {
+        self.buffer_reader.clone()
+    }
+
+    fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
+        assert!(buffer.usage().contains(BufferUsages::MAP_READ));
+
+        let (sender, receiver) = flume::unbounded();
+        let slice = buffer.slice(..);
+        slice.map_async(MapMode::Read, move |v| sender.send(v).unwrap());
+
+        self.device.poll(wgpu::MaintainBase::Wait);
+        receiver.recv().unwrap().unwrap();
+
+        let data = {
+            let map = slice.get_mapped_range();
+            map.to_vec().into_boxed_slice()
+        };
+        buffer.unmap();
+        data
     }
 }
