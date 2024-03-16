@@ -470,7 +470,7 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
             let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
             Box::from_raw(slice)
         };
-        let data = data.to_vec();
+        let data = data.into_vec();
 
         TensorCpu {
             shape,
@@ -498,7 +498,7 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
             let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
             Box::from_raw(slice)
         };
-        let data = data.to_vec();
+        let data = data.into_vec();
 
         TensorCpu {
             shape,
@@ -625,7 +625,6 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         let Self {
             mut shape, data, ..
         } = self;
-        let data = data.to_vec();
         let num_chunk: usize = shape.iter().skip(axis + 1).product();
         let chunk_size = data.len() / num_chunk;
 
