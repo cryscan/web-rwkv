@@ -4,15 +4,16 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 use flume::Sender;
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    Adapter, Backends, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
+    Adapter, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
     BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
-    DeviceDescriptor, Features, Limits, MapMode, PipelineLayoutDescriptor, PowerPreference, Queue,
+    DeviceDescriptor, Features, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
     RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
@@ -40,21 +41,15 @@ impl Instance {
         Self(instance)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn select_adapter(
         &self,
-        backends: Backends,
+        backends: wgpu::Backends,
         selection: usize,
     ) -> Result<Adapter, CreateEnvironmentError> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.enumerate_adapters(backends)
-                .nth(selection)
-                .ok_or(CreateEnvironmentError::RequestAdapterFailed)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            unimplemented!()
-        }
+        self.enumerate_adapters(backends)
+            .nth(selection)
+            .ok_or(CreateEnvironmentError::RequestAdapterFailed)
     }
 
     pub async fn adapter(
@@ -371,12 +366,13 @@ impl Context {
         self.buffer_reader.clone()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
         assert!(buffer.usage().contains(BufferUsages::MAP_READ));
 
         let (sender, receiver) = flume::unbounded();
         let slice = buffer.slice(..);
-        slice.map_async(MapMode::Read, move |v| sender.send(v).unwrap());
+        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
         self.device.poll(wgpu::MaintainBase::Wait);
         receiver.recv().unwrap().unwrap();

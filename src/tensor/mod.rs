@@ -520,7 +520,7 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         let (sender, receiver) = flume::unbounded();
 
         let slice = buffer.slice(..);
-        slice.map_async(MapMode::Read, move |v| sender.send(v).unwrap());
+        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
         context.device.poll(wgpu::MaintainBase::Wait);
         receiver.recv_async().await.unwrap().unwrap();
@@ -540,6 +540,7 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
 }
 
 impl<T: Scalar> TensorGpu<T, ReadWrite> {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn back<'a>(&self) -> TensorCpu<'a, T> {
         let context = &self.context;
         let map = context.tensor_init(self.shape);

@@ -2,8 +2,9 @@ use std::{
     collections::HashMap,
     hash::Hash,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
+
+use instant::{Duration, Instant};
 
 #[derive(Debug)]
 struct CacheItem<V> {
