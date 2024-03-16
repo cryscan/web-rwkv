@@ -16,7 +16,7 @@ use crate::{
     model::RESCALE_LAYER,
     num::Float,
     tensor::{
-        kind::{ReadBack, ReadWrite},
+        kind::ReadWrite,
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
@@ -728,7 +728,7 @@ impl<'a, F: Float> ModelRunInternal for Model<'a, F> {
         state: &ModelState,
         outputs: Vec<Option<OutputType>>,
         hooks: &HookMap<Self::Hook, Self::Tensor, Self::State, Self::Runtime, Self::Header>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>), TensorError> {
+    ) -> Result<(TensorGpu<f32, ReadWrite>, Vec<std::ops::Range<usize>>), TensorError> {
         let context = &self.context;
         let tensor = &self.tensor;
 
@@ -1191,11 +1191,9 @@ impl<'a, F: Float> ModelRunInternal for Model<'a, F> {
             pass.execute_tensor_op(&head_ops);
             pass.execute_tensor_op(&ops);
             drop(pass);
-
-            encoder.copy_tensor(&header.head_o, &header.map)?;
         }
 
         context.queue.submit(Some(encoder.finish()));
-        Ok((header.map.clone(), redirect))
+        Ok((header.head_o.clone(), redirect))
     }
 }

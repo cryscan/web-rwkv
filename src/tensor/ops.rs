@@ -15,13 +15,13 @@ use crate::{
 pub trait TensorCommand<T: Scalar, K: Kind> {
     fn copy_tensor(
         &mut self,
-        source: &TensorGpu<T, ReadWrite>,
+        source: &TensorGpu<T, K>,
         destination: &TensorGpu<T, K>,
     ) -> Result<(), TensorError>;
 
     fn copy_tensor_batch(
         &mut self,
-        source: &TensorGpu<T, ReadWrite>,
+        source: &TensorGpu<T, K>,
         destination: &TensorGpu<T, K>,
         batch: usize,
     ) -> Result<(), TensorError>;
@@ -30,7 +30,7 @@ pub trait TensorCommand<T: Scalar, K: Kind> {
 impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
     fn copy_tensor(
         &mut self,
-        source: &TensorGpu<T, ReadWrite>,
+        source: &TensorGpu<T, K>,
         destination: &TensorGpu<T, K>,
     ) -> Result<(), TensorError> {
         destination.check_shape(source.shape())?;
@@ -41,7 +41,7 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
 
     fn copy_tensor_batch(
         &mut self,
-        source: &TensorGpu<T, ReadWrite>,
+        source: &TensorGpu<T, K>,
         destination: &TensorGpu<T, K>,
         batch: usize,
     ) -> Result<(), TensorError> {
@@ -2070,10 +2070,7 @@ mod tests {
     use super::{TensorOp, TensorPass};
     use crate::{
         context::{Context, ContextBuilder, Instance},
-        tensor::{
-            ops::{Activation, TensorCommand},
-            Shape, TensorGpu, TensorShape,
-        },
+        tensor::{ops::Activation, Shape, TensorGpu},
     };
 
     fn is_approx(a: f32, b: f32) -> bool {
@@ -2093,31 +2090,6 @@ mod tests {
             .build()
             .await?;
         Ok(context)
-    }
-
-    #[test]
-    fn test_copy() -> Result<()> {
-        let context = match create_context() {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
-        fastrand::seed(42);
-
-        let x = vec![0.0, 1.5, 2.0, -1.0];
-        let shape = Shape::new(x.len(), 1, 1, 1);
-
-        let x_device: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
-        let x_map = context.tensor_init(x_device.shape());
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        encoder.copy_tensor(&x_device, &x_map)?;
-        context.queue.submit(Some(encoder.finish()));
-
-        let x_host = x_map.back();
-        let x_host = Vec::from(x_host);
-
-        assert_eq!(x, x_host);
-        Ok(())
     }
 
     #[test]

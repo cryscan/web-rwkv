@@ -330,11 +330,7 @@ impl Context {
     pub fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
         self.buffer_cache.checkout(
             (contents.len(), usage),
-            |buffer| {
-                if usage.contains(BufferUsages::STORAGE) {
-                    self.queue.write_buffer(buffer, 0, contents);
-                }
-            },
+            |buffer| self.queue.write_buffer(buffer, 0, contents),
             || {
                 self.device.create_buffer_init(&BufferInitDescriptor {
                     label: None,

@@ -2,7 +2,7 @@ use std::{marker::PhantomData, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use super::{kind::ReadWrite, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
+use super::{kind::Kind, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
 use crate::{context::Context, num::Scalar};
 
 static _CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
@@ -51,7 +51,7 @@ impl<'de, T: Scalar + Deserialize<'de>> Deserialize<'de> for TensorCpu<'_, T> {
     }
 }
 
-impl<T: Scalar + Serialize> Serialize for TensorGpu<T, ReadWrite> {
+impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -60,7 +60,7 @@ impl<T: Scalar + Serialize> Serialize for TensorGpu<T, ReadWrite> {
     }
 }
 
-impl<'de, T: Scalar + Deserialize<'de>> Deserialize<'de> for TensorGpu<T, ReadWrite> {
+impl<'de, T: Scalar + Deserialize<'de>, K: Kind> Deserialize<'de> for TensorGpu<T, K> {
     fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,

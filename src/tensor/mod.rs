@@ -6,7 +6,7 @@ use web_rwkv_derive::JsError;
 use wgpu::{BindingResource, Buffer, BufferBinding};
 
 use self::{
-    kind::{Kind, ReadBack, ReadWrite, Uniform},
+    kind::{Kind, ReadWrite, Uniform},
     ops::TensorCommand,
     shape::{IntoBytes, Shape, TensorAxis, TensorDimension, TensorSlice},
 };
@@ -62,18 +62,13 @@ pub mod kind {
 
     /// Tensor is a uniform buffer.
     #[derive(Debug, Kind)]
-    #[usage(UNIFORM, COPY_DST)]
+    #[usage(UNIFORM, COPY_DST, COPY_SRC)]
     pub struct Uniform;
 
     /// Tensor is a storage buffer with can be copied to other buffers.
     #[derive(Debug, Kind)]
     #[usage(STORAGE, COPY_DST, COPY_SRC)]
     pub struct ReadWrite;
-
-    /// Tensor is served as a read-back buffer.
-    #[derive(Debug, Kind)]
-    #[usage(MAP_READ, COPY_DST)]
-    pub struct ReadBack;
 }
 
 pub trait Device: sealed::Sealed {
@@ -449,20 +444,115 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
     }
 }
 
-impl<T: Scalar> TensorGpu<T, ReadBack> {
+// impl<T: Scalar> TensorGpu<T, ReadBack> {
+//     #[cfg(not(target_arch = "wasm32"))]
+//     pub fn back<'a>(self) -> TensorCpu<'a, T> {
+//         let Tensor {
+//             shape,
+//             data: TensorGpuData {
+//                 context, buffer, ..
+//             },
+//             ..
+//         } = self;
+
+//         let (sender, receiver) = flume::unbounded();
+//         let _ = context.buffer_reader().send((buffer, sender));
+
+//         let data = receiver.recv().unwrap();
+//         let data = unsafe {
+//             let data = Box::leak(data);
+//             let len = data.len() / std::mem::size_of::<T>();
+//             let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
+//             Box::from_raw(slice)
+//         };
+//         let data = data.into_vec();
+
+//         TensorCpu {
+//             shape,
+//             data: Cow::from(data),
+//             phantom: PhantomData,
+//         }
+//     }
+
+//     #[cfg(not(target_arch = "wasm32"))]
+//     pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
+//         let Tensor {
+//             shape,
+//             data: TensorGpuData {
+//                 context, buffer, ..
+//             },
+//             ..
+//         } = self;
+
+//         let (sender, receiver) = flume::unbounded();
+//         let _ = context.buffer_reader().send((buffer, sender));
+//         let data = receiver.recv_async().await.unwrap();
+//         let data = unsafe {
+//             let data = Box::leak(data);
+//             let len = data.len() / std::mem::size_of::<T>();
+//             let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
+//             Box::from_raw(slice)
+//         };
+//         let data = data.into_vec();
+
+//         TensorCpu {
+//             shape,
+//             data: Cow::from(data),
+//             phantom: PhantomData,
+//         }
+//     }
+
+//     #[cfg(target_arch = "wasm32")]
+//     pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
+//         let Tensor {
+//             shape,
+//             data: TensorGpuData {
+//                 context, buffer, ..
+//             },
+//             ..
+//         } = self;
+
+//         let (sender, receiver) = flume::unbounded();
+
+//         let slice = buffer.slice(..);
+//         slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+//         context.device.poll(wgpu::MaintainBase::Wait);
+//         receiver.recv_async().await.unwrap().unwrap();
+
+//         let data = {
+//             let map = slice.get_mapped_range();
+//             Vec::from(bytemuck::cast_slice(&map))
+//         };
+//         buffer.unmap();
+
+//         TensorCpu {
+//             shape,
+//             data: Cow::from(data),
+//             phantom: PhantomData,
+//         }
+//     }
+// }
+
+impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn back<'a>(self) -> TensorCpu<'a, T> {
-        let Tensor {
-            shape,
-            data: TensorGpuData {
-                context, buffer, ..
-            },
-            ..
-        } = self;
+    pub fn back<'a>(&self) -> TensorCpu<'a, T> {
+        use wgpu::BufferUsages;
+
+        let context = &self.context;
+        let size = self.buffer.size();
+        let map = context.checkout_buffer(
+            size as usize,
+            BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        );
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
+        context.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = flume::unbounded();
-        let _ = context.buffer_reader().send((buffer, sender));
 
+        let _ = context.buffer_reader().send((map, sender));
         let data = receiver.recv().unwrap();
         let data = unsafe {
             let data = Box::leak(data);
@@ -473,24 +563,29 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         let data = data.into_vec();
 
         TensorCpu {
-            shape,
+            shape: self.shape,
             data: Cow::from(data),
             phantom: PhantomData,
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
-        let Tensor {
-            shape,
-            data: TensorGpuData {
-                context, buffer, ..
-            },
-            ..
-        } = self;
+    pub async fn back_async<'a>(&self) -> TensorCpu<'a, T> {
+        use wgpu::BufferUsages;
+
+        let context = &self.context;
+        let size = self.buffer.size();
+        let map = context.checkout_buffer(
+            size as usize,
+            BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        );
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
+        context.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = flume::unbounded();
-        let _ = context.buffer_reader().send((buffer, sender));
+
+        let _ = context.buffer_reader().send((map, sender));
         let data = receiver.recv_async().await.unwrap();
         let data = unsafe {
             let data = Box::leak(data);
@@ -501,66 +596,10 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         let data = data.into_vec();
 
         TensorCpu {
-            shape,
+            shape: self.shape,
             data: Cow::from(data),
             phantom: PhantomData,
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
-        let Tensor {
-            shape,
-            data: TensorGpuData {
-                context, buffer, ..
-            },
-            ..
-        } = self;
-
-        let (sender, receiver) = flume::unbounded();
-
-        let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-
-        context.device.poll(wgpu::MaintainBase::Wait);
-        receiver.recv_async().await.unwrap().unwrap();
-
-        let data = {
-            let map = slice.get_mapped_range();
-            Vec::from(bytemuck::cast_slice(&map))
-        };
-        buffer.unmap();
-
-        TensorCpu {
-            shape,
-            data: Cow::from(data),
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<T: Scalar> TensorGpu<T, ReadWrite> {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn back<'a>(&self) -> TensorCpu<'a, T> {
-        let context = &self.context;
-        let map = context.tensor_init(self.shape);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        encoder.copy_tensor(self, &map).unwrap();
-        context.queue.submit(Some(encoder.finish()));
-
-        map.back()
-    }
-
-    pub async fn back_async<'a>(&self) -> TensorCpu<'a, T> {
-        let context = &self.context;
-        let map = context.tensor_init(self.shape);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        encoder.copy_tensor(self, &map).unwrap();
-        context.queue.submit(Some(encoder.finish()));
-
-        map.back_async().await
     }
 }
 
@@ -956,7 +995,7 @@ impl<'a> Context {
 }
 
 mod sealed {
-    use super::{Cpu, Gpu, Kind, ReadBack, ReadWrite, Uniform};
+    use super::{Cpu, Gpu, Kind, ReadWrite, Uniform};
     use crate::num::Scalar;
 
     pub trait Sealed {}
@@ -966,7 +1005,6 @@ mod sealed {
 
     impl Sealed for Uniform {}
     impl Sealed for ReadWrite {}
-    impl Sealed for ReadBack {}
 }
 
 #[cfg(test)]

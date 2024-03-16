@@ -7,8 +7,8 @@ use super::{ModelBase, ModelInfo, ModelOutput};
 use crate::{
     context::Context,
     tensor::{
-        kind::{ReadBack, ReadWrite},
-        ops::{TensorCommand, TensorOp, TensorPass},
+        kind::ReadWrite,
+        ops::{TensorOp, TensorPass},
         shape::Shape,
         TensorCpu, TensorError, TensorGpu, TensorInit, TensorShape,
     },
@@ -17,16 +17,13 @@ use crate::{
 #[derive(Debug)]
 pub struct Softmax {
     pub buffer: TensorGpu<f32, ReadWrite>,
-    pub map: TensorGpu<f32, ReadBack>,
 }
 
 impl Softmax {
     pub fn new(context: &Context, info: &ModelInfo, num_batch: usize) -> Self {
         let shape = Shape::new(info.num_vocab, 1, num_batch, 1);
-        Self {
-            buffer: context.tensor_init(shape),
-            map: context.tensor_init(shape),
-        }
+        let buffer = context.tensor_init(shape);
+        Self { buffer }
     }
 }
 
@@ -87,11 +84,9 @@ impl<M: ModelBase> ModelSoftmax for M {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
         drop(pass);
+        context.queue.submit(Some(encoder.finish()));
 
-        encoder.copy_tensor(&softmax.buffer, &softmax.map)?;
-        self.context().queue.submit(Some(encoder.finish()));
-
-        let output = softmax.map.clone().back_async().await;
+        let output = softmax.buffer.back_async().await;
         Ok(redirect
             .into_iter()
             .map(|r| match r.len() {

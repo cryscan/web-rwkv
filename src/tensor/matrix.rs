@@ -49,7 +49,6 @@ pub enum Matrix {
         m: TensorGpu<f16, ReadWrite>,
     },
     NF4 {
-        #[serde(skip)]
         q: TensorGpu<f32, Uniform>,
         w: TensorGpu<u8, ReadWrite>,
         m: TensorGpu<f16, ReadWrite>,

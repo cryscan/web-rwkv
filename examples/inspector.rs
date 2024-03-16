@@ -22,8 +22,8 @@ use web_rwkv::{
         ModelState, ModelVersion, Quant, StateBuilder,
     },
     tensor::{
-        kind::{ReadBack, ReadWrite},
-        ops::{TensorCommand, TensorOp, TensorPass},
+        kind::ReadWrite,
+        ops::{TensorOp, TensorPass},
         shape::Shape,
         TensorError, TensorGpu, TensorShape,
     },
@@ -34,7 +34,6 @@ use web_rwkv::{
 struct Buffer {
     ffn_x: TensorGpu<f16, ReadWrite>,
     out: TensorGpu<f32, ReadWrite>,
-    map: TensorGpu<f32, ReadBack>,
 }
 
 impl Buffer {
@@ -42,7 +41,6 @@ impl Buffer {
         Self {
             ffn_x: context.tensor_init(Shape::new(info.num_emb, info.num_layer, 1, 1)),
             out: context.tensor_init(Shape::new(info.num_vocab, info.num_layer, 1, 1)),
-            map: context.tensor_init(Shape::new(info.num_vocab, info.num_layer, 1, 1)),
         }
     }
 }
@@ -263,12 +261,10 @@ async fn run(cli: Cli) -> Result<()> {
     pass.execute_tensor_op(&ops);
     drop(pass);
 
-    encoder.copy_tensor(&buffer.out, &buffer.map)?;
-
     context.queue.submit(Some(encoder.finish()));
 
     // for each layer, choose the top 5 tokens
-    let backed = buffer.map.back_async().await.to_vec();
+    let backed = buffer.out.back_async().await.to_vec();
     for layer in 0..info.num_layer {
         let start = layer * info.num_vocab;
         let end = start + info.num_vocab;
