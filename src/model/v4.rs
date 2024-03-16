@@ -26,9 +26,10 @@ use crate::{
     },
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Model<'a, F: Float> {
     #[serde(skip)]
+    #[serde(default = "crate::tensor::serialization::de_context")]
     context: Context,
     info: ModelInfo,
 
@@ -41,20 +42,20 @@ pub struct Model<'a, F: Float> {
     _phantom: PhantomData<F>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ModelTensor<'a> {
     pub embed: Embed<'a>,
     pub head: Head,
     pub layers: Vec<Layer>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LayerNorm {
     pub w: TensorGpu<f16, ReadWrite>,
     pub b: TensorGpu<f16, ReadWrite>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Att {
     pub time_decay: TensorGpu<f32, ReadWrite>,
     pub time_first: TensorGpu<f32, ReadWrite>,
@@ -69,7 +70,7 @@ pub struct Att {
     pub w_o: Matrix,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Ffn {
     pub time_mix_k: TensorGpu<f16, ReadWrite>,
     pub time_mix_r: TensorGpu<f16, ReadWrite>,
@@ -79,7 +80,7 @@ pub struct Ffn {
     pub w_r: Matrix,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Layer {
     pub att_layer_norm: LayerNorm,
     pub ffn_layer_norm: LayerNorm,
@@ -87,14 +88,14 @@ pub struct Layer {
     pub ffn: Ffn,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Embed<'a> {
     pub layer_norm: LayerNorm,
     pub w: TensorCpu<'a, f16>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Head {
     pub layer_norm: LayerNorm,
     pub w: Matrix,

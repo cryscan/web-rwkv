@@ -1,5 +1,5 @@
 use half::f16;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{ops::Activation, TensorCpu, TensorInit, TensorInto};
 use crate::{
@@ -41,7 +41,7 @@ impl Default for Nf4Quant<'_> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Matrix {
     Fp16(TensorGpu<f16, ReadWrite>),
     Int8 {

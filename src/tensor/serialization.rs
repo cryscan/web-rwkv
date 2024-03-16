@@ -1,11 +1,11 @@
-use std::{marker::PhantomData, sync::Mutex};
+use std::{marker::PhantomData, sync::RwLock};
 
 use serde::{Deserialize, Serialize};
 
 use super::{kind::Kind, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
-use crate::{context::Context, num::Scalar};
+use crate::{context::Context, num::Scalar, tensor::TensorInto};
 
-static _CONTEXT: Mutex<Option<Context>> = Mutex::new(None);
+static CONTEXT: RwLock<Option<Context>> = RwLock::new(None);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "T: Serialize"))]
@@ -61,10 +61,26 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
 }
 
 impl<'de, T: Scalar + Deserialize<'de>, K: Kind> Deserialize<'de> for TensorGpu<T, K> {
-    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        todo!()
+        let context = CONTEXT.read().unwrap();
+        let context = context.as_ref().unwrap();
+
+        let tensor: TensorBlob<T> = TensorBlob::deserialize(deserializer)?;
+        let tensor = TensorCpu::from(tensor);
+        Ok(tensor.transfer_into(context))
     }
+}
+
+/// Set the global deserialization context. This *MUST* be called before deserializing the model.
+pub fn set_de_context(context: &Context) {
+    let mut ctx = CONTEXT.write().unwrap();
+    ctx.replace(context.clone());
+}
+
+pub fn de_context() -> Context {
+    let ctx = CONTEXT.read().unwrap();
+    ctx.clone().unwrap()
 }
