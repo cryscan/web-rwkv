@@ -465,11 +465,12 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
 
         let data = receiver.recv().unwrap();
         let data = unsafe {
-            let data = std::mem::ManuallyDrop::new(data);
+            let mut data = std::mem::ManuallyDrop::new(data);
             let len = data.len() / std::mem::size_of::<T>();
-            let slice = core::slice::from_raw_parts(data.as_ptr() as *const T, len);
-            Vec::from(slice)
+            let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
+            Box::from_raw(slice)
         };
+        let data = data.to_vec();
 
         TensorCpu {
             shape,
@@ -492,11 +493,12 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         let _ = context.buffer_reader().send((buffer, sender));
         let data = receiver.recv_async().await.unwrap();
         let data = unsafe {
-            let data = std::mem::ManuallyDrop::new(data);
+            let mut data = std::mem::ManuallyDrop::new(data);
             let len = data.len() / std::mem::size_of::<T>();
-            let slice = core::slice::from_raw_parts(data.as_ptr() as *const T, len);
-            Vec::from(slice)
+            let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
+            Box::from_raw(slice)
         };
+        let data = data.to_vec();
 
         TensorCpu {
             shape,
