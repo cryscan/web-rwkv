@@ -465,7 +465,7 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
 
         let data = receiver.recv().unwrap();
         let data = unsafe {
-            let mut data = std::mem::ManuallyDrop::new(data);
+            let data = Box::leak(data);
             let len = data.len() / std::mem::size_of::<T>();
             let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
             Box::from_raw(slice)
@@ -493,7 +493,7 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         let _ = context.buffer_reader().send((buffer, sender));
         let data = receiver.recv_async().await.unwrap();
         let data = unsafe {
-            let mut data = std::mem::ManuallyDrop::new(data);
+            let data = Box::leak(data);
             let len = data.len() / std::mem::size_of::<T>();
             let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
             Box::from_raw(slice)
