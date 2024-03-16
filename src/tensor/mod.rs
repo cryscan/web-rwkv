@@ -1,7 +1,6 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use web_rwkv_derive::JsError;
 use wgpu::{BindingResource, Buffer, BufferBinding};
@@ -20,6 +19,7 @@ use crate::{
 pub mod cache;
 pub mod matrix;
 pub mod ops;
+pub mod serialization;
 pub mod shape;
 
 /// Buffer of the tensor on GPU.
@@ -920,32 +920,6 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
             cursors,
             // redirect,
         })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound(serialize = "T: Serialize"))]
-#[serde(bound(deserialize = "T: Deserialize<'de>"))]
-pub struct TensorBlob<'a, T: Scalar> {
-    pub shape: Shape,
-    pub data: <Cpu<'a, T> as Device>::Data,
-}
-
-impl<'a, T: Scalar> From<TensorCpu<'a, T>> for TensorBlob<'a, T> {
-    fn from(value: TensorCpu<'a, T>) -> Self {
-        let TensorCpu { shape, data, .. } = value;
-        Self { shape, data }
-    }
-}
-
-impl<'a, T: Scalar> From<TensorBlob<'a, T>> for TensorCpu<'a, T> {
-    fn from(value: TensorBlob<'a, T>) -> Self {
-        let TensorBlob { shape, data } = value;
-        Self {
-            shape,
-            data,
-            phantom: PhantomData,
-        }
     }
 }
 

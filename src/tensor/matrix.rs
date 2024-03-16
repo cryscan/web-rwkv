@@ -1,6 +1,7 @@
 use half::f16;
+use serde::Serialize;
 
-use super::ops::Activation;
+use super::{ops::Activation, TensorCpu, TensorInit, TensorInto};
 use crate::{
     num::Float,
     tensor::{
@@ -11,7 +12,36 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct Nf4Quant<'a>(pub TensorCpu<'a, f32>);
+
+impl Default for Nf4Quant<'_> {
+    fn default() -> Self {
+        #[allow(clippy::excessive_precision)]
+        let quant = vec![
+            -1.0,
+            -0.6961928009986877,
+            -0.5250730514526367,
+            -0.39491748809814453,
+            -0.28444138169288635,
+            -0.18477343022823334,
+            -0.09105003625154495,
+            0.0,
+            0.07958029955625534,
+            0.16093020141124725,
+            0.24611230194568634,
+            0.33791524171829224,
+            0.44070982933044434,
+            0.5626170039176941,
+            0.7229568362236023,
+            1.0,
+        ];
+        let shape = Shape::new(quant.len(), 1, 1, 1);
+        Self(TensorCpu::from_data(shape, quant).unwrap())
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub enum Matrix {
     Fp16(TensorGpu<f16, ReadWrite>),
     Int8 {
@@ -19,8 +49,9 @@ pub enum Matrix {
         m: TensorGpu<f16, ReadWrite>,
     },
     NF4 {
-        w: TensorGpu<u8, ReadWrite>,
+        #[serde(skip)]
         q: TensorGpu<f32, Uniform>,
+        w: TensorGpu<u8, ReadWrite>,
         m: TensorGpu<f16, ReadWrite>,
     },
 }
@@ -108,27 +139,7 @@ impl Matrix {
             shape[3],
         );
 
-        #[allow(clippy::excessive_precision)]
-        let quant = vec![
-            -1.0,
-            -0.6961928009986877,
-            -0.5250730514526367,
-            -0.39491748809814453,
-            -0.28444138169288635,
-            -0.18477343022823334,
-            -0.09105003625154495,
-            0.0,
-            0.07958029955625534,
-            0.16093020141124725,
-            0.24611230194568634,
-            0.33791524171829224,
-            0.44070982933044434,
-            0.5626170039176941,
-            0.7229568362236023,
-            1.0,
-        ];
-        let q = context.tensor_from_data(Shape::new(quant.len(), 1, 1, 1), quant)?;
-
+        let q = Nf4Quant::default().0.transfer_into(context);
         let w = context.tensor_init(matrix_shape);
         let m = context.tensor_init(absmax_shape);
 
