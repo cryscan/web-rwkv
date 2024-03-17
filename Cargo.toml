@@ -39,9 +39,10 @@ wgpu = "0.18"
 
 [dependencies.web-rwkv-derive]
 path = "crates/web-rwkv-derive"
-version = "0.2.3"
+version = "0.2.4"
 
 [dev-dependencies]
+cbor4ii = "0.3.2"
 fastrand = "2.0"
 memmap2 = "0.9"
 tokio = { version = "1", features = ["full"] }

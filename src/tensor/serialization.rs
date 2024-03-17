@@ -1,11 +1,14 @@
-use std::{marker::PhantomData, sync::RwLock};
+use std::marker::PhantomData;
 
-use serde::{Deserialize, Serialize};
+use half::f16;
+use serde::{de::DeserializeSeed, Deserialize, Serialize};
 
-use super::{kind::Kind, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
-use crate::{context::Context, num::Scalar, tensor::TensorInto};
-
-static CONTEXT: RwLock<Option<Context>> = RwLock::new(None);
+use super::{kind::Kind, matrix::Matrix, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
+use crate::{
+    context::Context,
+    num::Scalar,
+    tensor::{TensorFrom, TensorInto},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "T: Serialize"))]
@@ -60,27 +63,73 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     }
 }
 
-impl<'de, T: Scalar + Deserialize<'de>, K: Kind> Deserialize<'de> for TensorGpu<T, K> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+pub struct Seed<T> {
+    context: Context,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> Seed<T> {
+    pub fn new(context: &Context) -> Self {
+        Self {
+            context: context.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de> for Seed<TensorGpu<T, K>> {
+    type Value = TensorGpu<T, K>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let context = CONTEXT.read().unwrap();
-        let context = context.as_ref().unwrap();
-
-        let tensor: TensorBlob<T> = TensorBlob::deserialize(deserializer)?;
-        let tensor = TensorCpu::from(tensor);
+        let context = &self.context;
+        let tensor: TensorCpu<T> = Deserialize::deserialize(deserializer)?;
         Ok(tensor.transfer_into(context))
     }
 }
 
-/// Set the global deserialization context. This *MUST* be called before deserializing the model.
-pub fn set_de_context(context: &Context) {
-    let mut ctx = CONTEXT.write().unwrap();
-    ctx.replace(context.clone());
-}
+impl<'de> DeserializeSeed<'de> for Seed<Matrix> {
+    type Value = Matrix;
 
-pub fn de_context() -> Context {
-    let ctx = CONTEXT.read().unwrap();
-    ctx.clone().unwrap()
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // #[derive(Deserialize)]
+        // enum _Matrix<'a> {
+        //     Fp16(TensorCpu<'a, f16>),
+        //     Int8 {
+        //         w: TensorCpu<'a, u8>,
+        //         m: TensorCpu<'a, f16>,
+        //     },
+        //     NF4 {
+        //         q: TensorCpu<'a, f32>,
+        //         w: TensorCpu<'a, u8>,
+        //         m: TensorCpu<'a, f16>,
+        //     },
+        // }
+
+        // impl<'a> TensorFrom<_Matrix<'a>> for Matrix {
+        //     fn transfer_from(context: &Context, value: _Matrix) -> Self {
+        //         match value {
+        //             _Matrix::Fp16(x) => Matrix::Fp16(x.transfer_into(context)),
+        //             _Matrix::Int8 { w, m } => Matrix::Int8 {
+        //                 w: w.transfer_into(context),
+        //                 m: m.transfer_into(context),
+        //             },
+        //             _Matrix::NF4 { q, w, m } => Matrix::NF4 {
+        //                 q: q.transfer_into(context),
+        //                 w: w.transfer_into(context),
+        //                 m: m.transfer_into(context),
+        //             },
+        //         }
+        //     }
+        // }
+
+        let context = &self.context;
+
+        todo!()
+    }
 }

@@ -26,10 +26,9 @@ use crate::{
     },
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct Model<'a, F: Float> {
     #[serde(skip)]
-    #[serde(default = "crate::tensor::serialization::de_context")]
     context: Context,
     info: ModelInfo,
 

@@ -1,20 +1,21 @@
 [package]
-name = "web-rwkv-derive"
-version = "0.2.3"
-edition = "2021"
 authors = ["Zhenyuan Zhang <cryscan@umich.edu>"]
-license = "MIT OR Apache-2.0"
-description = "An implementation of the RWKV language model in pure WebGPU."
-homepage = "https://github.com/cryscan/web-rwkv"
-repository = "https://github.com/cryscan/web-rwkv"
-keywords = ["deep-learning", "language", "model", "rwkv"]
 categories = ["science", "text-processing"]
+description = "An implementation of the RWKV language model in pure WebGPU."
+edition = "2021"
+homepage = "https://github.com/cryscan/web-rwkv"
+keywords = ["deep-learning", "language", "model", "rwkv"]
+license = "MIT OR Apache-2.0"
+name = "web-rwkv-derive"
+repository = "https://github.com/cryscan/web-rwkv"
+version = "0.2.4"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-syn = "2"
+proc-macro2 = "1"
 quote = "1"
+syn = "2"
 
 [lib]
 proc-macro = true
