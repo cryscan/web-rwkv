@@ -1,14 +1,12 @@
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData};
 
-use half::f16;
-use serde::{de::DeserializeSeed, Deserialize, Serialize};
-
-use super::{kind::Kind, matrix::Matrix, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
-use crate::{
-    context::Context,
-    num::Scalar,
-    tensor::{TensorFrom, TensorInto},
+use serde::{
+    de::{DeserializeSeed, SeqAccess, Visitor},
+    Deserialize, Serialize,
 };
+
+use super::{kind::Kind, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
+use crate::{context::Context, num::Scalar, tensor::TensorInto};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(serialize = "T: Serialize"))]
@@ -64,16 +62,27 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
 }
 
 pub struct Seed<T> {
-    context: Context,
+    pub context: Context,
     _phantom: PhantomData<T>,
 }
 
 impl<T> Seed<T> {
-    pub fn new(context: &Context) -> Self {
+    pub fn new(context: Context) -> Self {
         Self {
-            context: context.clone(),
+            context,
             _phantom: PhantomData,
         }
+    }
+}
+
+impl<'de, 'a, T: Scalar + Deserialize<'de>> DeserializeSeed<'de> for Seed<TensorCpu<'a, T>> {
+    type Value = TensorCpu<'a, T>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        TensorCpu::deserialize(deserializer)
     }
 }
 
@@ -90,46 +99,65 @@ impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de> for Seed<T
     }
 }
 
-impl<'de> DeserializeSeed<'de> for Seed<Matrix> {
-    type Value = Matrix;
+impl<'de, T> DeserializeSeed<'de> for Seed<Vec<T>>
+where
+    Seed<T>: DeserializeSeed<'de, Value = T>,
+{
+    type Value = Vec<T>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        // #[derive(Deserialize)]
-        // enum _Matrix<'a> {
-        //     Fp16(TensorCpu<'a, f16>),
-        //     Int8 {
-        //         w: TensorCpu<'a, u8>,
-        //         m: TensorCpu<'a, f16>,
-        //     },
-        //     NF4 {
-        //         q: TensorCpu<'a, f32>,
-        //         w: TensorCpu<'a, u8>,
-        //         m: TensorCpu<'a, f16>,
-        //     },
-        // }
+        struct VecVisitor<T> {
+            context: Context,
+            marker: PhantomData<T>,
+        }
 
-        // impl<'a> TensorFrom<_Matrix<'a>> for Matrix {
-        //     fn transfer_from(context: &Context, value: _Matrix) -> Self {
-        //         match value {
-        //             _Matrix::Fp16(x) => Matrix::Fp16(x.transfer_into(context)),
-        //             _Matrix::Int8 { w, m } => Matrix::Int8 {
-        //                 w: w.transfer_into(context),
-        //                 m: m.transfer_into(context),
-        //             },
-        //             _Matrix::NF4 { q, w, m } => Matrix::NF4 {
-        //                 q: q.transfer_into(context),
-        //                 w: w.transfer_into(context),
-        //                 m: m.transfer_into(context),
-        //             },
-        //         }
-        //     }
-        // }
+        impl<'de, T> Visitor<'de> for VecVisitor<T>
+        where
+            Seed<T>: DeserializeSeed<'de, Value = T>,
+        {
+            type Value = Vec<T>;
 
-        let context = &self.context;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a sequence")
+            }
 
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut values = Vec::<T>::new();
+
+                while let Some(value) =
+                    seq.next_element_seed(Seed::<T>::new(self.context.clone()))?
+                {
+                    values.push(value);
+                }
+
+                Ok(values)
+            }
+        }
+
+        let visitor: VecVisitor<T> = VecVisitor {
+            context: self.context.clone(),
+            marker: PhantomData,
+        };
+        deserializer.deserialize_seq(visitor)
+    }
+}
+
+impl<'de, T> DeserializeSeed<'de> for Seed<Option<T>>
+where
+    Seed<T>: DeserializeSeed<'de>,
+{
+    type Value = Option<T>;
+
+    fn deserialize<D>(self, _deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
         todo!()
     }
 }
