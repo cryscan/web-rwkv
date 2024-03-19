@@ -518,6 +518,10 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
             BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         );
 
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &buffer, 0, size);
+        context.queue.submit(Some(encoder.finish()));
+
         let (sender, receiver) = flume::unbounded();
 
         let slice = buffer.slice(..);
