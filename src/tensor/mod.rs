@@ -1,13 +1,12 @@
 use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use web_rwkv_derive::JsError;
-use wgpu::{BindingResource, Buffer, BufferBinding};
+use wgpu::{BindingResource, Buffer, BufferBinding, BufferUsages};
 
 use self::{
-    kind::{Kind, ReadBack, ReadWrite, Uniform},
+    kind::{Kind, ReadWrite, Uniform},
     ops::TensorCommand,
     shape::{IntoBytes, Shape, TensorAxis, TensorDimension, TensorSlice},
 };
@@ -20,6 +19,7 @@ use crate::{
 pub mod cache;
 pub mod matrix;
 pub mod ops;
+pub mod serialization;
 pub mod shape;
 
 /// Buffer of the tensor on GPU.
@@ -62,18 +62,13 @@ pub mod kind {
 
     /// Tensor is a uniform buffer.
     #[derive(Debug, Kind)]
-    #[usage(UNIFORM, COPY_DST)]
+    #[usage(UNIFORM, COPY_DST, COPY_SRC)]
     pub struct Uniform;
 
     /// Tensor is a storage buffer with can be copied to other buffers.
     #[derive(Debug, Kind)]
     #[usage(STORAGE, COPY_DST, COPY_SRC)]
     pub struct ReadWrite;
-
-    /// Tensor is served as a read-back buffer.
-    #[derive(Debug, Kind)]
-    #[usage(MAP_READ, COPY_DST)]
-    pub struct ReadBack;
 }
 
 pub trait Device: sealed::Sealed {
@@ -449,20 +444,23 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
     }
 }
 
-impl<T: Scalar> TensorGpu<T, ReadBack> {
+impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn back<'a>(self) -> TensorCpu<'a, T> {
-        let Tensor {
-            shape,
-            data: TensorGpuData {
-                context, buffer, ..
-            },
-            ..
-        } = self;
+    pub fn back<'a>(&self) -> TensorCpu<'a, T> {
+        let context = &self.context;
+        let size = self.buffer.size();
+        let map = context.checkout_buffer(
+            size as usize,
+            BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        );
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
+        context.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = flume::unbounded();
-        let _ = context.buffer_reader().send((buffer, sender));
 
+        let _ = context.buffer_reader().send((map, sender));
         let data = receiver.recv().unwrap();
         let data = unsafe {
             let data = Box::leak(data);
@@ -473,24 +471,28 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         let data = data.into_vec();
 
         TensorCpu {
-            shape,
+            shape: self.shape,
             data: Cow::from(data),
             phantom: PhantomData,
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
-        let Tensor {
-            shape,
-            data: TensorGpuData {
-                context, buffer, ..
-            },
-            ..
-        } = self;
+    pub async fn back_async<'a>(&self) -> TensorCpu<'a, T> {
+        let context = &self.context;
+        let size = self.buffer.size();
+        let map = context.checkout_buffer(
+            size as usize,
+            BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        );
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
+        context.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = flume::unbounded();
-        let _ = context.buffer_reader().send((buffer, sender));
+
+        let _ = context.buffer_reader().send((map, sender));
         let data = receiver.recv_async().await.unwrap();
         let data = unsafe {
             let data = Box::leak(data);
@@ -501,7 +503,7 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         let data = data.into_vec();
 
         TensorCpu {
-            shape,
+            shape: self.shape,
             data: Cow::from(data),
             phantom: PhantomData,
         }
@@ -509,13 +511,12 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
 
     #[cfg(target_arch = "wasm32")]
     pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
-        let Tensor {
-            shape,
-            data: TensorGpuData {
-                context, buffer, ..
-            },
-            ..
-        } = self;
+        let context = &self.context;
+        let size = self.buffer.size();
+        let buffer = context.checkout_buffer(
+            size as usize,
+            BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        );
 
         let (sender, receiver) = flume::unbounded();
 
@@ -532,35 +533,10 @@ impl<T: Scalar> TensorGpu<T, ReadBack> {
         buffer.unmap();
 
         TensorCpu {
-            shape,
+            shape: self.shape,
             data: Cow::from(data),
             phantom: PhantomData,
         }
-    }
-}
-
-impl<T: Scalar> TensorGpu<T, ReadWrite> {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn back<'a>(&self) -> TensorCpu<'a, T> {
-        let context = &self.context;
-        let map = context.tensor_init(self.shape);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        encoder.copy_tensor(self, &map).unwrap();
-        context.queue.submit(Some(encoder.finish()));
-
-        map.back()
-    }
-
-    pub async fn back_async<'a>(&self) -> TensorCpu<'a, T> {
-        let context = &self.context;
-        let map = context.tensor_init(self.shape);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        encoder.copy_tensor(self, &map).unwrap();
-        context.queue.submit(Some(encoder.finish()));
-
-        map.back_async().await
     }
 }
 
@@ -923,32 +899,6 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound(serialize = "T: Serialize"))]
-#[serde(bound(deserialize = "T: Deserialize<'de>"))]
-pub struct TensorBlob<'a, T: Scalar> {
-    pub shape: Shape,
-    pub data: <Cpu<'a, T> as Device>::Data,
-}
-
-impl<'a, T: Scalar> From<TensorCpu<'a, T>> for TensorBlob<'a, T> {
-    fn from(value: TensorCpu<'a, T>) -> Self {
-        let TensorCpu { shape, data, .. } = value;
-        Self { shape, data }
-    }
-}
-
-impl<'a, T: Scalar> From<TensorBlob<'a, T>> for TensorCpu<'a, T> {
-    fn from(value: TensorBlob<'a, T>) -> Self {
-        let TensorBlob { shape, data } = value;
-        Self {
-            shape,
-            data,
-            phantom: PhantomData,
-        }
-    }
-}
-
 impl<'a> Context {
     #[inline]
     pub fn zeros<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(&self, shape: Shape) -> Tensor {
@@ -982,7 +932,7 @@ impl<'a> Context {
 }
 
 mod sealed {
-    use super::{Cpu, Gpu, Kind, ReadBack, ReadWrite, Uniform};
+    use super::{Cpu, Gpu, Kind, ReadWrite, Uniform};
     use crate::num::Scalar;
 
     pub trait Sealed {}
@@ -992,7 +942,6 @@ mod sealed {
 
     impl Sealed for Uniform {}
     impl Sealed for ReadWrite {}
-    impl Sealed for ReadBack {}
 }
 
 #[cfg(test)]

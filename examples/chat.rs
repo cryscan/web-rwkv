@@ -1,3 +1,11 @@
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    fs::File,
+    io::{BufReader, Read, Write},
+    path::PathBuf,
+};
+
 use anyhow::Result;
 use clap::{Args, Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
@@ -7,13 +15,6 @@ use itertools::Itertools;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
 use serde::Deserialize;
-use std::{
-    collections::HashMap,
-    convert::Infallible,
-    fs::File,
-    io::{BufReader, Read, Write},
-    path::PathBuf,
-};
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{

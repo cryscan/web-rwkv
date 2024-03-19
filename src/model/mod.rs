@@ -11,7 +11,7 @@ use self::{
     run::ModelRun,
     softmax::ModelSoftmax,
 };
-use crate::{context::Context, num::Scalar, tensor::TensorError};
+use crate::{context::Context, impl_deserialize_seed, num::Scalar, tensor::TensorError};
 
 pub mod loader;
 pub mod run;
@@ -55,6 +55,8 @@ impl ModelInfo {
     pub const BUFFER_SIZE: usize = 256 << 20;
     pub const STORAGE_BUFFER_BINDING_SIZE: usize = 128 << 20;
 }
+
+impl_deserialize_seed!(ModelInfo);
 
 #[wasm_bindgen]
 impl ModelInfo {

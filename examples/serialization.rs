@@ -6,15 +6,16 @@ use std::{
 };
 
 use anyhow::Result;
+use cbor4ii::core::utils::SliceReader;
 use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
-use instant::{Duration, Instant};
 #[cfg(not(debug_assertions))]
 use itertools::Itertools;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
+use serde::{de::DeserializeSeed, Serialize};
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
@@ -22,6 +23,7 @@ use web_rwkv::{
         v4, v5, v6, Build, BuildFuture, Model, ModelBuilder, ModelInfo, ModelInput, ModelOutput,
         ModelState, ModelVersion, Quant, StateBuilder,
     },
+    tensor::serialization::Seed,
     tokenizer::Tokenizer,
 };
 
@@ -195,39 +197,52 @@ async fn run(cli: Cli) -> Result<()> {
 async fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer) -> Result<()>
 where
     S: ModelState,
+    M: Model<State = S> + Serialize,
+    for<'de> Seed<'de, Context, M>: DeserializeSeed<'de, Value = M>,
+{
+    println!("serializing model...");
+    let buf = cbor4ii::serde::to_vec(vec![], &model)?;
+    println!(
+        "serialized buffer size: {} ({} MB)",
+        buf.len(),
+        buf.len() / (1 << 20)
+    );
+
+    let context = model.context().clone();
+    drop(model);
+
+    let reader = SliceReader::new(&buf);
+    let mut deserializer = cbor4ii::serde::Deserializer::new(reader);
+    let seed = Seed::<Context, M>::new(&context);
+
+    println!("deserializing model...");
+    let model: M = seed.deserialize(&mut deserializer)?;
+
+    println!("model reloaded");
+
+    complete(model, state, tokenizer).await
+}
+
+async fn complete<M, S>(model: M, state: S, tokenizer: Tokenizer) -> Result<()>
+where
+    S: ModelState,
     M: Model<State = S>,
 {
-    const PROMPT: &str = include_str!("prompt.md");
+    const PROMPT: &str = "The eiffel tower is located in the city of";
+    print!("{}", PROMPT);
+
     let mut tokens = vec![ModelInput {
         tokens: tokenizer.encode(PROMPT.as_bytes())?,
         ..Default::default()
     }];
 
-    let prompt_len = tokens[0].tokens.len();
-    println!("Reading {} tokens.", prompt_len);
-
-    let mut read = false;
     let mut count = 0usize;
-
-    let mut instant;
-    let mut prefill = Duration::ZERO;
-    let mut duration = Duration::ZERO;
-
     let num_tokens = 500;
     while count < num_tokens {
-        instant = Instant::now();
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
-        duration += instant.elapsed();
 
         if let ModelOutput::Last(probs) = &probs[0] {
-            if !read {
-                print!("\n{}", PROMPT);
-                prefill = duration;
-                duration = Duration::ZERO;
-                read = true;
-            }
-
             let token = sample(probs, 0.5);
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);
@@ -241,21 +256,6 @@ where
             std::io::stdout().flush().unwrap();
         }
     }
-
-    println!();
-    println!(
-        "Prefill: {} tokens, {} mills, {} tps.",
-        prompt_len,
-        prefill.as_millis(),
-        prompt_len as f64 / prefill.as_secs_f64()
-    );
-    println!(
-        "Generation: {} tokens, {} mills, {} tps.",
-        num_tokens,
-        duration.as_millis(),
-        num_tokens as f64 / duration.as_secs_f64()
-    );
-    std::io::stdout().flush()?;
 
     Ok(())
 }

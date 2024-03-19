@@ -9,7 +9,7 @@ keywords = ["deep-learning", "language", "model", "rwkv"]
 license = "MIT OR Apache-2.0"
 name = "web-rwkv"
 repository = "https://github.com/cryscan/web-rwkv"
-version = "0.6.29"
+version = "0.6.30"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -39,9 +39,10 @@ wgpu = "0.18"
 
 [dependencies.web-rwkv-derive]
 path = "crates/web-rwkv-derive"
-version = "0.2.3"
+version = "0.2.4"
 
 [dev-dependencies]
+cbor4ii = { version = "0.3.2", features = ["half-f16", "serde1"] }
 fastrand = "2.0"
 memmap2 = "0.9"
 tokio = { version = "1", features = ["full"] }

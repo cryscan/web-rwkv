@@ -16,6 +16,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - LoRA merging at loading time.
 - Support RWKV V4, V5 and V6.
 - Hooks to intervene the inference process at any point.
+- Model (de)serialization.
 
 <p align='center'>
 <image src="screenshots/chat.gif">
@@ -26,7 +27,8 @@ Note that `web-rwkv` is only an inference engine. It only provides the following
 - A tokenizer.
 - Model loading.
 - State creation and updating.
-- A `run` function that takes in prompt tokens and returns logits (predicted next token probabilities after calling `softmax`).
+- Model implements `run` function that takes in prompt tokens and returns logits, and a `softmax` function that turns logits into predicted next token probabilities. Both of them are executed on GPU.
+- Model quantization and (de)serialization.
 
 It *does not* provide the following:
 - OpenAI API or APIs of any kind.
@@ -89,6 +91,9 @@ $ cargo run --release --example batch
 
 ### Inspector
 The inspector demo is a guide to an advanced usage called hooks. Hooks allow user to inject any tensor ops into the model's inference process, fetching and modifying the contents of the runtime buffer, state, and even the model parameters. Hooks enable certain third-party implementations like dynamic LoRA, control net, and so on.
+
+### (De)serialization
+All versions of models implements `serde::ser::Serialize` and `serde::de::DeserializeSeed<'de>`, which means that one can save quantized or lora-merged model into a file and load it afterwards.
 
 ## Use in Your Project
 To use in your own rust project, simply add `web-rwkv = "0.6"` as a dependency in your `Cargo.toml`.

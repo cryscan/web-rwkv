@@ -1,3 +1,11 @@
+use std::{
+    convert::Infallible,
+    fs::File,
+    io::{BufReader, Read},
+    path::PathBuf,
+    str::FromStr,
+};
+
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
@@ -18,13 +26,6 @@ use ratatui::{
     Terminal,
 };
 use safetensors::SafeTensors;
-use std::{
-    convert::Infallible,
-    fs::File,
-    io::{BufReader, Read},
-    path::PathBuf,
-    str::FromStr,
-};
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{

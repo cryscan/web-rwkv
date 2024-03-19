@@ -11,7 +11,7 @@ use crate::{
     context::Context,
     num::{CoHom, Float},
     tensor::{
-        kind::{ReadBack, ReadWrite},
+        kind::ReadWrite,
         ops::TensorOp,
         shape::{Shape, TensorDimension},
         TensorCpu, TensorError, TensorGpu, TensorReshape, TensorStack,
@@ -22,7 +22,6 @@ use crate::{
 pub struct Header<F: Float> {
     pub head_x: TensorGpu<F, ReadWrite>,
     pub head_o: TensorGpu<f32, ReadWrite>,
-    pub map: TensorGpu<f32, ReadBack>,
 }
 
 impl<F: Float> Header<F> {
@@ -33,7 +32,6 @@ impl<F: Float> Header<F> {
         Self {
             head_x: context.tensor_init(head_shape),
             head_o: context.tensor_init(output_shape),
-            map: context.tensor_init(output_shape),
         }
     }
 }
@@ -66,7 +64,7 @@ pub(crate) trait ModelRunInternal: ModelBase {
         state: &Self::State,
         outputs: Vec<Option<OutputType>>,
         hooks: &HookMap<Self::Hook, Self::Tensor, Self::State, Self::Runtime, Self::Header>,
-    ) -> Result<(TensorGpu<f32, ReadBack>, Vec<std::ops::Range<usize>>), TensorError>;
+    ) -> Result<(TensorGpu<f32, ReadWrite>, Vec<std::ops::Range<usize>>), TensorError>;
 
     fn create_input<'a, F: Float>(
         &self,

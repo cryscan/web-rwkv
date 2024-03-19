@@ -1,123 +1,47 @@
 use proc_macro::TokenStream;
-use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields};
+use syn::{parse_macro_input, DeriveInput};
+
+mod deref;
+mod js;
+mod kind;
+mod serde;
 
 #[proc_macro_derive(Deref)]
 pub fn derive_deref(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-
-    match input.data {
-        Data::Struct(data) => match data.fields {
-            Fields::Unnamed(fields) => {
-                if fields.unnamed.len() == 1 {
-                    let name = input.ident;
-                    let generics = input.generics;
-                    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-                    let target_type = &fields.unnamed.first().unwrap().ty;
-                    quote! {
-                        impl #impl_generics std::ops::Deref for #name #ty_generics #where_clause {
-                            type Target = #target_type;
-
-                            fn deref(&self) -> &Self::Target {
-                                &self.0
-                            }
-                        }
-                    }
-                    .into()
-                } else {
-                    panic!("Expected a tuple struct with one field");
-                }
-            }
-            _ => panic!("Expected a tuple struct"),
-        },
-        _ => panic!("Expected a struct"),
-    }
+    deref::expand_derive_deref(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 #[proc_macro_derive(DerefMut)]
 pub fn derive_deref_mut(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-
-    match input.data {
-        Data::Struct(data) => match data.fields {
-            Fields::Unnamed(fields) => {
-                if fields.unnamed.len() == 1 {
-                    let name = input.ident;
-                    let generics = input.generics;
-                    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-                    quote! {
-                        impl #impl_generics std::ops::DerefMut for #name #ty_generics #where_clause {
-                            fn deref_mut(&mut self) -> &mut Self::Target {
-                                &mut self.0
-                            }
-                        }
-                    }
-                    .into()
-                } else {
-                    panic!("Expected a tuple struct with one field");
-                }
-            }
-            _ => panic!("Expected a tuple struct"),
-        },
-        _ => panic!("Expected a struct"),
-    }
+    deref::expand_derive_deref_mut(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 #[proc_macro_derive(JsError)]
 pub fn derive_js_error(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-
-    match input.data {
-        Data::Struct(_) | Data::Enum(_) => {
-            let name = input.ident;
-            let generics = input.generics;
-            let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-            quote! {
-                impl #impl_generics From<#name #ty_generics> for wasm_bindgen::JsValue #where_clause  {
-                    fn from(value: #name #ty_generics) -> Self {
-                        let err: wasm_bindgen::JsError = value.into();
-                        Self::from(err)
-                    }
-                }
-            }
-            .into()
-        }
-        _ => panic!("Expected a struct or enum"),
-    }
+    js::expand_derive_js_error(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 #[proc_macro_derive(Kind, attributes(usage))]
 pub fn derive_kind(input: TokenStream) -> TokenStream {
-    let ast = parse_macro_input!(input as DeriveInput);
-    let name = &ast.ident;
+    let input = parse_macro_input!(input as DeriveInput);
+    kind::expand_derive_kind(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
-    let mut usages = vec![];
-
-    for attr in &ast.attrs {
-        if attr.path().is_ident("usage") {
-            attr.parse_nested_meta(|meta| match meta.path.get_ident() {
-                Some(ident) => {
-                    usages.push(ident.to_owned());
-                    Ok(())
-                }
-                None => Err(meta.error("Unrecognized buffer usage")),
-            })
-            .unwrap();
-        }
-    }
-
-    let usages = usages
-        .into_iter()
-        .fold(quote! { wgpu::BufferUsages::empty() }, |acc, usage| {
-            quote! { #acc | wgpu::BufferUsages::#usage }
-        });
-
-    quote! {
-        impl Kind for #name {
-            fn buffer_usages() -> wgpu::BufferUsages {
-                #usages
-            }
-        }
-    }
-    .into()
+#[proc_macro_derive(DeserializeSeed, attributes(serde_seed))]
+pub fn derive_deserialize_seed(input: TokenStream) -> TokenStream {
+    let mut input = parse_macro_input!(input as DeriveInput);
+    serde::de::expand_derive_deserialize(&mut input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
