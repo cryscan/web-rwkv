@@ -61,6 +61,13 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     }
 }
 
+pub fn serialize_context<S: serde::Serializer>(
+    _context: &Context,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    PhantomData::<Context>::serialize(&PhantomData, serializer)
+}
+
 pub struct Seed<'a, C, T> {
     pub context: &'a C,
     _phantom: PhantomData<T>,
@@ -72,6 +79,18 @@ impl<'a, C, T> Seed<'a, C, T> {
             context,
             _phantom: PhantomData,
         }
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for Seed<'de, Context, Context> {
+    type Value = Context;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        <PhantomData<Context> as Deserialize<'de>>::deserialize(deserializer)?;
+        Ok(self.context.clone())
     }
 }
 
@@ -102,6 +121,42 @@ impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de>
         Ok(tensor.transfer_into(context))
     }
 }
+
+#[macro_export]
+macro_rules! impl_deserialize_seed {
+    ($tt:tt) => {
+        impl<'de, C> serde::de::DeserializeSeed<'de>
+            for $crate::tensor::serialization::Seed<'de, C, $tt>
+        {
+            type Value = $tt;
+
+            fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::de::Deserializer<'de>,
+            {
+                $tt::deserialize(deserializer)
+            }
+        }
+    };
+    ($tt:tt, $gt:tt) => {
+        impl<'de, C, $gt> serde::de::DeserializeSeed<'de>
+            for $crate::tensor::serialization::Seed<'de, C, $tt<$gt>>
+        {
+            type Value = $tt<$gt>;
+
+            fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::de::Deserializer<'de>,
+            {
+                $tt::<$gt>::deserialize(deserializer)
+            }
+        }
+    };
+}
+
+impl_deserialize_seed!(bool);
+impl_deserialize_seed!(usize);
+impl_deserialize_seed!(PhantomData, T);
 
 impl<'de, C, T> DeserializeSeed<'de> for Seed<'de, C, Vec<T>>
 where
