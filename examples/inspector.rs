@@ -1,3 +1,10 @@
+use std::{
+    convert::Infallible,
+    fs::File,
+    io::{BufReader, Read},
+    path::PathBuf,
+};
+
 use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
@@ -6,12 +13,6 @@ use half::f16;
 use itertools::Itertools;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
-use std::{
-    convert::Infallible,
-    fs::File,
-    io::{BufReader, Read},
-    path::PathBuf,
-};
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{

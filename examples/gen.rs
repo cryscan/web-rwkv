@@ -1,19 +1,20 @@
-use anyhow::Result;
-use clap::{Parser, ValueEnum};
-#[cfg(not(debug_assertions))]
-use dialoguer::{theme::ColorfulTheme, Select};
-use half::f16;
-#[cfg(not(debug_assertions))]
-use itertools::Itertools;
-use memmap2::Mmap;
-use safetensors::SafeTensors;
 use std::{
     convert::Infallible,
     fs::File,
     io::{BufReader, Read, Write},
     path::PathBuf,
-    time::{Duration, Instant},
 };
+
+use anyhow::Result;
+use clap::{Parser, ValueEnum};
+#[cfg(not(debug_assertions))]
+use dialoguer::{theme::ColorfulTheme, Select};
+use half::f16;
+use instant::{Duration, Instant};
+#[cfg(not(debug_assertions))]
+use itertools::Itertools;
+use memmap2::Mmap;
+use safetensors::SafeTensors;
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{

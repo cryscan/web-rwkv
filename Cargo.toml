@@ -42,7 +42,7 @@ path = "crates/web-rwkv-derive"
 version = "0.2.4"
 
 [dev-dependencies]
-cbor4ii = "0.3.2"
+cbor4ii = { version = "0.3.2", features = ["half-f16", "serde1"] }
 fastrand = "2.0"
 memmap2 = "0.9"
 tokio = { version = "1", features = ["full"] }
