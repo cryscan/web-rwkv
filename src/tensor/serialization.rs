@@ -52,12 +52,23 @@ impl<'de, T: Scalar + Deserialize<'de>> Deserialize<'de> for TensorCpu<'_, T> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         TensorBlob::from(self.back()).serialize(serializer)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
+    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        unimplemented!()
     }
 }
 
