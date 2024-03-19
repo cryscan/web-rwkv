@@ -1,8 +1,8 @@
 use std::{fmt, marker::PhantomData};
 
 use serde::{
-    de::{DeserializeSeed, SeqAccess, Visitor},
-    Deserialize, Serialize,
+    de::{DeserializeSeed, Error, SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
 };
 
 use super::{kind::Kind, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
@@ -82,7 +82,7 @@ impl<'de, 'a, T: Scalar + Deserialize<'de>> DeserializeSeed<'de> for Seed<Tensor
     where
         D: serde::Deserializer<'de>,
     {
-        TensorCpu::deserialize(deserializer)
+        Deserialize::deserialize(deserializer)
     }
 }
 
@@ -150,14 +150,67 @@ where
 
 impl<'de, T> DeserializeSeed<'de> for Seed<Option<T>>
 where
-    Seed<T>: DeserializeSeed<'de>,
+    Seed<T>: DeserializeSeed<'de, Value = T>,
 {
     type Value = Option<T>;
 
-    fn deserialize<D>(self, _deserializer: D) -> Result<Self::Value, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        todo!()
+        struct OptionVisitor<T> {
+            context: Context,
+            marker: PhantomData<T>,
+        }
+
+        impl<'de, T> Visitor<'de> for OptionVisitor<T>
+        where
+            Seed<T>: DeserializeSeed<'de, Value = T>,
+        {
+            type Value = Option<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("option")
+            }
+
+            #[inline]
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                Ok(None)
+            }
+
+            #[inline]
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                Ok(None)
+            }
+
+            #[inline]
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                let seed = Seed::<T>::new(self.context.clone());
+                DeserializeSeed::deserialize(seed, deserializer).map(Some)
+            }
+
+            fn __private_visit_untagged_option<D>(self, deserializer: D) -> Result<Self::Value, ()>
+            where
+                D: Deserializer<'de>,
+            {
+                let seed = Seed::<T>::new(self.context.clone());
+                Ok(DeserializeSeed::deserialize(seed, deserializer).ok())
+            }
+        }
+
+        let visitor: OptionVisitor<T> = OptionVisitor {
+            context: self.context.clone(),
+            marker: PhantomData,
+        };
+        deserializer.deserialize_option(visitor)
     }
 }

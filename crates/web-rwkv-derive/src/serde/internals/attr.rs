@@ -1048,6 +1048,7 @@ pub struct Field {
 }
 
 /// Represents the default to use for a field when deserializing.
+#[allow(clippy::enum_variant_names)]
 pub enum Default {
     /// Field must always be specified because it does not have a default.
     None,
@@ -1832,8 +1833,8 @@ fn collect_lifetimes(ty: &syn::Type, out: &mut BTreeSet<syn::Lifetime>) {
                             }
                             syn::GenericArgument::Const(_)
                             | syn::GenericArgument::AssocConst(_)
-                            | syn::GenericArgument::Constraint(_)
-                            | _ => {}
+                            | syn::GenericArgument::Constraint(_) => {}
+                            _ => {}
                         }
                     }
                 }

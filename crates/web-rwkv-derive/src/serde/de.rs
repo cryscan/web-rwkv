@@ -211,11 +211,7 @@ fn needs_deserialize_bound(field: &attr::Field, variant: Option<&attr::Variant>)
 // Fields with a `default` attribute (not `default=...`), and fields with a
 // `skip_deserializing` attribute that do not also have `default=...`.
 fn requires_default(field: &attr::Field, _variant: Option<&attr::Variant>) -> bool {
-    if let attr::Default::Default = *field.default() {
-        true
-    } else {
-        false
-    }
+    matches!(*field.default(), attr::Default::Default)
 }
 
 enum BorrowedLifetimes {
