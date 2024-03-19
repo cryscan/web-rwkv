@@ -8,6 +8,7 @@ pub const ALIAS: Symbol = Symbol("alias");
 pub const BORROW: Symbol = Symbol("borrow");
 pub const BOUND: Symbol = Symbol("bound");
 pub const CONTENT: Symbol = Symbol("content");
+pub const CONTEXT: Symbol = Symbol("context");
 pub const CRATE: Symbol = Symbol("crate");
 pub const DEFAULT: Symbol = Symbol("default");
 pub const DENY_UNKNOWN_FIELDS: Symbol = Symbol("deny_unknown_fields");

@@ -38,7 +38,7 @@ pub fn derive_kind(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(DeserializeSeed, attributes(serde))]
+#[proc_macro_derive(DeserializeSeed, attributes(serde_seed))]
 pub fn derive_deserialize_seed(input: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(input as DeriveInput);
     serde::de::expand_derive_deserialize(&mut input)

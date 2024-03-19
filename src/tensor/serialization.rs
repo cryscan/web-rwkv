@@ -61,13 +61,13 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     }
 }
 
-pub struct Seed<T> {
-    pub context: Context,
+pub struct Seed<'a, C, T> {
+    pub context: &'a C,
     _phantom: PhantomData<T>,
 }
 
-impl<T> Seed<T> {
-    pub fn new(context: Context) -> Self {
+impl<'a, C, T> Seed<'a, C, T> {
+    pub fn new(context: &'a C) -> Self {
         Self {
             context,
             _phantom: PhantomData,
@@ -75,7 +75,9 @@ impl<T> Seed<T> {
     }
 }
 
-impl<'de, 'a, T: Scalar + Deserialize<'de>> DeserializeSeed<'de> for Seed<TensorCpu<'a, T>> {
+impl<'de, 'a, T: Scalar + Deserialize<'de>> DeserializeSeed<'de>
+    for Seed<'de, Context, TensorCpu<'a, T>>
+{
     type Value = TensorCpu<'a, T>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -86,7 +88,9 @@ impl<'de, 'a, T: Scalar + Deserialize<'de>> DeserializeSeed<'de> for Seed<Tensor
     }
 }
 
-impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de> for Seed<TensorGpu<T, K>> {
+impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de>
+    for Seed<'de, Context, TensorGpu<T, K>>
+{
     type Value = TensorGpu<T, K>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -99,9 +103,9 @@ impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de> for Seed<T
     }
 }
 
-impl<'de, T> DeserializeSeed<'de> for Seed<Vec<T>>
+impl<'de, C, T> DeserializeSeed<'de> for Seed<'de, C, Vec<T>>
 where
-    Seed<T>: DeserializeSeed<'de, Value = T>,
+    Seed<'de, C, T>: DeserializeSeed<'de, Value = T>,
 {
     type Value = Vec<T>;
 
@@ -109,14 +113,14 @@ where
     where
         D: serde::Deserializer<'de>,
     {
-        struct VecVisitor<T> {
-            context: Context,
+        struct VecVisitor<'de, C, T> {
+            context: &'de C,
             marker: PhantomData<T>,
         }
 
-        impl<'de, T> Visitor<'de> for VecVisitor<T>
+        impl<'de, C, T> Visitor<'de> for VecVisitor<'de, C, T>
         where
-            Seed<T>: DeserializeSeed<'de, Value = T>,
+            Seed<'de, C, T>: DeserializeSeed<'de, Value = T>,
         {
             type Value = Vec<T>;
 
@@ -130,9 +134,7 @@ where
             {
                 let mut values = Vec::<T>::new();
 
-                while let Some(value) =
-                    seq.next_element_seed(Seed::<T>::new(self.context.clone()))?
-                {
+                while let Some(value) = seq.next_element_seed(Seed::<C, T>::new(self.context))? {
                     values.push(value);
                 }
 
@@ -140,17 +142,17 @@ where
             }
         }
 
-        let visitor: VecVisitor<T> = VecVisitor {
-            context: self.context.clone(),
+        let visitor: VecVisitor<C, T> = VecVisitor {
+            context: self.context,
             marker: PhantomData,
         };
         deserializer.deserialize_seq(visitor)
     }
 }
 
-impl<'de, T> DeserializeSeed<'de> for Seed<Option<T>>
+impl<'de, C, T> DeserializeSeed<'de> for Seed<'de, C, Option<T>>
 where
-    Seed<T>: DeserializeSeed<'de, Value = T>,
+    Seed<'de, C, T>: DeserializeSeed<'de, Value = T>,
 {
     type Value = Option<T>;
 
@@ -158,14 +160,14 @@ where
     where
         D: serde::Deserializer<'de>,
     {
-        struct OptionVisitor<T> {
-            context: Context,
+        struct OptionVisitor<'de, C, T> {
+            context: &'de C,
             marker: PhantomData<T>,
         }
 
-        impl<'de, T> Visitor<'de> for OptionVisitor<T>
+        impl<'de, C, T> Visitor<'de> for OptionVisitor<'de, C, T>
         where
-            Seed<T>: DeserializeSeed<'de, Value = T>,
+            Seed<'de, C, T>: DeserializeSeed<'de, Value = T>,
         {
             type Value = Option<T>;
 
@@ -194,7 +196,7 @@ where
             where
                 D: Deserializer<'de>,
             {
-                let seed = Seed::<T>::new(self.context.clone());
+                let seed = Seed::<C, T>::new(self.context);
                 DeserializeSeed::deserialize(seed, deserializer).map(Some)
             }
 
@@ -202,13 +204,13 @@ where
             where
                 D: Deserializer<'de>,
             {
-                let seed = Seed::<T>::new(self.context.clone());
+                let seed = Seed::<C, T>::new(self.context);
                 Ok(DeserializeSeed::deserialize(seed, deserializer).ok())
             }
         }
 
-        let visitor: OptionVisitor<T> = OptionVisitor {
-            context: self.context.clone(),
+        let visitor: OptionVisitor<C, T> = OptionVisitor {
+            context: self.context,
             marker: PhantomData,
         };
         deserializer.deserialize_option(visitor)

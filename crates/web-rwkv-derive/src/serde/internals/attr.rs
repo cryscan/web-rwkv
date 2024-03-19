@@ -202,6 +202,7 @@ impl RenameAllRules {
 
 /// Represents struct or enum attribute information.
 pub struct Container {
+    context: syn::Path,
     name: Name,
     transparent: bool,
     deny_unknown_fields: bool,
@@ -285,6 +286,7 @@ impl Identifier {
 impl Container {
     /// Extract out the `#[serde(...)]` attributes from an item.
     pub fn from_ast(cx: &Ctxt, item: &syn::DeriveInput) -> Self {
+        let mut context = Attr::none(cx, CONTEXT);
         let mut ser_name = Attr::none(cx, RENAME);
         let mut de_name = Attr::none(cx, RENAME);
         let mut transparent = BoolAttr::none(cx, TRANSPARENT);
@@ -323,7 +325,12 @@ impl Container {
             }
 
             if let Err(err) = attr.parse_nested_meta(|meta| {
-                if meta.path == RENAME {
+                if meta.path == CONTEXT {
+                    // #[serde(context = "path")]
+                    let path = parse_lit_into_path(cx, CONTEXT, &meta)?;
+                    context.set_opt(&meta.path, path);
+                }
+                else if meta.path == RENAME {
                     // #[serde(rename = "foo")]
                     // #[serde(rename(serialize = "foo", deserialize = "bar"))]
                     let (ser, de) = get_renames(cx, RENAME, &meta)?;
@@ -566,7 +573,14 @@ impl Container {
             }
         }
 
+        let context = context.get().unwrap_or(
+            syn::LitStr::new("crate::context::Context", Span::call_site())
+                .parse()
+                .expect("default context path"),
+        );
+
         Container {
+            context,
             name: Name::from_attrs(unraw(&item.ident), ser_name, de_name, None),
             transparent: transparent.get(),
             deny_unknown_fields: deny_unknown_fields.get(),
@@ -593,6 +607,10 @@ impl Container {
             expecting: expecting.get(),
             non_exhaustive,
         }
+    }
+
+    pub fn context(&self) -> &syn::Path {
+        &self.context
     }
 
     pub fn name(&self) -> &Name {
