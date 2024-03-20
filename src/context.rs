@@ -148,11 +148,15 @@ impl<'a> ContextBuilder {
         // start a thread for reading back buffers
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let context = context.clone();
+            let context = Arc::downgrade(&context);
             std::thread::spawn(move || {
                 while let Ok((buffer, sender)) = receiver.recv() {
-                    let data = context.read_back_buffer(buffer);
-                    let _ = sender.send(data);
+                    if let Some(context) = context.upgrade() {
+                        let data = context.read_back_buffer(buffer);
+                        let _ = sender.send(data);
+                    } else {
+                        break;
+                    }
                 }
             });
         }
@@ -235,7 +239,7 @@ impl PartialEq for Context {
 
 impl Eq for Context {}
 
-impl Context {
+impl ContextInternal {
     pub fn checkout_pipeline(
         &self,
         name: impl AsRef<str>,
