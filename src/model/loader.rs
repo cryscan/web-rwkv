@@ -132,7 +132,7 @@ impl LoraBlendPattern {
 }
 
 struct LoraVector {
-    tensor: TensorGpu<f32, ReadWrite>,
+    tensor: TensorGpu<f16, ReadWrite>,
     alpha: f32,
 }
 
@@ -234,9 +234,7 @@ impl<R: Reader> Loader<R> {
             let Ok(tensor) = lora.data.tensor(name).await else {
                 continue;
             };
-            let tensor = TensorCpu::<f16>::from_reader(tensor)?
-                .map(|x| x.to_f32())
-                .transfer_into(context);
+            let tensor = TensorCpu::<f16>::from_reader(tensor)?.transfer_into(context);
             let alpha = blend.alpha;
             vectors.push(LoraVector { tensor, alpha });
 
