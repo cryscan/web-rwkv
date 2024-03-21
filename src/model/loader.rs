@@ -77,7 +77,7 @@ impl LoraBlend {
         Self::default().add_nominal(1.0).add_matrices(alpha)
     }
 
-    /// Build a blend pattern that interpolates tensors with factor `alpha` from 0 to 1.
+    /// Add a blend pattern that interpolates tensors with factor `alpha` from 0 to 1.
     #[inline]
     pub fn add_nominal(mut self, alpha: f32) -> Self {
         let pattern = LoraBlendPattern::new(r".+", alpha).unwrap();
@@ -85,7 +85,7 @@ impl LoraBlend {
         self
     }
 
-    /// Build a blend pattern that adds to all matrices with `alpha`.
+    /// Add a blend pattern that adds to all matrices with `alpha`.
     #[inline]
     pub fn add_matrices(mut self, alpha: f32) -> Self {
         let pattern = LoraBlendPattern::new(
@@ -97,7 +97,15 @@ impl LoraBlend {
         self
     }
 
-    /// Build a blend pattern that adds to all matrices in a layer with `alpha`.
+    /// Add a blend pattern that interpolates tensors in a layer with factor `alpha` from 0 to 1.
+    pub fn add_layer_nominal(mut self, layer: usize, alpha: f32) -> Self {
+        let pattern = format!(r"blocks\.{layer}");
+        let pattern = LoraBlendPattern::new(&pattern, alpha).unwrap();
+        self.push(pattern);
+        self
+    }
+
+    /// Add a blend pattern that adds to all matrices in a layer with `alpha`.
     pub fn add_layer_matrices(mut self, layer: usize, alpha: f32) -> Self {
         let pattern =
             format!(r"blocks\.{layer}\.(att|ffn)\.(key|value|receptance|gate|output)\.weight");

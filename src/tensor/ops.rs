@@ -109,19 +109,26 @@ impl Macros {
         self
     }
 
+    /// Define a `u32` macro `NF4_BLOCK_SIZE`.
     pub fn int8(mut self, block_size: u32) -> Self {
         self.push(("INT8_BLOCK_SIZE".into(), format!("{}u", block_size)));
         self
     }
 
     /// Define a `f32` macro with a given name.
-    pub fn float(mut self, value: f32, name: impl Into<String>) -> Self {
+    pub fn f32(mut self, name: impl Into<String>, value: f32) -> Self {
         self.push((name.into(), format!("{}", value)));
         self
     }
 
+    /// Define a `usize` macro with a given name.
+    pub fn u32(mut self, name: impl Into<String>, value: u32) -> Self {
+        self.push((name.into(), format!("{}u", value)));
+        self
+    }
+
     /// Define a `bool` macro with a given name.
-    pub fn bool(mut self, value: bool, name: impl Into<String>) -> Self {
+    pub fn bool(mut self, name: impl Into<String>, value: bool) -> Self {
         match value {
             true => {
                 self.push((name.into(), Default::default()));
@@ -292,9 +299,9 @@ impl TensorOp {
             "layer_norm",
             None,
             Macros::new(BLOCK_SIZE)
-                .float(eps, "EPS")
                 .tensor(x, None)
-                .bool(s.is_some(), "STATS"),
+                .f32("EPS", eps)
+                .bool("STATS", s.is_some()),
         );
 
         let mut entries = vec![
@@ -357,7 +364,7 @@ impl TensorOp {
             include_str!("../shaders/layer_norm.wgsl"),
             "group_norm",
             None,
-            Macros::new(BLOCK_SIZE).float(eps, "EPS").tensor(x, None),
+            Macros::new(BLOCK_SIZE).tensor(x, None).f32("EPS", eps),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -988,7 +995,7 @@ impl TensorOp {
                 .tensor(&time_mix, Some("TIME_MIX"))
                 .tensor(input, Some("IN"))
                 .tensor(output, Some("OUT"))
-                .bool(reversed, "REVERSED"),
+                .bool("REVERSED", reversed),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1693,15 +1700,21 @@ impl TensorOp {
         input.check_shape(shape)?;
         factor.check_shape(Shape::new(4, 1, 1, 1))?;
 
+        let block_size = match shape[1] {
+            x if x < 8 => [BLOCK_SIZE, 1],
+            _ => [16, 16],
+        };
+
         let context = output.context();
         let pipeline = context.checkout_pipeline(
             "blend",
             include_str!("../shaders/blend.wgsl"),
             "blend",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new(block_size[0])
                 .tensor(input, Some("IN"))
-                .tensor(output, Some("OUT")),
+                .tensor(output, Some("OUT"))
+                .u32("BLOCK_SIZE_Y", block_size[1]),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1734,8 +1747,8 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
-                shape[1] as u32,
+                Self::block_count(shape[0] as u32 / 4, block_size[0]),
+                Self::block_count(shape[1] as u32, block_size[1]),
                 shape[2] as u32,
             ],
         })
@@ -1823,7 +1836,7 @@ impl TensorOp {
             None,
             Macros::new(BLOCK_SIZE)
                 .tensor(x, None)
-                .float(factor, "FACTOR"),
+                .f32("FACTOR", factor),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
