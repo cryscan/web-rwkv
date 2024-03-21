@@ -6,7 +6,6 @@ use std::{
 };
 
 use anyhow::Result;
-use cbor4ii::core::utils::SliceReader;
 use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
@@ -161,7 +160,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.token_chunk_size,
             )
             .await?;
-            run_internal::<v4::Model<f16>, _>(model, state, tokenizer).await
+            run_internal::<v4::Model<f16>, _>(model, state, tokenizer, cli.output).await
         }
         ModelVersion::V5 => {
             let (model, state) = load_model(
@@ -175,7 +174,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.token_chunk_size,
             )
             .await?;
-            run_internal::<v5::Model<f16>, _>(model, state, tokenizer).await
+            run_internal::<v5::Model<f16>, _>(model, state, tokenizer, cli.output).await
         }
         ModelVersion::V6 => {
             let (model, state) = load_model(
@@ -189,17 +188,43 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.token_chunk_size,
             )
             .await?;
-            run_internal::<v6::Model<f16>, _>(model, state, tokenizer).await
+            run_internal::<v6::Model<f16>, _>(model, state, tokenizer, cli.output).await
         }
     }
 }
 
-async fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer) -> Result<()>
+async fn run_internal<M, S>(
+    model: M,
+    state: S,
+    tokenizer: Tokenizer,
+    output: Option<PathBuf>,
+) -> Result<()>
 where
     S: ModelState,
     M: Model<State = S> + Serialize,
     for<'de> Seed<'de, Context, M>: DeserializeSeed<'de, Value = M>,
 {
+    if let Some(output) = output {
+        println!("serializing model into {:?}", output);
+
+        struct FileWriter(File);
+
+        impl cbor4ii::core::enc::Write for FileWriter {
+            type Error = std::io::Error;
+
+            fn push(&mut self, input: &[u8]) -> Result<(), Self::Error> {
+                self.0.write_all(input)
+            }
+        }
+
+        let file = FileWriter(File::create(output)?);
+        let mut serializer = cbor4ii::serde::Serializer::new(file);
+
+        model.serialize(&mut serializer)?;
+
+        return Ok(());
+    }
+
     println!("serializing model...");
     let buf = cbor4ii::serde::to_vec(vec![], &model)?;
     println!(
@@ -211,7 +236,7 @@ where
     let context = model.context().clone();
     drop(model);
 
-    let reader = SliceReader::new(&buf);
+    let reader = cbor4ii::core::utils::SliceReader::new(&buf);
     let mut deserializer = cbor4ii::serde::Deserializer::new(reader);
     let seed = Seed::<Context, M>::new(&context);
 
@@ -219,7 +244,6 @@ where
     let model: M = seed.deserialize(&mut deserializer)?;
 
     println!("model reloaded");
-
     complete(model, state, tokenizer).await
 }
 
@@ -237,7 +261,7 @@ where
     }];
 
     let mut count = 0usize;
-    let num_tokens = 500;
+    let num_tokens = 100;
     while count < num_tokens {
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
@@ -293,6 +317,8 @@ struct Cli {
     turbo: bool,
     #[arg(long, default_value_t = 32)]
     token_chunk_size: usize,
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
 }
 
 #[tokio::main]

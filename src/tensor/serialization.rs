@@ -5,27 +5,29 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 
-use super::{kind::Kind, shape::Shape, Cpu, Device, TensorCpu, TensorGpu};
+use super::{kind::Kind, shape::Shape, TensorCpu, TensorGpu};
 use crate::{context::Context, num::Scalar, tensor::TensorInto};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound(serialize = "T: Serialize"))]
-#[serde(bound(deserialize = "T: Deserialize<'de>"))]
-struct TensorBlob<'a, T: Scalar> {
+struct TensorBlob {
     shape: Shape,
-    data: <Cpu<'a, T> as Device>::Data,
+    #[serde(with = "serde_bytes")]
+    data: Vec<u8>,
 }
 
-impl<'a, T: Scalar> From<TensorCpu<'a, T>> for TensorBlob<'a, T> {
+impl<'a, T: Scalar> From<TensorCpu<'a, T>> for TensorBlob {
     fn from(value: TensorCpu<'a, T>) -> Self {
         let TensorCpu { shape, data, .. } = value;
+        let data = bytemuck::cast_slice(&data).to_vec();
         Self { shape, data }
     }
 }
 
-impl<'a, T: Scalar> From<TensorBlob<'a, T>> for TensorCpu<'a, T> {
-    fn from(value: TensorBlob<'a, T>) -> Self {
+impl<'a, T: Scalar> From<TensorBlob> for TensorCpu<'a, T> {
+    fn from(value: TensorBlob) -> Self {
         let TensorBlob { shape, data } = value;
+        let data: Vec<T> = bytemuck::cast_slice(&data).to_vec();
+        let data = data.into();
         Self {
             shape,
             data,
