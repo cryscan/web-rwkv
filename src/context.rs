@@ -202,8 +202,11 @@ impl<'a> ContextBuilder {
 pub struct Macros(Vec<(String, String)>);
 
 impl Macros {
-    pub fn new(block_size: u32) -> Self {
-        Self(vec![("BLOCK_SIZE".into(), format!("{}u", block_size))])
+    // pub fn new(block_size: u32) -> Self {
+    //     Self(vec![("BLOCK_SIZE".into(), format!("{}u", block_size))])
+    // }
+    pub fn new() -> Self {
+        Self(Vec::new())
     }
 }
 

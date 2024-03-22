@@ -33,7 +33,7 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-@compute @workgroup_size(BLOCK_SIZE, BLOCK_SIZE_Y, 1)
+@compute @workgroup_size(BLOCK_SIZE_X, BLOCK_SIZE_Y, 1)
 fn blend(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = destination.shape.x / 4u;
     let index = invocation_id.x;
@@ -46,7 +46,7 @@ fn blend(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 #else
         let x = input[compute_index(source, batch, token, index)];
 #endif
-        let bti = compute_index(destination, token, batch, index);
+        let bti = compute_index(destination, batch, token, index);
 #ifdef OUT_FP16
         let y = unpack4x16float(output[bti]);
         output[bti] = pack4x16float(factor.x * x + factor.y * y);

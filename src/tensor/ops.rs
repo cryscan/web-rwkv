@@ -190,7 +190,7 @@ impl TensorOp {
             include_str!("../shaders/softmax.wgsl"),
             "softmax",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -235,7 +235,9 @@ impl TensorOp {
             include_str!("../shaders/embed.wgsl"),
             "embed",
             None,
-            Macros::new(BLOCK_SIZE).tensor(output, None),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(output, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -298,7 +300,8 @@ impl TensorOp {
             include_str!("../shaders/layer_norm.wgsl"),
             "layer_norm",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
                 .f32("EPS", eps)
                 .bool("STATS", s.is_some()),
@@ -364,7 +367,10 @@ impl TensorOp {
             include_str!("../shaders/layer_norm.wgsl"),
             "group_norm",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None).f32("EPS", eps),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(x, None)
+                .f32("EPS", eps),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -418,7 +424,8 @@ impl TensorOp {
             include_str!("../shaders/matmul_vec_fp16.wgsl"),
             "matmul",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),
@@ -491,7 +498,8 @@ impl TensorOp {
             include_str!("../shaders/matmul_vec_int8.wgsl"),
             "matmul",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -569,7 +577,8 @@ impl TensorOp {
             include_str!("../shaders/matmul_vec_nf4.wgsl"),
             "matmul",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -645,7 +654,8 @@ impl TensorOp {
             include_str!("../shaders/matmul_mat_fp16.wgsl"),
             "matmul",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),
@@ -724,7 +734,8 @@ impl TensorOp {
             include_str!("../shaders/matmul_mat_int8.wgsl"),
             "matmul",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -802,7 +813,8 @@ impl TensorOp {
             include_str!("../shaders/matmul_mat_nf4.wgsl"),
             "matmul",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -875,7 +887,8 @@ impl TensorOp {
             include_str!("../shaders/binary.wgsl"),
             "add",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
@@ -930,7 +943,8 @@ impl TensorOp {
             include_str!("../shaders/binary.wgsl"),
             "mul",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
@@ -991,7 +1005,8 @@ impl TensorOp {
             include_str!("../shaders/token_shift.wgsl"),
             "token_shift",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&time_mix, Some("TIME_MIX"))
                 .tensor(input, Some("IN"))
                 .tensor(output, Some("OUT"))
@@ -1070,7 +1085,7 @@ impl TensorOp {
             include_str!("../shaders/time_mix_v4.wgsl"),
             "time_mix",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1155,7 +1170,7 @@ impl TensorOp {
             include_str!("../shaders/time_mix_v5.wgsl"),
             "time_mix",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1240,7 +1255,7 @@ impl TensorOp {
             include_str!("../shaders/time_mix_v6.wgsl"),
             "time_mix",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1311,7 +1326,8 @@ impl TensorOp {
             include_str!("../shaders/silu.wgsl"),
             "silu",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(input, Some("IN"))
                 .tensor(output, Some("OUT")),
         );
@@ -1355,7 +1371,45 @@ impl TensorOp {
             include_str!("../shaders/activation.wgsl"),
             "act_tanh",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
+    pub fn opposite_exp(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let shape = x.shape();
+        let context = x.context();
+        let pipeline = context.checkout_pipeline(
+            "opposite_exp",
+            include_str!("../shaders/activation.wgsl"),
+            "opposite_exp",
+            None,
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1393,7 +1447,7 @@ impl TensorOp {
             include_str!("../shaders/activation.wgsl"),
             "stable_exp",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1431,7 +1485,7 @@ impl TensorOp {
             include_str!("../shaders/activation.wgsl"),
             "squared_relu",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1479,7 +1533,7 @@ impl TensorOp {
             include_str!("../shaders/channel_mix.wgsl"),
             "channel_mix",
             None,
-            Macros::new(BLOCK_SIZE).tensor(x, None),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1532,10 +1586,13 @@ impl TensorOp {
         input: TensorGpuView<impl Float>,
         output: TensorGpuView<impl Float>,
     ) -> Result<Self, TensorError> {
-        const BLOCK_SIZE: u32 = 128;
-
         let shape = output.shape();
         input.check_shape(shape)?;
+
+        let block_size = match shape[1] {
+            x if x < 8 => [128, 1],
+            _ => [16, 16],
+        };
 
         let context = input.context();
         let pipeline = context.checkout_pipeline(
@@ -1543,7 +1600,9 @@ impl TensorOp {
             include_str!("../shaders/blit.wgsl"),
             "blit",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE_X", block_size[0])
+                .u32("BLOCK_SIZE_Y", block_size[1])
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
@@ -1574,8 +1633,8 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
-                shape[1] as u32,
+                Self::block_count(shape[0] as u32 / 4, block_size[0]),
+                Self::block_count(shape[1] as u32, block_size[1]),
                 shape[2] as u32,
             ],
         })
@@ -1594,10 +1653,11 @@ impl TensorOp {
         let context = input.context();
         let pipeline = context.checkout_pipeline(
             "broadcast",
-            include_str!("../shaders/blit.wgsl"),
+            include_str!("../shaders/reshape.wgsl"),
             "broadcast",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
@@ -1648,10 +1708,11 @@ impl TensorOp {
         let context = input.context();
         let pipeline = context.checkout_pipeline(
             "transpose",
-            include_str!("../shaders/blit.wgsl"),
+            include_str!("../shaders/reshape.wgsl"),
             "transpose",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
@@ -1694,14 +1755,12 @@ impl TensorOp {
         input: &TensorGpu<impl Float, ReadWrite>,
         output: &TensorGpu<impl Float, ReadWrite>,
     ) -> Result<Self, TensorError> {
-        const BLOCK_SIZE: u32 = 128;
-
         let shape = output.shape();
         input.check_shape(shape)?;
         factor.check_shape(Shape::new(4, 1, 1, 1))?;
 
         let block_size = match shape[1] {
-            x if x < 8 => [BLOCK_SIZE, 1],
+            x if x < 8 => [128, 1],
             _ => [16, 16],
         };
 
@@ -1711,10 +1770,11 @@ impl TensorOp {
             include_str!("../shaders/blend.wgsl"),
             "blend",
             None,
-            Macros::new(block_size[0])
+            Macros::new()
+                .u32("BLOCK_SIZE_X", block_size[0])
+                .u32("BLOCK_SIZE_Y", block_size[1])
                 .tensor(input, Some("IN"))
-                .tensor(output, Some("OUT"))
-                .u32("BLOCK_SIZE_Y", block_size[1]),
+                .tensor(output, Some("OUT")),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1773,7 +1833,7 @@ impl TensorOp {
             include_str!("../shaders/blend_lora.wgsl"),
             "blend_lora",
             None,
-            Macros::new(BLOCK_SIZE),
+            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1834,7 +1894,8 @@ impl TensorOp {
             include_str!("../shaders/discount.wgsl"),
             "discount",
             None,
-            Macros::new(BLOCK_SIZE)
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
                 .f32("FACTOR", factor),
         );
@@ -1888,7 +1949,9 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_int8.wgsl"),
             "compute_minmax",
             None,
-            Macros::new(BLOCK_SIZE).int8(Self::INT8_BLOCK_SIZE),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .int8(Self::INT8_BLOCK_SIZE),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1919,7 +1982,9 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_int8.wgsl"),
             "quantize",
             None,
-            Macros::new(BLOCK_SIZE).int8(Self::INT8_BLOCK_SIZE),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .int8(Self::INT8_BLOCK_SIZE),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1980,7 +2045,9 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_nf4.wgsl"),
             "compute_absmax",
             None,
-            Macros::new(BLOCK_SIZE).nf4(Self::NF4_BLOCK_SIZE),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .nf4(Self::NF4_BLOCK_SIZE),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -2023,7 +2090,9 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_nf4.wgsl"),
             "quantize",
             None,
-            Macros::new(BLOCK_SIZE).nf4(Self::NF4_BLOCK_SIZE),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .nf4(Self::NF4_BLOCK_SIZE),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,

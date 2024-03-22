@@ -65,3 +65,20 @@ fn stable_exp(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 #endif
     }
 }
+
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
+fn opposite_exp(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+    let stride = shape[0] / 4u;
+    let index = invocation_id.x;
+    let token = invocation_id.y;
+    let batch = invocation_id.z;
+
+    if index < stride {
+        let bti = (batch * shape[1] + token) * stride + index;
+#ifdef FP16
+        x[bti] = pack4x16float(exp(-x[bti]));
+#else
+        x[bti] = exp(-x[bti]);
+#endif
+    }
+}

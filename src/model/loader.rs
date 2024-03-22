@@ -333,7 +333,8 @@ impl<R: Reader> Loader<R> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
-            .map(|x| -x.to_f32().exp())
+            // .map(|x| -x.to_f32().exp())
+            .map(|x| x.to_f32())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
             .transfer_into(context);
 
@@ -354,6 +355,12 @@ impl<R: Reader> Loader<R> {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
         }
+
+        let op = TensorOp::opposite_exp(&tensor)?;
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
         self.context.queue.submit(Some(encoder.finish()));
         Ok(tensor)
     }
@@ -366,8 +373,9 @@ impl<R: Reader> Loader<R> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref()).await?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
-            .map(|x| -x.to_f32().exp())
-            .map(|x| x.exp())
+            // .map(|x| -x.to_f32().exp())
+            // .map(|x| x.exp())
+            .map(|x| x.to_f32())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
             .transfer_into(context);
 
@@ -388,6 +396,12 @@ impl<R: Reader> Loader<R> {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
         }
+
+        let op = TensorOp::stable_exp(&tensor)?;
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.execute_tensor_op(&op);
+        drop(pass);
+
         self.context.queue.submit(Some(encoder.finish()));
         Ok(tensor)
     }
