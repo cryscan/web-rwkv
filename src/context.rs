@@ -69,6 +69,15 @@ impl Instance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ContextId;
 
+#[allow(dead_code)]
+pub enum ContextEvent {
+    ReadBack {
+        buffer: Arc<Buffer>,
+        sender: Sender<Box<[u8]>>,
+    },
+    Drop,
+}
+
 #[derive(Debug)]
 pub struct ContextInternal {
     pub id: uid::Id<ContextId>,
@@ -80,12 +89,20 @@ pub struct ContextInternal {
     buffer_cache: ResourceCache<(usize, BufferUsages), Buffer>,
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[allow(clippy::type_complexity)]
-    buffer_reader: Sender<(Arc<Buffer>, Sender<Box<[u8]>>)>,
+    event: Sender<ContextEvent>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
 pub struct Context(Arc<ContextInternal>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Context {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.0) <= 1 {
+            let _ = self.event.send(ContextEvent::Drop);
+        }
+    }
+}
 
 pub struct ContextBuilder {
     adapter: Adapter,
@@ -141,23 +158,26 @@ impl<'a> ContextBuilder {
             pipeline_cache: Default::default(),
             buffer_cache: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
-            buffer_reader: sender,
+            event: sender,
         });
         let context = Context(context);
 
         // start a thread for reading back buffers
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let id = context.id;
             let context = Arc::downgrade(&context);
             std::thread::spawn(move || {
-                while let Ok((buffer, sender)) = receiver.recv() {
-                    if let Some(context) = context.upgrade() {
-                        let data = context.read_back_buffer(buffer);
-                        let _ = sender.send(data);
-                    } else {
-                        break;
+                while let Ok(event) = receiver.recv() {
+                    match (event, context.upgrade()) {
+                        (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
+                            let data = context.read_back_buffer(buffer);
+                            let _ = sender.send(data);
+                        }
+                        _ => break,
                     }
                 }
+                log::info!("context {} destroyed", id);
             });
         }
 
@@ -301,7 +321,7 @@ impl ContextInternal {
         }
     }
 
-    pub fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
+    pub(crate) fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
         let view = View {
             shape,
             stride: shape,
@@ -320,7 +340,7 @@ impl ContextInternal {
         )
     }
 
-    pub fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
+    pub(crate) fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
         self.buffer_cache.checkout(
             (view.into_bytes().len(), BufferUsages::UNIFORM),
             |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
@@ -334,7 +354,7 @@ impl ContextInternal {
         )
     }
 
-    pub fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
+    pub(crate) fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
         self.buffer_cache.checkout(
             (contents.len(), usage),
             |buffer| self.queue.write_buffer(buffer, 0, contents),
@@ -348,7 +368,7 @@ impl ContextInternal {
         )
     }
 
-    pub fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
+    pub(crate) fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
         self.buffer_cache.checkout(
             (size, usage),
             |_| (),
@@ -364,9 +384,8 @@ impl ContextInternal {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[allow(clippy::type_complexity)]
-    pub fn buffer_reader(&self) -> Sender<(Arc<Buffer>, Sender<Box<[u8]>>)> {
-        self.buffer_reader.clone()
+    pub(crate) fn event(&self) -> Sender<ContextEvent> {
+        self.event.clone()
     }
 
     #[cfg(not(target_arch = "wasm32"))]

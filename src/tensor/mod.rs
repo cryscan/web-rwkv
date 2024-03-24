@@ -11,7 +11,7 @@ use self::{
     shape::{IntoBytes, Shape, TensorAxis, TensorDimension, TensorSlice},
 };
 use crate::{
-    context::Context,
+    context::{Context, ContextEvent},
     model::loader::ReaderTensor,
     num::{Float, Scalar},
 };
@@ -460,7 +460,10 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
         let (sender, receiver) = flume::unbounded();
 
-        let _ = context.buffer_reader().send((map, sender));
+        let _ = context.event().send(ContextEvent::ReadBack {
+            buffer: map,
+            sender,
+        });
         let data = receiver.recv().unwrap();
         let data = unsafe {
             let data = Box::leak(data);
@@ -492,7 +495,10 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
         let (sender, receiver) = flume::unbounded();
 
-        let _ = context.buffer_reader().send((map, sender));
+        let _ = context.event().send(ContextEvent::ReadBack {
+            buffer: map,
+            sender,
+        });
         let data = receiver.recv_async().await.unwrap();
         let data = unsafe {
             let data = Box::leak(data);
