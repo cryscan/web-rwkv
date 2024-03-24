@@ -11,7 +11,7 @@ use self::{
     shape::{IntoBytes, Shape, TensorAxis, TensorDimension, TensorSlice},
 };
 use crate::{
-    context::{Context, ContextEvent},
+    context::Context,
     model::loader::ReaderTensor,
     num::{Float, Scalar},
 };
@@ -76,7 +76,7 @@ pub trait Device: sealed::Sealed {
 }
 
 #[derive(Debug)]
-pub struct Cpu<'a, T: Scalar>(&'a PhantomData<T>);
+pub struct Cpu<'a, T: Scalar>(PhantomData<&'a T>);
 
 #[derive(Debug)]
 pub struct Gpu<K: Kind>(PhantomData<K>);
@@ -447,6 +447,8 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
 impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn back<'a>(&self) -> TensorCpu<'a, T> {
+        use crate::context::ContextEvent;
+
         let context = &self.context;
         let size = self.buffer.size();
         let map = context.checkout_buffer(
@@ -482,6 +484,8 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn back_async<'a>(&self) -> TensorCpu<'a, T> {
+        use crate::context::ContextEvent;
+
         let context = &self.context;
         let size = self.buffer.size();
         let map = context.checkout_buffer(

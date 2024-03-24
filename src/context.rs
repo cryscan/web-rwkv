@@ -69,7 +69,7 @@ impl Instance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ContextId;
 
-#[allow(dead_code)]
+#[cfg(not(target_arch = "wasm32"))]
 pub enum ContextEvent {
     ReadBack {
         buffer: Arc<Buffer>,
