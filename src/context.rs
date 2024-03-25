@@ -1,8 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{borrow::Cow, sync::Arc};
 
 #[cfg(not(target_arch = "wasm32"))]
 use flume::Sender;
@@ -85,8 +81,8 @@ pub struct ContextInternal {
     pub device: Device,
     pub queue: Queue,
 
-    pipeline_cache: Mutex<HashMap<PipelineKey, Arc<CachedPipeline>>>,
-    buffer_cache: ResourceCache<(usize, BufferUsages), Buffer>,
+    pipeline_cache: ResourceCache<PipelineKey, CachedPipeline>,
+    view_cache: ResourceCache<View, Buffer>,
 
     #[cfg(not(target_arch = "wasm32"))]
     event: Sender<ContextEvent>,
@@ -156,7 +152,7 @@ impl<'a> ContextBuilder {
             device,
             queue,
             pipeline_cache: Default::default(),
-            buffer_cache: Default::default(),
+            view_cache: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             event: sender,
         });
@@ -279,46 +275,39 @@ impl ContextInternal {
         let mut context = Context::new();
         context.macros = macros.0.into_iter().collect();
 
-        let mut cache = self.pipeline_cache.lock().unwrap();
-        match cache.get(&key) {
-            Some(pipeline) => pipeline.clone(),
-            None => {
-                let shader = process_str(source.as_ref(), &mut context).unwrap();
-                let module = &self.device.create_shader_module(ShaderModuleDescriptor {
-                    label: Some(name),
-                    source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
-                });
+        self.pipeline_cache.checkout(key, || {
+            let shader = process_str(source.as_ref(), &mut context).unwrap();
+            let module = &self.device.create_shader_module(ShaderModuleDescriptor {
+                label: Some(name),
+                source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
+            });
 
-                let layout = layout.map(|entries| {
-                    let layout = self
-                        .device
-                        .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                            label: None,
-                            entries,
-                        });
-                    self.device
-                        .create_pipeline_layout(&PipelineLayoutDescriptor {
-                            label: None,
-                            bind_group_layouts: &[&layout],
-                            push_constant_ranges: &[],
-                        })
-                });
-
-                let pipeline = self
+            let layout = layout.map(|entries| {
+                let layout = self
                     .device
-                    .create_compute_pipeline(&ComputePipelineDescriptor {
-                        label: Some(name),
-                        layout: layout.as_ref(),
-                        module,
-                        entry_point,
+                    .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                        label: None,
+                        entries,
                     });
-                let layout = pipeline.get_bind_group_layout(0);
-                let pipeline = Arc::new(CachedPipeline { pipeline, layout });
+                self.device
+                    .create_pipeline_layout(&PipelineLayoutDescriptor {
+                        label: None,
+                        bind_group_layouts: &[&layout],
+                        push_constant_ranges: &[],
+                    })
+            });
 
-                cache.insert(key, pipeline.clone());
-                pipeline
-            }
-        }
+            let pipeline = self
+                .device
+                .create_compute_pipeline(&ComputePipelineDescriptor {
+                    label: Some(name),
+                    layout: layout.as_ref(),
+                    module,
+                    entry_point,
+                });
+            let layout = pipeline.get_bind_group_layout(0);
+            CachedPipeline { pipeline, layout }
+        })
     }
 
     pub(crate) fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
@@ -327,60 +316,44 @@ impl ContextInternal {
             stride: shape,
             offset: Shape::new(0, 0, 0, 0),
         };
-        self.buffer_cache.checkout(
-            (view.into_bytes().len(), BufferUsages::UNIFORM),
-            |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
-            || {
-                self.device.create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: &view.into_bytes(),
-                    usage: BufferUsages::UNIFORM,
-                })
-            },
-        )
+        self.view_cache.checkout(view, || {
+            self.device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: &view.into_bytes(),
+                usage: BufferUsages::UNIFORM,
+            })
+        })
     }
 
     pub(crate) fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.buffer_cache.checkout(
-            (view.into_bytes().len(), BufferUsages::UNIFORM),
-            |buffer| self.queue.write_buffer(buffer, 0, &view.into_bytes()),
-            || {
-                self.device.create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents: &view.into_bytes(),
-                    usage: BufferUsages::UNIFORM,
-                })
-            },
-        )
+        self.view_cache.checkout(view, || {
+            self.device.create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents: &view.into_bytes(),
+                usage: BufferUsages::UNIFORM,
+            })
+        })
     }
 
     pub(crate) fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
-        self.buffer_cache.checkout(
-            (contents.len(), usage),
-            |buffer| self.queue.write_buffer(buffer, 0, contents),
-            || {
-                self.device.create_buffer_init(&BufferInitDescriptor {
-                    label: None,
-                    contents,
-                    usage,
-                })
-            },
-        )
+        self.device
+            .create_buffer_init(&BufferInitDescriptor {
+                label: None,
+                contents,
+                usage,
+            })
+            .into()
     }
 
     pub(crate) fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
-        self.buffer_cache.checkout(
-            (size, usage),
-            |_| (),
-            || {
-                self.device.create_buffer(&BufferDescriptor {
-                    label: None,
-                    size: size as u64,
-                    usage,
-                    mapped_at_creation: false,
-                })
-            },
-        )
+        self.device
+            .create_buffer(&BufferDescriptor {
+                label: None,
+                size: size as u64,
+                usage,
+                mapped_at_creation: false,
+            })
+            .into()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
