@@ -54,27 +54,28 @@ where
 
     /// Checkout the item with the given key. If the item doesn't exist, `f` is called to construct it.
     pub fn checkout(&self, key: K, hit: impl FnOnce(&V), miss: impl FnOnce() -> V) -> Arc<V> {
-        let mut map = self.map.lock().unwrap();
-        if !self.duration.is_zero() {
-            for (_, items) in map.iter_mut() {
-                items.retain(|item| item.count() > 1 && item.instant.elapsed() < self.duration);
-            }
-        }
+        // let mut map = self.map.lock().unwrap();
+        // if !self.duration.is_zero() {
+        //     for (_, items) in map.iter_mut() {
+        //         items.retain(|item| item.count() > 1 && item.instant.elapsed() < self.duration);
+        //     }
+        // }
 
-        match map
-            .get_mut(&key)
-            .and_then(|items| items.iter_mut().find(|item| item.count() == 1))
-        {
-            Some(item) => {
-                hit(&item.value);
-                item.instant = Instant::now();
-                item.value.clone()
-            }
-            None => {
-                let value = Arc::new(miss());
-                map.insert(key, vec![CacheItem::new(value.clone())]);
-                value
-            }
-        }
+        // match map
+        //     .get_mut(&key)
+        //     .and_then(|items| items.iter_mut().find(|item| item.count() == 1))
+        // {
+        //     Some(item) => {
+        //         hit(&item.value);
+        //         item.instant = Instant::now();
+        //         item.value.clone()
+        //     }
+        //     None => {
+        //         let value = Arc::new(miss());
+        //         map.insert(key, vec![CacheItem::new(value.clone())]);
+        //         value
+        //     }
+        // }
+        miss().into()
     }
 }

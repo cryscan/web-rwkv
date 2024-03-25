@@ -184,6 +184,36 @@ pub trait TensorScalar {
     type T: Scalar;
 }
 
+pub trait TensorInitContext<'a, T: Scalar>: Sized {
+    /// Init the tensor with given shape and contents.
+    fn from_data(
+        context: &Context,
+        shape: Shape,
+        data: impl Into<Cow<'a, [T]>>,
+    ) -> Result<Self, TensorError>;
+    /// Init the tensor with given shape.
+    fn init(context: &Context, shape: Shape) -> Self;
+
+    /// Create a tensor from safetensors reader.
+    fn from_reader(
+        context: &Context,
+        (dt, shape, data): ReaderTensor<'a>,
+    ) -> Result<Self, TensorError> {
+        if T::DATA_TYPE != dt {
+            return Err(TensorError::Type);
+        }
+        let shape = Shape::from_slice_rev(&shape)?;
+        match data {
+            Cow::Borrowed(data) => Self::from_data(context, shape, bytemuck::cast_slice(data)),
+            Cow::Owned(data) => {
+                let data = bytemuck::cast_slice(&data);
+                let data = Cow::Owned(data.to_vec());
+                Self::from_data(context, shape, data)
+            }
+        }
+    }
+}
+
 pub trait TensorInit<'a, T: Scalar>: Sized {
     /// Init the tensor with given shape and contents.
     fn from_data(shape: Shape, data: impl Into<Cow<'a, [T]>>) -> Result<Self, TensorError>;
@@ -195,7 +225,6 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
         if T::DATA_TYPE != dt {
             return Err(TensorError::Type);
         }
-
         let shape = Shape::from_slice_rev(&shape)?;
         match data {
             Cow::Borrowed(data) => Self::from_data(shape, bytemuck::cast_slice(data)),
@@ -339,6 +368,20 @@ impl<'a, T: Scalar> TensorInit<'a, T> for TensorCpu<'a, T> {
     }
 }
 
+impl<'a, T: Scalar> TensorInitContext<'a, T> for TensorCpu<'a, T> {
+    fn from_data(
+        _context: &Context,
+        shape: Shape,
+        data: impl Into<Cow<'a, [T]>>,
+    ) -> Result<Self, TensorError> {
+        TensorInit::from_data(shape, data)
+    }
+
+    fn init(_context: &Context, shape: Shape) -> Self {
+        TensorInit::init(shape)
+    }
+}
+
 impl<'a, T: Scalar> TensorFrom<TensorCpu<'a, T>> for TensorCpu<'a, T> {
     fn transfer_from(_context: &Context, value: TensorCpu<'a, T>) -> Self {
         value
@@ -372,6 +415,35 @@ impl<T: Scalar> TensorReshape for TensorCpu<'_, T> {
             shape,
             ..self.clone()
         })
+    }
+}
+
+impl<'a, T: Scalar, K: Kind> TensorInitContext<'a, T> for TensorGpu<T, K> {
+    fn from_data(
+        context: &Context,
+        shape: Shape,
+        data: impl Into<Cow<'a, [T]>>,
+    ) -> Result<Self, TensorError> {
+        let tensor: TensorCpu<T> = TensorInit::from_data(shape, data)?;
+        Ok(tensor.transfer_into(context))
+    }
+
+    fn init(context: &Context, shape: Shape) -> Self {
+        let context = context.clone();
+        let meta = context.checkout_shape_uniform(shape);
+
+        let size = shape.len() * std::mem::size_of::<T>();
+        let buffer = context.checkout_buffer(size, K::buffer_usages());
+
+        Self {
+            shape,
+            data: TensorGpuData {
+                context,
+                meta,
+                buffer,
+            },
+            phantom: PhantomData,
+        }
     }
 }
 
@@ -608,7 +680,7 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
     pub fn map<U: Scalar>(self, f: impl FnMut(&T) -> U) -> TensorCpu<'a, U> {
         let Self { shape, data, .. } = self;
         let data = data.iter().map(f).collect_vec();
-        TensorCpu::from_data(shape, data).expect("this never happens")
+        TensorInit::from_data(shape, data).expect("this never happens")
     }
 
     /// Repeat the tensor along a given axis.
@@ -916,32 +988,28 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
 impl<'a> Context {
     #[inline]
     pub fn zeros<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(&self, shape: Shape) -> Tensor {
-        Tensor::transfer_from(self, TensorCpu::init(shape))
+        Tensor::transfer_from(self, TensorInit::init(shape))
     }
 
     #[inline]
     pub fn ones<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(&self, shape: Shape) -> Tensor {
         let data = vec![T::one(); shape.len()];
-        let tensor = TensorCpu::from_data(shape, data).unwrap();
+        let tensor = TensorInit::from_data(shape, data).unwrap();
         Tensor::transfer_from(self, tensor)
     }
 
     #[inline]
-    pub fn tensor_from_data<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(
+    pub fn tensor_from_data<T: Scalar, Tensor: TensorInitContext<'a, T>>(
         &self,
         shape: Shape,
         data: impl Into<Cow<'a, [T]>>,
     ) -> Result<Tensor, TensorError> {
-        let tensor = TensorCpu::from_data(shape, data)?;
-        Ok(Tensor::transfer_from(self, tensor))
+        TensorInitContext::from_data(self, shape, data)
     }
 
     #[inline]
-    pub fn tensor_init<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(
-        &self,
-        shape: Shape,
-    ) -> Tensor {
-        Tensor::transfer_from(self, TensorCpu::init(shape))
+    pub fn tensor_init<T: Scalar, Tensor: TensorInitContext<'a, T>>(&self, shape: Shape) -> Tensor {
+        TensorInitContext::init(self, shape)
     }
 }
 
