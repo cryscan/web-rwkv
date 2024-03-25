@@ -193,25 +193,6 @@ pub trait TensorInitContext<'a, T: Scalar>: Sized {
     ) -> Result<Self, TensorError>;
     /// Init the tensor with given shape.
     fn init(context: &Context, shape: Shape) -> Self;
-
-    /// Create a tensor from safetensors reader.
-    fn from_reader(
-        context: &Context,
-        (dt, shape, data): ReaderTensor<'a>,
-    ) -> Result<Self, TensorError> {
-        if T::DATA_TYPE != dt {
-            return Err(TensorError::Type);
-        }
-        let shape = Shape::from_slice_rev(&shape)?;
-        match data {
-            Cow::Borrowed(data) => Self::from_data(context, shape, bytemuck::cast_slice(data)),
-            Cow::Owned(data) => {
-                let data = bytemuck::cast_slice(&data);
-                let data = Cow::Owned(data.to_vec());
-                Self::from_data(context, shape, data)
-            }
-        }
-    }
 }
 
 pub trait TensorInit<'a, T: Scalar>: Sized {
