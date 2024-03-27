@@ -154,14 +154,12 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if index == 0u {
         let btc = compute_index(destination, batch, token, channel, 2u);
+        var out = sketch[0];
 #ifdef ACT_SQUARED_RELU
-        let out = squared_relu(sketch[0]);
-#else
-#ifdef ACT_TANH
-        let out = tanh(sketch[0]);
-#else
-        let out = sketch[0];
+        out = squared_relu(out);
 #endif
+#ifdef ACT_TANH
+        out = tanh(out);
 #endif
 #ifdef OUT_FP16
         output[btc] = pack4x16float(out);

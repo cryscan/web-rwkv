@@ -210,13 +210,12 @@ fn matmul(in: Input) {
         local_sum[1] = squared_relu(local_sum[1]);
         local_sum[2] = squared_relu(local_sum[2]);
         local_sum[3] = squared_relu(local_sum[3]);
-#else
+#endif
 #ifdef ACT_TANH
         local_sum[0] = tanh(local_sum[0]);
         local_sum[1] = tanh(local_sum[1]);
         local_sum[2] = tanh(local_sum[2]);
         local_sum[3] = tanh(local_sum[3]);
-#endif
 #endif
 #ifdef OUT_FP16
         output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x, 4u)] = pack4x16float(local_sum[0]);
