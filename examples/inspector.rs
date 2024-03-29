@@ -55,10 +55,14 @@ fn sample(probs: &[f32], _top_p: f32) -> u16 {
         .0 as u16
 }
 
-async fn create_context(info: &ModelInfo) -> Result<Context> {
+async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
     let instance = Instance::new();
     #[cfg(not(debug_assertions))]
-    let adapter = {
+    let adapter = if _auto {
+        instance
+            .adapter(wgpu::PowerPreference::HighPerformance)
+            .await?
+    } else {
         let backends = wgpu::Backends::all();
         let adapters = instance
             .enumerate_adapters(backends)
@@ -169,7 +173,7 @@ async fn run(cli: Cli) -> Result<()> {
     };
     let lora = lora.as_deref();
 
-    let context = create_context(&info).await?;
+    let context = create_context(&info, cli.adapter).await?;
     let (model, state) = load_model::<v5::Model<f16>, _>(
         &context,
         &data,
@@ -325,6 +329,8 @@ struct Cli {
     token_chunk_size: usize,
     #[arg(short, long)]
     prompt: Option<String>,
+    #[arg(short, long, action)]
+    adapter: bool,
 }
 
 #[tokio::main]

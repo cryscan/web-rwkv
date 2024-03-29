@@ -75,10 +75,14 @@ impl Sampler {
     }
 }
 
-async fn create_context(info: &ModelInfo) -> Result<Context> {
+async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
     let instance = Instance::new();
     #[cfg(not(debug_assertions))]
-    let adapter = {
+    let adapter = if _auto {
+        instance
+            .adapter(wgpu::PowerPreference::HighPerformance)
+            .await?
+    } else {
         let backends = wgpu::Backends::all();
         let adapters = instance
             .enumerate_adapters(backends)
@@ -211,7 +215,7 @@ async fn run(cli: Cli) -> Result<()> {
     };
     let lora = lora.as_deref();
 
-    let context = create_context(&info).await?;
+    let context = create_context(&info, cli.adapter).await?;
     match info.version {
         ModelVersion::V4 => {
             let (model, state) = load_model(
@@ -407,6 +411,8 @@ struct Cli {
     token_chunk_size: usize,
     #[command(flatten)]
     sampler: Sampler,
+    #[arg(short, long, action)]
+    adapter: bool,
 }
 
 #[derive(Debug, Deserialize)]
