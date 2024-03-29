@@ -76,9 +76,9 @@ fn opposite_exp(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if index < stride {
         let bti = (batch * shape[1] + token) * stride + index;
 #ifdef FP16
-        x[bti] = pack4x16float(exp(-x[bti]));
+        x[bti] = -pack4x16float(exp(x[bti]));
 #else
-        x[bti] = exp(-x[bti]);
+        x[bti] = -exp(x[bti]);
 #endif
     }
 }
