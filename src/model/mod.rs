@@ -14,6 +14,7 @@ use self::{
 use crate::{context::Context, impl_deserialize_seed, num::Scalar, tensor::TensorError};
 
 pub mod loader;
+pub mod pipeline;
 pub mod run;
 pub mod softmax;
 pub mod v4;
