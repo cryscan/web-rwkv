@@ -11,14 +11,13 @@ use crate::{
     tensor::{kind::ReadWrite, TensorCpu, TensorError, TensorGpu},
 };
 
-type Batch<T> = Vec<T>;
 type BoxedFuture<Output> = Pin<Box<dyn Future<Output = Output>>>;
 
 pub trait Pipeline {
+    type Input;
     type Output;
     type Error;
 
-    /// Wait for required data to be ready and submit the GPU jobs.
     fn execute(self) -> impl Future<Output = Result<Self::Output, Self::Error>>;
 }
 
@@ -101,26 +100,78 @@ impl<F: Future<Output = u16> + 'static> Prompt for FuturePrompt<F> {
     }
 }
 
-pub struct Run<F: Float> {
-    command: CommandBuffer,
-    future: BoxedFuture<TensorCpu<'static, F>>,
-    input: TensorGpu<F, ReadWrite>,
-    output: Batch<TensorGpu<F, ReadWrite>>,
+pub struct Batch<T: Float> {
+    pub redirect: Vec<(usize, usize)>,
+    pub tensor: TensorCpu<'static, T>,
 }
 
-impl<F: Float> Pipeline for Run<F> {
-    type Output = Batch<TensorGpu<F, ReadWrite>>;
+pub struct Run<T, F>
+where
+    T: Float,
+    F: Future<Output = Result<TensorCpu<'static, T>, TensorError>>,
+{
+    command: CommandBuffer,
+    future: F,
+    redirect: Vec<(usize, usize)>,
+    input: TensorGpu<T, ReadWrite>,
+    output: TensorGpu<T, ReadWrite>,
+}
+
+impl<T, F> Pipeline for Run<T, F>
+where
+    T: Float,
+    F: Future<Output = Result<TensorCpu<'static, T>, TensorError>>,
+{
+    type Input = TensorCpu<'static, T>;
+    type Output = Batch<T>;
     type Error = TensorError;
 
     async fn execute(self) -> Result<Self::Output, Self::Error> {
-        let context = self.input.context();
-        let tensor = self.future.await;
+        let tensor = self.future.await?;
         self.input.load(&tensor)?;
+
+        let context = self.input.context();
         context.queue.submit(Some(self.command));
-        Ok(self.output)
+
+        let redirect = self.redirect;
+        let tensor = self.output.back_async().await;
+        Ok(Batch { redirect, tensor })
     }
 }
 
-pub trait ModelRun<F: Float, M, S> {
-    fn run(model: &M, state: &S, tokens: &mut Batch<Box<dyn Prompt>>) -> Run<F>;
+impl<T, Fut> Run<T, Fut>
+where
+    T: Float,
+    Fut: Future<Output = Result<TensorCpu<'static, T>, TensorError>>,
+{
+    pub fn transform<Output, F>(self, f: F) -> impl Pipeline
+    where
+        F: FnMut(<Self as Pipeline>::Output) -> Result<Output, <Self as Pipeline>::Error>,
+    {
+        Transform { parent: self, f }
+    }
+}
+
+pub struct Transform<P, Input, Output, F>
+where
+    P: Pipeline<Output = Input>,
+    F: FnMut(Input) -> Result<Output, P::Error>,
+{
+    parent: P,
+    f: F,
+}
+
+impl<P, Input, Output, F> Pipeline for Transform<P, Input, Output, F>
+where
+    P: Pipeline<Output = Input>,
+    F: FnMut(Input) -> Result<Output, P::Error>,
+{
+    type Input = P::Input;
+    type Output = Output;
+    type Error = P::Error;
+
+    async fn execute(mut self) -> Result<Self::Output, Self::Error> {
+        let output = self.parent.execute().await?;
+        (self.f)(output)
+    }
 }
