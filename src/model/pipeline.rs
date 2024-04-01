@@ -1,8 +1,6 @@
-use std::{
-    future::{Future, IntoFuture},
-    pin::Pin,
-};
+use std::future::{Future, IntoFuture};
 
+use futures::future::BoxFuture;
 use wgpu::CommandBuffer;
 
 use super::OutputType;
@@ -10,8 +8,6 @@ use crate::{
     num::Float,
     tensor::{kind::ReadWrite, TensorCpu, TensorError, TensorGpu},
 };
-
-type BoxedFuture<Output> = Pin<Box<dyn Future<Output = Output>>>;
 
 pub trait Pipeline {
     type Input;
@@ -21,7 +17,7 @@ pub trait Pipeline {
     fn execute(self) -> impl Future<Output = Result<Self::Output, Self::Error>>;
 }
 
-pub trait Prompt: IntoFuture<Output = Vec<u16>, IntoFuture = BoxedFuture<Vec<u16>>> {
+pub trait Prompt: IntoFuture<Output = Vec<u16>, IntoFuture = BoxFuture<'static, Vec<u16>>> {
     /// Number of tokens in the prompt.
     fn num_token(&self) -> usize;
 
@@ -40,7 +36,7 @@ pub struct PresentPrompt {
 
 impl IntoFuture for PresentPrompt {
     type Output = Vec<u16>;
-    type IntoFuture = BoxedFuture<Vec<u16>>;
+    type IntoFuture = BoxFuture<'static, Vec<u16>>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move { self.tokens })
@@ -71,18 +67,18 @@ impl Prompt for PresentPrompt {
     }
 }
 
-pub struct FuturePrompt<F: Future<Output = u16> + 'static>(pub F);
+pub struct FuturePrompt<F: Future<Output = u16> + Send + 'static>(pub F);
 
-impl<F: Future<Output = u16> + 'static> IntoFuture for FuturePrompt<F> {
+impl<F: Future<Output = u16> + Send + 'static> IntoFuture for FuturePrompt<F> {
     type Output = Vec<u16>;
-    type IntoFuture = BoxedFuture<Vec<u16>>;
+    type IntoFuture = BoxFuture<'static, Vec<u16>>;
 
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(async move { vec![self.0.await] })
     }
 }
 
-impl<F: Future<Output = u16> + 'static> Prompt for FuturePrompt<F> {
+impl<F: Future<Output = u16> + Send + 'static> Prompt for FuturePrompt<F> {
     fn num_token(&self) -> usize {
         1
     }
@@ -105,33 +101,25 @@ pub struct Batch<T: Float> {
     pub tensor: TensorCpu<'static, T>,
 }
 
-pub struct Run<T, F>
-where
-    T: Float,
-    F: Future<Output = Result<TensorCpu<'static, T>, TensorError>>,
-{
-    command: CommandBuffer,
-    future: F,
+pub struct Run<T: Float> {
+    command: BoxFuture<'static, Result<CommandBuffer, TensorError>>,
+    tensor: BoxFuture<'static, Result<TensorCpu<'static, T>, TensorError>>,
     redirect: Vec<(usize, usize)>,
     input: TensorGpu<T, ReadWrite>,
     output: TensorGpu<T, ReadWrite>,
 }
 
-impl<T, F> Pipeline for Run<T, F>
-where
-    T: Float,
-    F: Future<Output = Result<TensorCpu<'static, T>, TensorError>>,
-{
+impl<T: Float> Pipeline for Run<T> {
     type Input = TensorCpu<'static, T>;
     type Output = Batch<T>;
     type Error = TensorError;
 
     async fn execute(self) -> Result<Self::Output, Self::Error> {
-        let tensor = self.future.await?;
-        self.input.load(&tensor)?;
+        let (command, tensor) = futures::join!(self.command, self.tensor);
+        self.input.load(&tensor?)?;
 
         let context = self.input.context();
-        context.queue.submit(Some(self.command));
+        context.queue.submit(Some(command?));
 
         let redirect = self.redirect;
         let tensor = self.output.back_async().await;
@@ -139,11 +127,7 @@ where
     }
 }
 
-impl<T, Fut> Run<T, Fut>
-where
-    T: Float,
-    Fut: Future<Output = Result<TensorCpu<'static, T>, TensorError>>,
-{
+impl<T: Float> Run<T> {
     pub fn transform<Output, F>(self, f: F) -> impl Pipeline
     where
         F: FnMut(<Self as Pipeline>::Output) -> Result<Output, <Self as Pipeline>::Error>,
