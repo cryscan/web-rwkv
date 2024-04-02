@@ -1,30 +1,15 @@
-use wgpu::CommandBuffer;
-
-use crate::{
-    num::Float,
-    tensor::{kind::ReadWrite, TensorCpu, TensorError, TensorGpu},
-};
+use std::future::Future;
 
 #[cfg(feature = "tokio")]
 pub mod tokio;
 
-#[derive(Debug)]
-pub struct Job<F: Float> {
-    input: TensorGpu<F, ReadWrite>,
-    output: TensorGpu<F, ReadWrite>,
-    command: CommandBuffer,
-}
+pub trait Job {
+    type Input;
+    type Output;
+    type Error;
 
-impl<F: Float> Job<F> {
-    pub fn load(&self, input: &TensorCpu<F>) -> Result<(), TensorError> {
-        self.input.load(input)
-    }
-
-    pub async fn submit(self) -> TensorCpu<'static, F> {
-        let context = self.output.context();
-        context.queue.submit(Some(self.command));
-        self.output.back().await
-    }
+    fn load(&self, input: &Self::Input) -> Result<(), Self::Error>;
+    fn submit(self) -> impl Future<Output = Self::Output> + Send + 'static;
 }
 
 #[derive(Debug, Default, Clone)]
@@ -45,15 +30,12 @@ pub enum RunOutput {
 }
 
 pub trait Run {
-    type Model;
-    type State;
-
-    fn run<F: Float>(model: &Self::Model, state: &Self::State, input: RunInput) -> Job<F>;
+    fn run(&self, input: RunInput) -> impl Job;
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct SoftmaxInput(pub Vec<usize>);
 
 pub trait Softmax {
-    fn softmax<F: Float>(input: SoftmaxInput) -> Job<F>;
+    fn softmax(&self, input: SoftmaxInput) -> impl Job;
 }
