@@ -453,7 +453,7 @@ impl<T: Scalar> TensorFrom<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> 
     fn transfer_from(context: &Context, value: TensorGpu<T, ReadWrite>) -> Self {
         match context {
             context if context == &value.context => value,
-            _ => value.back().transfer_into(context),
+            _ => value.back_block().transfer_into(context),
         }
     }
 }
@@ -499,7 +499,7 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
 
 impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn back<'a>(&self) -> TensorCpu<'a, T> {
+    pub fn back_block<'a>(&self) -> TensorCpu<'a, T> {
         use crate::context::ContextEvent;
 
         let context = &self.context;
@@ -536,7 +536,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn back_async<'a>(&self) -> TensorCpu<'a, T> {
+    pub async fn back<'a>(&self) -> TensorCpu<'a, T> {
         use crate::context::ContextEvent;
 
         let context = &self.context;
@@ -573,7 +573,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn back_async<'a>(self) -> TensorCpu<'a, T> {
+    pub async fn back<'a>(self) -> TensorCpu<'a, T> {
         let context = &self.context;
         let size = self.buffer.size();
         let buffer = context.checkout_buffer(

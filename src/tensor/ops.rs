@@ -2200,7 +2200,7 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = x_dev.back().to_vec();
+        let x_host = x_dev.back_block().to_vec();
 
         let mut ans = vec![];
         for x in &x.into_iter().chunks(C) {
@@ -2268,8 +2268,8 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = x_dev.back().to_vec();
-        let s_host = s_dev.back().to_vec();
+        let x_host = x_dev.back_block().to_vec();
+        let s_host = s_dev.back_block().to_vec();
 
         let mut ans = vec![];
         let mut ans_stats = vec![];
@@ -2388,7 +2388,7 @@ mod tests {
         // profiler.resolve_queries(&mut encoder);
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = output_dev.back();
+        let output_host = output_dev.back_block();
         let output_host = Vec::from(output_host);
 
         // profiler.end_frame().unwrap();
@@ -2775,9 +2775,9 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let matrix_u4_host = matrix_u4_dev.back().to_vec();
-        let absmax_host = absmax_dev.back().to_vec();
-        let output_host = output_dev.back().to_vec();
+        let matrix_u4_host = matrix_u4_dev.back_block().to_vec();
+        let absmax_host = absmax_dev.back_block().to_vec();
+        let output_host = output_dev.back_block().to_vec();
 
         let mut truth = vec![0.0; output_host.len()];
         for token in 0..T {
@@ -2874,7 +2874,7 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = output.back();
+        let output_host = output.back_block();
         let output_host = Vec::from(output_host);
 
         assert_eq!(
@@ -2911,7 +2911,7 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = output.back();
+        let output_host = output.back_block();
         let output_host: Vec<f32> = Vec::from(output_host);
 
         assert_eq!(

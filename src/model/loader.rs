@@ -627,7 +627,7 @@ impl<R: Reader> Loader<R> {
             encoder.copy_tensor(&tensor, &map)?;
 
             context.queue.submit(Some(encoder.finish()));
-            Ok(map.back_async().await)
+            Ok(map.back().await)
         }
     }
 

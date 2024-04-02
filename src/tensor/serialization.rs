@@ -60,7 +60,7 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     where
         S: serde::Serializer,
     {
-        TensorBlob::from(self.back()).serialize(serializer)
+        TensorBlob::from(self.back_block()).serialize(serializer)
     }
 }
 

@@ -86,7 +86,7 @@ impl<M: ModelBase> ModelSoftmax for M {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let output = softmax.buffer.back_async().await;
+        let output = softmax.buffer.back().await;
         Ok(redirect
             .into_iter()
             .map(|r| match r.len() {

@@ -290,7 +290,7 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor(self, &map).expect("back entire state");
         context.queue.submit(Some(encoder.finish()));
 
-        let data = map.back_async().await.into();
+        let data = map.back().await.into();
         BackedState { shape, data }
     }
 
@@ -304,7 +304,7 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor_batch(self, &map, batch)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let data = map.back_async().await.into();
+        let data = map.back().await.into();
         Ok(BackedState { shape, data })
     }
 
