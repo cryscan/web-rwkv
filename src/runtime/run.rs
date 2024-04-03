@@ -5,17 +5,25 @@ use crate::{num::Float, tensor::TensorCpu};
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RunInfo(pub Vec<(usize, Option<RunOption>)>);
+pub struct RunInfo(pub Vec<(usize, RunOutputInfo)>);
 
 #[derive(Debug, Clone, Copy)]
-pub enum BatchInput {
+enum BatchState {
     Gen,
     Read(usize),
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum RunOption {
     #[default]
+    Last,
+    Full,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum RunOutputInfo {
+    #[default]
+    None,
     Last,
     Full,
 }
@@ -40,7 +48,7 @@ impl IntoIterator for &RunInput {
         let batches = self
             .batches
             .iter()
-            .map(|(tokens, option)| (BatchInput::Read(tokens.len()), *option))
+            .map(|(tokens, option)| (BatchState::Read(tokens.len()), *option))
             .collect();
         let token_chunk_size = self.token_chunk_size;
         Self::IntoIter {
@@ -51,7 +59,7 @@ impl IntoIterator for &RunInput {
 }
 
 pub struct RunIter {
-    batches: Vec<(BatchInput, RunOption)>,
+    batches: Vec<(BatchState, RunOption)>,
     token_chunk_size: usize,
 }
 
@@ -63,8 +71,8 @@ impl Iterator for RunIter {
             .batches
             .iter()
             .map(|(x, _)| match x {
-                BatchInput::Gen => 1,
-                BatchInput::Read(x) => *x,
+                BatchState::Gen => 1,
+                BatchState::Read(x) => *x,
             })
             .collect_vec();
 
@@ -80,7 +88,7 @@ impl Iterator for RunIter {
             return None;
         }
 
-        let mut info = vec![(0, None); num_batch];
+        let mut info = vec![(0, Default::default()); num_batch];
         while num_token > 0 {
             let mid = batches
                 .clone()
@@ -105,15 +113,15 @@ impl Iterator for RunIter {
             |(info, batch, remain)| {
                 if info.0 > 0 {
                     batch.0 = match remain {
-                        0 => BatchInput::Gen,
-                        &x => BatchInput::Read(x),
+                        0 => BatchState::Gen,
+                        &x => BatchState::Read(x),
                     };
                     info.1 = match batch.1 {
                         RunOption::Last => match remain {
-                            0 => Some(RunOption::Last),
-                            _ => None,
+                            0 => RunOutputInfo::Last,
+                            _ => RunOutputInfo::None,
                         },
-                        RunOption::Full => Some(RunOption::Full),
+                        RunOption::Full => RunOutputInfo::Full,
                     };
                 }
             },
@@ -129,7 +137,7 @@ pub struct RunOutput<F: Float>(pub Vec<TensorCpu<'static, F>>);
 #[cfg(test)]
 mod tests {
     use super::{RunInput, RunOption};
-    use crate::runtime::run::RunInfo;
+    use crate::runtime::run::{RunInfo, RunOutputInfo};
 
     #[test]
     fn test_run_iter() {
@@ -144,41 +152,22 @@ mod tests {
         };
         let mut iter = run.iter();
 
+        use RunOutputInfo::{Full, Last, None};
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
-                (65, None),
-                (1, Some(RunOption::Last)),
-                (0, None),
-                (62, Some(RunOption::Full))
-            ]))
+            Some(RunInfo(vec![(65, None), (1, Last), (0, None), (62, Full)]))
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
-                (60, None),
-                (1, Some(RunOption::Last)),
-                (0, None),
-                (3, Some(RunOption::Full))
-            ]))
+            Some(RunInfo(vec![(60, None), (1, Last), (0, None), (3, Full)]))
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
-                (14, Some(RunOption::Last)),
-                (1, Some(RunOption::Last)),
-                (0, None),
-                (1, Some(RunOption::Full))
-            ]))
+            Some(RunInfo(vec![(14, Last), (1, Last), (0, None), (1, Full)]))
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
-                (1, Some(RunOption::Last)),
-                (1, Some(RunOption::Last)),
-                (0, None),
-                (1, Some(RunOption::Full))
-            ]))
+            Some(RunInfo(vec![(1, Last), (1, Last), (0, None), (1, Full)]))
         )
     }
 }
