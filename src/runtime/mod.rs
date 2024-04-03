@@ -1,5 +1,7 @@
 use std::future::Future;
 
+use flume::{Receiver, Sender};
+
 pub trait Job {
     type Input;
     type Output;
@@ -20,9 +22,19 @@ pub trait JobBuilder {
     ) -> impl Job<Input = Self::Input, Output = Self::Output> + 'static;
 }
 
+pub struct Submission<Input, Output> {
+    pub input: Input,
+    pub sender: Sender<Output>,
+}
+
 pub struct JobRunner<Input, Output> {
-    input: flume::Receiver<Input>,
-    output: flume::Sender<Output>,
+    input: Receiver<Submission<Input, Output>>,
+}
+
+impl<Input, Output> JobRunner<Input, Output> {
+    pub fn new(input: Receiver<Submission<Input, Output>>) -> Self {
+        Self { input }
+    }
 }
 
 impl<Info, Input, Output> JobRunner<Input, Output>
@@ -33,7 +45,7 @@ where
 {
     pub async fn run(&self) {
         let mut speculation = None;
-        while let Ok(input) = self.input.recv_async().await {
+        while let Ok(Submission { input, sender }) = self.input.recv_async().await {
             let mut iter = input.into_iter();
             let Some(info) = iter.next() else {
                 continue;
@@ -52,7 +64,6 @@ where
                 }
             };
 
-            let sender = self.output.clone();
             let output = job.submit();
 
             #[cfg(feature = "tokio")]
