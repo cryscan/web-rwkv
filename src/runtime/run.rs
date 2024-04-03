@@ -101,23 +101,23 @@ impl Iterator for RunIter {
             }
         }
 
-        for (info, batch, remain) in
-            itertools::multizip((info.iter_mut(), self.batches.iter_mut(), batches.iter()))
-        {
-            if info.0 > 0 {
-                batch.0 = match remain {
-                    0 => BatchInput::Gen,
-                    &x => BatchInput::Read(x),
-                };
-                info.1 = match batch.1 {
-                    RunOption::Last => match remain {
-                        0 => Some(RunOption::Last),
-                        _ => None,
-                    },
-                    RunOption::Full => Some(RunOption::Full),
-                };
-            }
-        }
+        itertools::multizip((info.iter_mut(), self.batches.iter_mut(), batches.iter())).for_each(
+            |(info, batch, remain)| {
+                if info.0 > 0 {
+                    batch.0 = match remain {
+                        0 => BatchInput::Gen,
+                        &x => BatchInput::Read(x),
+                    };
+                    info.1 = match batch.1 {
+                        RunOption::Last => match remain {
+                            0 => Some(RunOption::Last),
+                            _ => None,
+                        },
+                        RunOption::Full => Some(RunOption::Full),
+                    };
+                }
+            },
+        );
 
         Some(RunInfo(info))
     }
