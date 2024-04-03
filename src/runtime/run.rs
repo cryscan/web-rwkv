@@ -62,19 +62,14 @@ impl Iterator for RunIter {
         let mut batches = self
             .batches
             .iter()
-            .map(|(x, option)| {
-                (
-                    match x {
-                        BatchInput::Gen => 1,
-                        BatchInput::Read(x) => *x,
-                    },
-                    *option,
-                )
+            .map(|(x, _)| match x {
+                BatchInput::Gen => 1,
+                BatchInput::Read(x) => *x,
             })
             .collect_vec();
 
         let num_batch = batches.len();
-        let num_token: usize = batches.iter().map(|(x, _)| x).sum();
+        let num_token: usize = batches.iter().sum();
         let num_token = num_token.min(self.token_chunk_size);
         let mut num_token = match num_token > MIN_TOKEN_CHUNK_SIZE {
             true => num_token - num_token % MIN_TOKEN_CHUNK_SIZE,
@@ -88,13 +83,13 @@ impl Iterator for RunIter {
         let mut info = vec![(0, None); num_batch];
         while num_token > 0 {
             let mid = batches
-                .iter()
-                .map(|(x, _)| *x)
+                .clone()
+                .into_iter()
                 .filter(|x| *x > 0)
                 .min()
                 .unwrap_or_default();
             for (info, batch) in info.iter_mut().zip_eq(batches.iter_mut()) {
-                if batch.0 == 0 {
+                if *batch == 0 {
                     continue;
                 }
 
@@ -102,25 +97,25 @@ impl Iterator for RunIter {
                 num_token -= mid;
 
                 info.0 += mid;
-                batch.0 -= mid;
+                *batch -= mid;
+            }
+        }
+
+        for (info, batch, remain) in
+            itertools::multizip((info.iter_mut(), self.batches.iter_mut(), batches.iter()))
+        {
+            if info.0 > 0 {
+                batch.0 = match remain {
+                    0 => BatchInput::Gen,
+                    &x => BatchInput::Read(x),
+                };
                 info.1 = match batch.1 {
-                    RunOption::Last => match batch.0 {
+                    RunOption::Last => match remain {
                         0 => Some(RunOption::Last),
                         _ => None,
                     },
                     RunOption::Full => Some(RunOption::Full),
-                }
-            }
-        }
-
-        for (info, remain, batch) in
-            itertools::multizip((info.iter(), batches.iter(), self.batches.iter_mut()))
-        {
-            if info.0 > 0 {
-                batch.0 = match remain.0 {
-                    0 => BatchInput::Gen,
-                    x => BatchInput::Read(x),
-                }
+                };
             }
         }
 
