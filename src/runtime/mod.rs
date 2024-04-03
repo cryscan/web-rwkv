@@ -2,6 +2,8 @@ use std::future::Future;
 
 use flume::{Receiver, Sender};
 
+pub mod run;
+
 pub trait Job {
     type Input;
     type Output;
@@ -41,9 +43,11 @@ impl<Info, Input, Output> JobRunner<Input, Output>
 where
     Input: IntoIterator<Item = Info> + Copy,
     Output: Send + 'static,
-    Self: JobBuilder<Info = Info, Input = Input, Output = Output>,
 {
-    pub async fn run(&self) {
+    pub async fn run(
+        &self,
+        builder: &impl JobBuilder<Info = Info, Input = Input, Output = Output>,
+    ) {
         let mut speculation = None;
         while let Ok(Submission { input, sender }) = self.input.recv_async().await {
             let mut iter = input.into_iter();
@@ -58,7 +62,7 @@ where
             let job = match speculation.take().and_then(|job| load(job, input)) {
                 Some(job) => job,
                 None => {
-                    let job = self.build(info);
+                    let job = builder.build(info);
                     job.load(input).unwrap();
                     job
                 }
@@ -72,7 +76,7 @@ where
                 let _ = sender.send_async(output).await;
             });
 
-            speculation = iter.next().map(|info| self.build(info));
+            speculation = iter.next().map(|info| builder.build(info));
 
             #[cfg(not(feature = "tokio"))]
             let _ = sender.send_async(output.await).await;

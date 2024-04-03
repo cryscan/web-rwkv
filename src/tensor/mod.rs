@@ -742,7 +742,7 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         y: impl TensorAxis,
         z: impl TensorAxis,
         w: impl TensorAxis,
-    ) -> Result<TensorCpu<'a, T>, TensorError> {
+    ) -> Result<Self, TensorError> {
         let slice = (x, y, z, w);
         let (start, end) = slice.shape_bounds(self.shape)?;
         let shape = end - start;
