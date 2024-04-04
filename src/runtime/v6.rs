@@ -8,7 +8,7 @@ use wgpu::CommandBuffer;
 
 use super::{
     model::{EmbedDevice, ModelInfo},
-    run::{RunRedirect, MIN_TOKEN_CHUNK_SIZE},
+    run::{RunOption, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
 };
 use crate::{
     context::Context,
@@ -42,6 +42,10 @@ impl Model {
 
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
+
+    pub fn make_input(prompt: &[(Vec<u16>, RunOption)], token_chunk_size: usize) -> RunInput {
+        todo!()
+    }
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
@@ -369,16 +373,15 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
         let tensor = &model.tensor;
 
         let num_token = input.num_token();
+        let head_size = info.num_emb / info.num_head;
 
         let redirect = input.redirect();
         let num_header = redirect.headers.len();
 
-        let head_size = info.num_emb / info.num_head;
-        let turbo = num_token % MIN_TOKEN_CHUNK_SIZE == 0;
-
         let buffer = Runtime::<F>::new(context, info, num_token);
         let header = Header::<F>::new(context, info, num_header);
 
+        let turbo = |num_token: usize| num_token % MIN_TOKEN_CHUNK_SIZE == 0;
         let hook_op = |_hook: Hook| -> Result<TensorOp, TensorError> { Ok(TensorOp::List(vec![])) };
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
@@ -427,10 +430,11 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
             hook_op(Hook::PostEmbedLayerNorm)?,
         ]);
 
-        let ops = TensorOp::List(ops);
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
+        {
+            let ops = TensorOp::List(ops);
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&ops);
+        }
 
         for (index, layer) in tensor.layers.iter().enumerate() {
             use TensorDimension::{Auto, Dimension};
@@ -504,7 +508,7 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                     buffer.att_xx.view(.., .., .., ..)?,
                     time_mix_x.view(.., .., .., ..)?,
                     Activation::Tanh,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 TensorOp::transpose(
                     buffer.time_mix_x.view(.., .., .., ..)?,
@@ -515,7 +519,7 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                     buffer.time_mix_t.view(.., .., .., ..)?,
                     buffer.time_mix.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 hook_op(Hook::PostAttTokenShiftAdapt(index))?,
                 TensorOp::add(
@@ -585,25 +589,25 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                     buffer.att_kx.view(.., .., .., ..)?,
                     buffer.att_k.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 layer.att.w_v.matmul_op(
                     buffer.att_vx.view(.., .., .., ..)?,
                     buffer.att_v.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 layer.att.w_r.matmul_op(
                     buffer.att_rx.view(.., .., .., ..)?,
                     buffer.att_r.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 layer.att.w_g.matmul_op(
                     buffer.att_gx.view(.., .., .., ..)?,
                     buffer.att_g.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 hook_op(Hook::PostAttLinear(index))?,
                 hook_op(Hook::PreAttTimeDecayAdapt(index))?,
@@ -611,14 +615,14 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                     buffer.att_wx.view(.., .., .., ..)?,
                     buffer.att_w.view(.., .., .., ..)?,
                     Activation::Tanh,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 hook_op(Hook::PostAttTimeDecayAdaptActivate(index))?,
                 layer.att.time_decay_w2.matmul_op(
                     buffer.att_w.view(.., .., .., ..)?,
                     buffer.time_decay.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 hook_op(Hook::PostAttTimeDecayAdapt(index))?,
                 TensorOp::add(
@@ -662,7 +666,7 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 hook_op(Hook::PostAttOut(index))?,
                 TensorOp::add(
@@ -672,9 +676,10 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                 hook_op(Hook::PostAtt(index))?,
             ]);
 
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&ops);
-            drop(pass);
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.execute_tensor_op(&ops);
+            }
 
             encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
 
@@ -711,20 +716,20 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                     buffer.ffn_kx.view(.., .., .., ..)?,
                     buffer.ffn_k.view(.., .., .., ..)?,
                     Activation::SquaredRelu,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 hook_op(Hook::PostFfnActivate(index))?,
                 layer.ffn.w_v.matmul_op(
                     buffer.ffn_k.view(.., .., .., ..)?,
                     buffer.ffn_v.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 layer.ffn.w_r.matmul_op(
                     buffer.ffn_rx.view(.., .., .., ..)?,
                     buffer.ffn_r.view(.., .., .., ..)?,
                     Activation::None,
-                    turbo,
+                    turbo(num_token),
                 )?,
                 hook_op(Hook::PostFfnLinear(index))?,
                 hook_op(Hook::PreFfnChannelMix(index))?,
@@ -743,15 +748,15 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                 hook_op(Hook::PostFfn(index))?,
             ]);
 
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&ops);
-            drop(pass);
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.execute_tensor_op(&ops);
+            }
 
             if (index + 1) % Model::RESCALE_LAYER == 0 {
                 let op = TensorOp::discount(&buffer.ffn_x, 0.5)?;
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
-                drop(pass);
             }
 
             if index != model.info.num_layer - 1 {
@@ -774,7 +779,7 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
                     head_x.view(.., .., .., ..)?,
                     header.head_o.view(.., .., .., ..)?,
                     Activation::None,
-                    num_header % MIN_TOKEN_CHUNK_SIZE == 0,
+                    turbo(num_header),
                 )?,
                 hook_op(Hook::PostHead)?,
             ]);
@@ -782,7 +787,6 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&head_ops);
             pass.execute_tensor_op(&ops);
-            drop(pass);
         }
 
         Ok(RunJob {
