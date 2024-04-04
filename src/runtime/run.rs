@@ -1,11 +1,22 @@
+use half::f16;
 use itertools::Itertools;
 
-use crate::{num::Float, tensor::TensorCpu};
+use crate::{
+    num::Float,
+    tensor::{TensorCpu, TensorStack},
+};
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RunInfo(pub Vec<(usize, Option<RunOption>)>);
+
+impl RunInfo {
+    #[inline]
+    pub fn num_token(&self) -> usize {
+        self.0.iter().map(|(x, _)| x).sum()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum BatchState {
@@ -20,9 +31,10 @@ pub enum RunOption {
     Full,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct RunInput {
     pub batches: Vec<(Vec<u16>, RunOption)>,
+    pub tensors: TensorStack<'static, f16>,
     pub token_chunk_size: usize,
 }
 
@@ -126,17 +138,29 @@ pub struct RunOutput<F: Float>(pub Vec<TensorCpu<'static, F>>);
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
+    use itertools::Itertools;
+
     use super::{RunInfo, RunInput, RunOption};
+    use crate::tensor::{shape::Shape, TensorCpu, TensorInit};
 
     #[test]
-    fn test_run_iter() {
+    fn test_run_iter() -> Result<()> {
+        let batches = vec![
+            (vec![0; 139], RunOption::Last),
+            (vec![0; 1], RunOption::Last),
+            (vec![0; 0], RunOption::Full),
+            (vec![0; 65], RunOption::Full),
+        ];
+        let tensors = batches
+            .iter()
+            .map(|(v, _)| TensorCpu::init(Shape::new(65535, v.len(), 1, 1)))
+            .collect_vec()
+            .try_into()?;
+
         let run = RunInput {
-            batches: vec![
-                (vec![0; 139], RunOption::Last),
-                (vec![0; 1], RunOption::Last),
-                (vec![0; 0], RunOption::Full),
-                (vec![0; 65], RunOption::Full),
-            ],
+            batches,
+            tensors,
             token_chunk_size: 128,
         };
         let mut iter = run.iter();
@@ -176,6 +200,8 @@ mod tests {
                 (0, None),
                 (1, Some(RunOption::Full))
             ]))
-        )
+        );
+
+        Ok(())
     }
 }

@@ -1,11 +1,12 @@
 use std::marker::PhantomData;
 
+use half::f16;
 use itertools::Itertools;
 use serde::Serialize;
 use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
-use super::ModelInfo;
+use super::{EmbedDevice, ModelInfo};
 use crate::{
     context::Context,
     num::Float,
@@ -13,7 +14,10 @@ use crate::{
         run::{RunInfo, RunInput, RunOutput},
         Job, JobBuilder,
     },
-    tensor::{kind::ReadWrite, shape::Shape, TensorError, TensorGpu},
+    tensor::{
+        kind::ReadWrite, shape::Shape, IntoPackedCursors, TensorCpu, TensorError, TensorGpu,
+        TensorInit, TensorShape,
+    },
 };
 
 #[derive(Debug, Serialize, DeserializeSeed)]
@@ -45,8 +49,8 @@ pub struct State {
 
 #[derive(Debug)]
 pub struct Runtime<F: Float> {
-    pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
+    pub tokens: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<F, ReadWrite>,
 
     pub att_x: TensorGpu<F, ReadWrite>,
@@ -86,8 +90,8 @@ pub struct Runtime<F: Float> {
 impl<F: Float> Runtime<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
-        let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
+        let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
         let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
         let time_mix_x_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, 5, num_token, 1);
@@ -95,8 +99,8 @@ impl<F: Float> Runtime<F> {
         let time_decay_shape = Shape::new(Model::TIME_DECAY_ADAPTER_SIZE, num_token, 1, 1);
 
         Self {
-            tokens: context.tensor_init(tokens_shape),
             cursors: context.tensor_init(cursors_shape),
+            tokens: context.tensor_init(tokens_shape),
             input: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
             att_xx: context.tensor_init(shape),
@@ -148,10 +152,11 @@ pub struct RunJob<F: Float> {
     context: Context,
     commands: Vec<CommandBuffer>,
     redirect: Vec<(usize, usize)>,
+    embed_device: EmbedDevice,
 
-    tokens: TensorGpu<u32, ReadWrite>,
     cursors: TensorGpu<u32, ReadWrite>,
-    input: TensorGpu<F, ReadWrite>,
+    tokens: TensorGpu<u32, ReadWrite>,
+    input: TensorGpu<f16, ReadWrite>,
     output: TensorGpu<F, ReadWrite>,
 }
 
@@ -161,7 +166,31 @@ impl<F: Float> Job for RunJob<F> {
     type Error = TensorError;
 
     fn load(&self, input: &Self::Input) -> Result<(), Self::Error> {
-        todo!()
+        if input.iter().next().is_none() {
+            return Ok(());
+        }
+
+        let cursors = input.tensors.cursors.clone().into_cursors();
+        let cursors = TensorCpu::from_data(self.cursors.shape(), cursors)?;
+        self.cursors.load(&cursors)?;
+
+        match self.embed_device {
+            EmbedDevice::Cpu => self.input.load(&input.tensors.tensor)?,
+            EmbedDevice::Gpu => {
+                let tokens = input
+                    .batches
+                    .iter()
+                    .map(|(x, _)| x.clone())
+                    .concat()
+                    .into_iter()
+                    .map(|token| token as u32)
+                    .collect_vec();
+                let tokens = TensorCpu::from_data(self.tokens.shape(), tokens)?;
+                self.tokens.load(&tokens)?;
+            }
+        }
+
+        Ok(())
     }
 
     async fn submit(self) -> Result<Self::Output, Self::Error> {
@@ -182,7 +211,7 @@ pub struct RunJobBuilder<'a, F: Float> {
 
     pub turbo: bool,
     pub token_chunk_size: usize,
-    pub _phantom: PhantomData<F>,
+    pub phantom: PhantomData<F>,
 }
 
 impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
@@ -198,6 +227,7 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
             context: todo!(),
             commands: todo!(),
             redirect: todo!(),
+            embed_device: todo!(),
             tokens: todo!(),
             cursors: todo!(),
             input: todo!(),

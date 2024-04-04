@@ -865,6 +865,7 @@ impl<T: Scalar> DeepClone for TensorGpu<T, ReadWrite> {
 }
 
 /// Stack a batch of tensors of shape `[C, T, 1]` to one with shape `[C, A, 1]`, with cursors information.
+#[derive(Debug, Clone)]
 pub struct TensorStack<'a, T: Scalar> {
     pub tensor: TensorCpu<'a, T>,
     pub cursors: Vec<Cursor>,
@@ -902,15 +903,6 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
             .iter()
             .try_for_each(|batch| batch.check_shape(Shape::new(shape[0], batch.shape[1], 1, 1)))?;
 
-        // erase empty batches and pack them tightly
-        // let mut redirect = vec![None; value.len()];
-        // value
-        //     .iter()
-        //     .enumerate()
-        //     .filter_map(|(index, tensor)| (!tensor.is_empty()).then_some(index))
-        //     .enumerate()
-        //     .for_each(|(packed, index)| redirect[index] = Some(packed));
-
         let cursors = value
             .iter()
             .enumerate()
@@ -942,7 +934,6 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
                 phantom: PhantomData,
             },
             cursors,
-            // redirect,
         })
     }
 }
