@@ -2,6 +2,7 @@ use std::future::Future;
 
 use flume::{Receiver, Sender};
 
+pub mod model;
 pub mod run;
 
 pub trait Job {
@@ -9,8 +10,8 @@ pub trait Job {
     type Output;
     type Error: std::error::Error;
 
-    fn load(&self, input: Self::Input) -> Result<(), Self::Error>;
-    fn submit(self) -> impl Future<Output = Self::Output> + Send;
+    fn load(&self, input: &Self::Input) -> Result<(), Self::Error>;
+    fn submit(self) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send;
 }
 
 pub trait JobBuilder {
@@ -29,19 +30,17 @@ pub struct Submission<Input, Output> {
     pub sender: Sender<Output>,
 }
 
-pub struct JobRunner<Input, Output> {
-    input: Receiver<Submission<Input, Output>>,
-}
+pub struct JobRunner<Input, Output>(Receiver<Submission<Input, Output>>);
 
 impl<Input, Output> JobRunner<Input, Output> {
     pub fn new(input: Receiver<Submission<Input, Output>>) -> Self {
-        Self { input }
+        Self(input)
     }
 }
 
 impl<Info, Input, Output> JobRunner<Input, Output>
 where
-    Input: IntoIterator<Item = Info> + Copy,
+    for<'a> &'a Input: IntoIterator<Item = Info>,
     Output: Send + 'static,
 {
     pub async fn run(
@@ -49,21 +48,21 @@ where
         builder: &impl JobBuilder<Info = Info, Input = Input, Output = Output>,
     ) {
         let mut speculation = None;
-        while let Ok(Submission { input, sender }) = self.input.recv_async().await {
-            let mut iter = input.into_iter();
+        while let Ok(Submission { input, sender }) = self.0.recv_async().await {
+            let mut iter = (&input).into_iter();
             let Some(info) = iter.next() else {
                 continue;
             };
 
-            fn load<J: Job>(job: J, input: J::Input) -> Option<J> {
+            fn load<J: Job>(job: J, input: &J::Input) -> Option<J> {
                 job.load(input).ok().and(Some(job))
             }
 
-            let job = match speculation.take().and_then(|job| load(job, input)) {
+            let job = match speculation.take().and_then(|job| load(job, &input)) {
                 Some(job) => job,
                 None => {
                     let job = builder.build(info);
-                    job.load(input).unwrap();
+                    job.load(&input).unwrap();
                     job
                 }
             };
@@ -73,13 +72,10 @@ where
             #[cfg(feature = "tokio")]
             tokio::spawn(async move {
                 let output = output.await;
-                let _ = sender.send_async(output).await;
+                let _ = sender.send_async(output.unwrap()).await;
             });
 
             speculation = iter.next().map(|info| builder.build(info));
-
-            #[cfg(not(feature = "tokio"))]
-            let _ = sender.send_async(output.await).await;
         }
     }
 }

@@ -690,25 +690,6 @@ impl<'a, T: Scalar> TensorCpu<'a, T> {
         }
     }
 
-    /// Split the tensor along the highest plural axis.
-    pub fn split(self, axis: usize) -> Result<Vec<Self>, TensorError> {
-        match axis {
-            0 => (0..self.shape[0])
-                .map(|index| self.slice(index, .., .., ..))
-                .try_collect(),
-            1 => (0..self.shape[1])
-                .map(|index| self.slice(.., index, .., ..))
-                .try_collect(),
-            2 => (0..self.shape[2])
-                .map(|index| self.slice(.., .., index, ..))
-                .try_collect(),
-            3 => (0..self.shape[3])
-                .map(|index| self.slice(.., .., .., index))
-                .try_collect(),
-            _ => Ok(vec![self]),
-        }
-    }
-
     /// Concat a batch of tensors.
     pub fn stack(batches: Vec<Self>) -> Result<Self, TensorError> {
         let mut shape = match batches.first() {
