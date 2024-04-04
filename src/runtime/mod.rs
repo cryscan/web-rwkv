@@ -4,6 +4,7 @@ use flume::{Receiver, Sender};
 
 pub mod model;
 pub mod run;
+pub mod v6;
 
 pub trait Job {
     type Input;
@@ -18,11 +19,12 @@ pub trait JobBuilder {
     type Info;
     type Input;
     type Output;
+    type Error: std::error::Error;
 
     fn build(
         &self,
-        info: Self::Info,
-    ) -> impl Job<Input = Self::Input, Output = Self::Output> + 'static;
+        input: Self::Info,
+    ) -> Result<impl Job<Input = Self::Input, Output = Self::Output> + 'static, Self::Error>;
 }
 
 pub struct Submission<Input, Output> {
@@ -61,7 +63,7 @@ where
             let job = match speculation.take().and_then(|job| load(job, &input)) {
                 Some(job) => job,
                 None => {
-                    let job = builder.build(info);
+                    let job = builder.build(info).unwrap();
                     job.load(&input).unwrap();
                     job
                 }
@@ -75,7 +77,7 @@ where
                 let _ = sender.send_async(output.unwrap()).await;
             });
 
-            speculation = iter.next().map(|info| builder.build(info));
+            speculation = iter.next().map(|info| builder.build(info).unwrap());
         }
     }
 }

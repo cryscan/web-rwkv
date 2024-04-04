@@ -6,8 +6,6 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::{impl_deserialize_seed, num::Scalar};
 
-pub mod v6;
-
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelVersion {

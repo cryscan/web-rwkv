@@ -13,9 +13,46 @@ pub struct RunInfo(pub Vec<(usize, Option<RunOption>)>);
 
 impl RunInfo {
     #[inline]
+    pub fn num_batch(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
     pub fn num_token(&self) -> usize {
         self.0.iter().map(|(x, _)| x).sum()
     }
+
+    pub fn redirect(&self) -> RunRedirect {
+        let mut batches = vec![(0, 0); self.num_batch()];
+        let mut headers = vec![];
+        let mut p = 0;
+        for (batch, (len, option)) in self.0.iter().enumerate() {
+            match option {
+                None => continue,
+                Some(RunOption::Last) => {
+                    assert_ne!(*len, 0);
+                    batches[batch] = (p, p + len);
+                    headers.push(p + len - 1);
+                    p += len;
+                }
+                Some(RunOption::Full) => {
+                    assert_ne!(*len, 0);
+                    batches[batch] = (p, p + len);
+                    headers.append(&mut (p..p + len).collect());
+                    p += len;
+                }
+            }
+        }
+        RunRedirect { headers, batches }
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RunRedirect {
+    /// Indices in the *input* tensor that are included in the output.
+    pub headers: Vec<usize>,
+    /// Maps batches to ranges in the *output* tensor.
+    pub batches: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -34,7 +71,7 @@ pub enum RunOption {
 #[derive(Debug, Clone)]
 pub struct RunInput {
     pub batches: Vec<(Vec<u16>, RunOption)>,
-    pub tensors: TensorStack<'static, f16>,
+    pub stack: TensorStack<'static, f16>,
     pub token_chunk_size: usize,
 }
 
@@ -160,7 +197,7 @@ mod tests {
 
         let run = RunInput {
             batches,
-            tensors,
+            stack: tensors,
             token_chunk_size: 128,
         };
         let mut iter = run.iter();
