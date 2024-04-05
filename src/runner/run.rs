@@ -198,7 +198,7 @@ mod tests {
     use anyhow::Result;
 
     use super::{RunInfo, RunInput, RunOption};
-    use crate::runtime::JobInput;
+    use crate::runner::JobInput;
 
     #[test]
     fn test_run_iter() -> Result<()> {

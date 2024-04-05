@@ -1,7 +1,13 @@
-use std::future::Future;
+use std::{collections::HashMap, future::Future};
 
 use anyhow::Result;
 use flume::{Receiver, Sender};
+
+use self::{
+    loader::{Lora, Reader},
+    model::{EmbedDevice, Quant},
+};
+use crate::context::Context;
 
 pub mod loader;
 pub mod model;
@@ -91,5 +97,52 @@ where
             let _ = sender.send_async((input, output)).await;
         }
         Ok(())
+    }
+}
+
+pub trait Build<T> {
+    fn build(self) -> impl Future<Output = Result<T>>;
+}
+
+pub struct RunnerBuilder<R: Reader> {
+    context: Context,
+    model: R,
+    lora: Vec<Lora<R>>,
+    quant: HashMap<usize, Quant>,
+    embed_device: EmbedDevice,
+    num_batch: usize,
+}
+
+impl<R: Reader> RunnerBuilder<R> {
+    pub fn new(context: &Context, model: R) -> Self {
+        Self {
+            context: context.clone(),
+            model,
+            lora: vec![],
+            quant: Default::default(),
+            embed_device: Default::default(),
+            num_batch: 1,
+        }
+    }
+
+    pub fn with_quant(mut self, value: HashMap<usize, Quant>) -> Self {
+        self.quant = value;
+        self
+    }
+
+    pub fn add_lora(mut self, value: Lora<R>) -> Self {
+        self.lora.push(value);
+        self
+    }
+
+    pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
+        self.embed_device = value;
+        self
+    }
+
+    pub fn with_num_batch(mut self, value: usize) -> Self {
+        let value = value.max(1);
+        self.num_batch = value;
+        self
     }
 }

@@ -8,17 +8,14 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    model::{EmbedDevice, ModelInfo},
-    run::{RunRedirect, MIN_TOKEN_CHUNK_SIZE},
-    JobInput,
+    loader::{Loader, Reader},
+    model::{EmbedDevice, ModelInfo, Quant},
+    run::{RunInfo, RunInput, RunOutput, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
+    Build, Job, JobBuilder, JobInput, RunnerBuilder,
 };
 use crate::{
     context::Context,
     num::Float,
-    runtime::{
-        run::{RunInfo, RunInput, RunOutput},
-        Job, JobBuilder,
-    },
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
@@ -361,13 +358,13 @@ impl<F: Float> Job for RunJob<F> {
     }
 }
 
-struct RunJobBuilder<F: Float> {
+pub struct Runner<F: Float> {
     model: Model,
     state: State,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> JobBuilder for RunJobBuilder<F> {
+impl<F: Float> JobBuilder for Runner<F> {
     type Seed = RunInfo;
     type Input = RunInput;
     type Output = RunOutput<F>;
@@ -808,6 +805,199 @@ impl<F: Float> JobBuilder for RunJobBuilder<F> {
             cursors: buffer.cursors,
             input: buffer.input,
             output: header.head_o,
+        })
+    }
+}
+
+impl<F: Float, R: Reader> Build<Runner<F>> for RunnerBuilder<R> {
+    async fn build(self) -> Result<Runner<F>> {
+        let RunnerBuilder {
+            context,
+            model,
+            lora,
+            quant,
+            embed_device,
+            num_batch,
+        } = self;
+
+        let info = Loader::info(&model)?;
+        let loader = Loader {
+            context: context.clone(),
+            model,
+            lora,
+        };
+
+        let embed = Embed {
+            layer_norm: LayerNorm {
+                w: loader.load_vector_f16("blocks.0.ln0.weight").await?,
+                b: loader.load_vector_f16("blocks.0.ln0.bias").await?,
+            },
+            w: loader.load_embed().await?.into(),
+            u: match embed_device {
+                super::EmbedDevice::Cpu => None,
+                super::EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight").await?),
+            },
+        };
+
+        let head = Head {
+            layer_norm: LayerNorm {
+                w: loader.load_vector_f16("ln_out.weight").await?,
+                b: loader.load_vector_f16("ln_out.bias").await?,
+            },
+            w: Matrix::Fp16(loader.load_matrix_f16("head.weight").await?),
+        };
+
+        context.queue.submit(None);
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        let load_matrix = |name: String, quant: Quant| loader.load_matrix(name, quant);
+        let load_matrix_discount = |name: String, quant: Quant, discount: f32| {
+            loader.load_matrix_discount(name, quant, discount)
+        };
+
+        let mut layers = vec![];
+        for layer in 0..info.num_layer {
+            let quant = quant.get(&layer).copied().unwrap_or_default();
+            let discount = 2.0_f32.powi(-((layer / Model::RESCALE_LAYER) as i32));
+
+            let att_layer_norm = LayerNorm {
+                w: loader
+                    .load_vector_f16(format!("blocks.{layer}.ln1.weight"))
+                    .await?,
+                b: loader
+                    .load_vector_f16(format!("blocks.{layer}.ln1.bias"))
+                    .await?,
+            };
+
+            let att = format!("blocks.{layer}.att");
+            let time_decay = loader.load_vector_f16(format!("{att}.time_decay")).await?;
+            let time_first = loader.load_vector_f32(format!("{att}.time_first")).await?;
+            let time_mix_x = loader.load_vector_f16(format!("{att}.time_mix_x")).await?;
+            let time_mix_w = loader.load_vector_f16(format!("{att}.time_mix_w")).await?;
+            let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k")).await?;
+            let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v")).await?;
+            let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r")).await?;
+            let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g")).await?;
+
+            let time_decay_w1 = loader
+                .load_matrix_f16(format!("{att}.time_decay_w1"))
+                .await?;
+            let time_decay_w2 = loader
+                .load_matrix_f16(format!("{att}.time_decay_w2"))
+                .await?;
+
+            let time_mix_w1 = loader.load_matrix_f16(format!("{att}.time_mix_w1")).await?;
+            let time_mix_w2 = loader.load_matrix_f16(format!("{att}.time_mix_w2")).await?;
+
+            let group_norm = LayerNorm {
+                w: loader
+                    .load_vector_f16(format!("{att}.ln_x.weight"))
+                    .await?
+                    .reshape(
+                        TensorDimension::Auto,
+                        TensorDimension::Dimension(info.num_head),
+                        TensorDimension::Dimension(1),
+                        TensorDimension::Dimension(1),
+                    )?,
+                b: loader
+                    .load_vector_f16(format!("{att}.ln_x.bias"))
+                    .await?
+                    .reshape(
+                        TensorDimension::Auto,
+                        TensorDimension::Dimension(info.num_head),
+                        TensorDimension::Dimension(1),
+                        TensorDimension::Dimension(1),
+                    )?,
+            };
+
+            let att = Att {
+                time_decay,
+                time_first,
+                time_mix_x,
+                time_mix_w,
+                time_mix_k,
+                time_mix_v,
+                time_mix_r,
+                time_mix_g,
+                time_decay_w1: Matrix::Fp16(time_decay_w1),
+                time_decay_w2: Matrix::Fp16(time_decay_w2),
+                time_mix_w1: Matrix::Fp16(time_mix_w1),
+                time_mix_w2: Matrix::Fp16(time_mix_w2),
+                w_k: load_matrix(format!("{att}.key.weight"), quant).await?,
+                w_v: load_matrix(format!("{att}.value.weight"), quant).await?,
+                w_r: load_matrix(format!("{att}.receptance.weight"), quant).await?,
+                w_g: load_matrix(format!("{att}.gate.weight"), quant).await?,
+                w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount).await?,
+                group_norm,
+            };
+
+            let ffn_layer_norm = LayerNorm {
+                w: loader
+                    .load_vector_f16(format!("blocks.{layer}.ln2.weight"))
+                    .await?,
+                b: loader
+                    .load_vector_f16(format!("blocks.{layer}.ln2.bias"))
+                    .await?,
+            };
+
+            let ffn = format!("blocks.{layer}.ffn");
+            let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k")).await?;
+            let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r")).await?;
+
+            let ffn = Ffn {
+                time_mix_k,
+                time_mix_r,
+                w_r: load_matrix(format!("{ffn}.receptance.weight"), quant).await?,
+                w_k: load_matrix(format!("{ffn}.key.weight"), quant).await?,
+                w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount).await?,
+            };
+
+            context.queue.submit(None);
+            context.device.poll(wgpu::MaintainBase::Wait);
+
+            layers.push(Layer {
+                att_layer_norm,
+                ffn_layer_norm,
+                att,
+                ffn,
+            })
+        }
+
+        context.queue.submit(None);
+        context.device.poll(wgpu::MaintainBase::Wait);
+
+        let tensor = ModelTensor {
+            embed,
+            head,
+            layers,
+        };
+
+        let model = {
+            let context = context.clone();
+            let info = info.clone();
+            Model {
+                context,
+                info,
+                tensor,
+            }
+        };
+
+        let state = {
+            let head_size = info.num_emb / info.num_head;
+            let data = (0..info.num_layer)
+                .map(|_| context.zeros(Shape::new(info.num_emb, head_size + 2, num_batch, 1)))
+                .collect();
+            State {
+                info,
+                num_batch,
+                data,
+            }
+        };
+
+        Ok(Runner {
+            model,
+            state,
+            phantom: PhantomData,
         })
     }
 }
