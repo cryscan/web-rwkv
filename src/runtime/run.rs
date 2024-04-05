@@ -1,10 +1,6 @@
-use half::f16;
 use itertools::Itertools;
 
-use crate::{
-    num::Float,
-    tensor::{TensorCpu, TensorStack},
-};
+use crate::{num::Float, tensor::TensorCpu};
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
@@ -71,7 +67,7 @@ pub enum RunOption {
 #[derive(Debug, Clone)]
 pub struct RunInput {
     pub batches: Vec<(Vec<u16>, RunOption)>,
-    pub stack: TensorStack<'static, f16>,
+    // pub stack: TensorStack<'static, f16>,
     pub token_chunk_size: usize,
 }
 
@@ -176,10 +172,8 @@ pub struct RunOutput<F: Float>(pub Vec<TensorCpu<'static, F>>);
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use itertools::Itertools;
 
     use super::{RunInfo, RunInput, RunOption};
-    use crate::tensor::{shape::Shape, TensorCpu, TensorInit};
 
     #[test]
     fn test_run_iter() -> Result<()> {
@@ -189,15 +183,15 @@ mod tests {
             (vec![0; 0], RunOption::Full),
             (vec![0; 65], RunOption::Full),
         ];
-        let tensors = batches
-            .iter()
-            .map(|(v, _)| TensorCpu::init(Shape::new(65535, v.len(), 1, 1)))
-            .collect_vec()
-            .try_into()?;
+        // let tensors = batches
+        //     .iter()
+        //     .map(|(v, _)| TensorCpu::init(Shape::new(65535, v.len(), 1, 1)))
+        //     .collect_vec()
+        //     .try_into()?;
 
         let run = RunInput {
             batches,
-            stack: tensors,
+            // stack: tensors,
             token_chunk_size: 128,
         };
         let mut iter = run.iter();

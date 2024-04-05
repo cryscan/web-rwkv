@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use half::f16;
 use itertools::Itertools;
@@ -8,11 +8,11 @@ use wgpu::CommandBuffer;
 
 use super::{
     model::{EmbedDevice, ModelInfo},
-    run::{RunOption, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
+    run::{RunRedirect, MIN_TOKEN_CHUNK_SIZE},
 };
 use crate::{
     context::Context,
-    num::Float,
+    num::{CoHom, Float},
     runtime::{
         run::{RunInfo, RunInput, RunOutput},
         Job, JobBuilder,
@@ -23,7 +23,7 @@ use crate::{
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
-        TensorReshape, TensorShape,
+        TensorReshape, TensorShape, TensorStack,
     },
 };
 
@@ -42,10 +42,6 @@ impl Model {
 
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
-
-    pub fn make_input(prompt: &[(Vec<u16>, RunOption)], token_chunk_size: usize) -> RunInput {
-        todo!()
-    }
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
@@ -291,6 +287,8 @@ pub enum Hook {
 }
 
 struct RunJob<F: Float> {
+    model: Arc<Model>,
+
     commands: Vec<CommandBuffer>,
     redirect: RunRedirect,
     embed_device: EmbedDevice,
@@ -306,20 +304,42 @@ impl<F: Float> Job for RunJob<F> {
     type Output = RunOutput<F>;
     type Error = TensorError;
 
-    fn load(&self, input: &Self::Input) -> Result<(), Self::Error> {
+    fn load(self, input: &Self::Input) -> Result<Self, Self::Error> {
         if input.iter().next().is_none() {
-            return Ok(());
+            return Ok(self);
         }
 
-        let cursors = input.stack.cursors.clone().into_cursors();
+        let stack: Vec<TensorCpu<F>> = input
+            .batches
+            .iter()
+            .map(|tokens| -> Result<_, Self::Error> {
+                let info = &self.model.info;
+                let embed = &self.model.tensor.embed.w;
+                TensorCpu::stack(
+                    tokens
+                        .0
+                        .iter()
+                        .map(|&token| embed.slice(.., token as usize, .., ..))
+                        .try_collect()?,
+                )
+                .unwrap_or_else(|_| TensorCpu::init(Shape::new(info.num_emb, 1, 0, 1)))
+                .map(|x| CoHom::co_hom(*x))
+                .reshape(
+                    TensorDimension::Full,
+                    TensorDimension::Auto,
+                    TensorDimension::Dimension(1),
+                    TensorDimension::Full,
+                )
+            })
+            .try_collect()?;
+        let stack = TensorStack::try_from(stack)?;
+
+        let cursors = stack.cursors.clone().into_cursors();
         let cursors = TensorCpu::from_data(self.cursors.shape(), cursors)?;
         self.cursors.load(&cursors)?;
 
         match self.embed_device {
-            EmbedDevice::Cpu => {
-                let tensor = input.stack.tensor.clone().map(|x| F::co_hom(*x));
-                self.input.load(&tensor)?;
-            }
+            EmbedDevice::Cpu => self.input.load(&stack.tensor)?,
             EmbedDevice::Gpu => {
                 let tokens = input
                     .batches
@@ -334,7 +354,7 @@ impl<F: Float> Job for RunJob<F> {
             }
         }
 
-        Ok(())
+        Ok(self)
     }
 
     async fn submit(self) -> Result<Self::Output, Self::Error> {
@@ -350,13 +370,13 @@ impl<F: Float> Job for RunJob<F> {
     }
 }
 
-struct RunJobBuilder<'a, F: Float> {
-    model: &'a Model,
-    state: &'a State,
+struct RunJobBuilder<F: Float> {
+    model: Arc<Model>,
+    state: Arc<State>,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
+impl<F: Float> JobBuilder for RunJobBuilder<F> {
     type Info = RunInfo;
     type Input = RunInput;
     type Output = RunOutput<F>;
@@ -365,9 +385,12 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
     fn build(
         &self,
         input: Self::Info,
-    ) -> Result<impl Job<Input = Self::Input, Output = Self::Output> + 'static, Self::Error> {
-        let model = self.model;
-        let state = self.state;
+    ) -> Result<
+        impl Job<Input = Self::Input, Output = Self::Output, Error = Self::Error>,
+        Self::Error,
+    > {
+        let model = self.model.clone();
+        let state = self.state.clone();
         let context = &model.context;
         let info = &model.info;
         let tensor = &model.tensor;
@@ -789,8 +812,11 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
             pass.execute_tensor_op(&ops);
         }
 
+        let commands = vec![encoder.finish()];
+
         Ok(RunJob {
-            commands: vec![encoder.finish()],
+            model,
+            commands,
             redirect,
             embed_device,
             tokens: buffer.tokens,

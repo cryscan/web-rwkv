@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, marker::PhantomData};
 
 use flume::{Receiver, Sender};
 
@@ -6,49 +6,53 @@ pub mod model;
 pub mod run;
 pub mod v6;
 
-pub trait Job {
+pub trait Job: Sized {
     type Input;
     type Output;
-    type Error: std::error::Error;
+    type Error;
 
-    fn load(&self, input: &Self::Input) -> Result<(), Self::Error>;
-    fn submit(self) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send;
+    fn load(self, input: &Self::Input) -> Result<Self, Self::Error>;
+    fn submit(self) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send + 'static;
 }
 
 pub trait JobBuilder {
     type Info;
     type Input;
     type Output;
-    type Error: std::error::Error;
+    type Error;
 
     fn build(
         &self,
         input: Self::Info,
-    ) -> Result<impl Job<Input = Self::Input, Output = Self::Output> + 'static, Self::Error>;
+    ) -> Result<
+        impl Job<Input = Self::Input, Output = Self::Output, Error = Self::Error>,
+        Self::Error,
+    >;
 }
 
-pub struct Submission<Input, Output> {
-    pub input: Input,
-    pub sender: Sender<Output>,
+pub struct Submission<I, O> {
+    pub input: I,
+    pub sender: Sender<O>,
 }
 
-pub struct JobRunner<Input, Output>(Receiver<Submission<Input, Output>>);
+pub struct JobRunner<I, O, E>(Receiver<Submission<I, O>>, PhantomData<E>);
 
-impl<Input, Output> JobRunner<Input, Output> {
-    pub fn new(input: Receiver<Submission<Input, Output>>) -> Self {
-        Self(input)
+impl<I, O, E> JobRunner<I, O, E> {
+    pub fn new(input: Receiver<Submission<I, O>>) -> Self {
+        Self(input, PhantomData)
     }
 }
 
-impl<Info, Input, Output> JobRunner<Input, Output>
+impl<F, I, O, E> JobRunner<I, O, E>
 where
-    for<'a> &'a Input: IntoIterator<Item = Info>,
-    Output: Send + 'static,
+    for<'a> &'a I: IntoIterator<Item = F>,
+    O: Send + 'static,
+    E: std::error::Error + Send + Sync + 'static,
 {
     pub async fn run(
         &self,
-        builder: &impl JobBuilder<Info = Info, Input = Input, Output = Output>,
-    ) {
+        builder: impl JobBuilder<Info = F, Input = I, Output = O, Error = E>,
+    ) -> Result<(), E> {
         let mut speculation = None;
         while let Ok(Submission { input, sender }) = self.0.recv_async().await {
             let mut iter = (&input).into_iter();
@@ -57,27 +61,26 @@ where
             };
 
             fn load<J: Job>(job: J, input: &J::Input) -> Option<J> {
-                job.load(input).ok().and(Some(job))
+                job.load(input).ok()
             }
 
             let job = match speculation.take().and_then(|job| load(job, &input)) {
                 Some(job) => job,
-                None => {
-                    let job = builder.build(info).unwrap();
-                    job.load(&input).unwrap();
-                    job
-                }
+                None => builder.build(info)?.load(&input)?,
             };
 
             let output = job.submit();
 
-            #[cfg(feature = "tokio")]
             tokio::spawn(async move {
                 let output = output.await;
                 let _ = sender.send_async(output.unwrap()).await;
             });
 
-            speculation = iter.next().map(|info| builder.build(info).unwrap());
+            speculation = match iter.next() {
+                Some(info) => Some(builder.build(info)?),
+                None => None,
+            };
         }
+        Ok(())
     }
 }
