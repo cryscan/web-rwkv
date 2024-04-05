@@ -309,15 +309,14 @@ impl<F: Float> Job for RunJob<F> {
             return Ok(self);
         }
 
-        let stack: Vec<TensorCpu<F>> = input
-            .batches
+        let chunk = input.chunk();
+        let stack: Vec<TensorCpu<F>> = chunk
             .iter()
             .map(|tokens| -> Result<_, Self::Error> {
                 let info = &self.model.info;
                 let embed = &self.model.tensor.embed.w;
                 TensorCpu::stack(
                     tokens
-                        .0
                         .iter()
                         .map(|&token| embed.slice(.., token as usize, .., ..))
                         .try_collect()?,
@@ -341,10 +340,8 @@ impl<F: Float> Job for RunJob<F> {
         match self.embed_device {
             EmbedDevice::Cpu => self.input.load(&stack.tensor)?,
             EmbedDevice::Gpu => {
-                let tokens = input
-                    .batches
-                    .iter()
-                    .map(|(x, _)| x.clone())
+                let tokens = chunk
+                    .into_iter()
                     .concat()
                     .into_iter()
                     .map(|token| token as u32)

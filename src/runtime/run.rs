@@ -75,6 +75,27 @@ impl RunInput {
     pub fn iter(&self) -> RunIter {
         self.into_iter()
     }
+
+    pub fn chunk(&self) -> Vec<Vec<u16>> {
+        let Some(info) = self.iter().next() else {
+            return vec![];
+        };
+        self.batches
+            .iter()
+            .zip_eq(info.0)
+            .map(|((tokens, _), (len, _))| tokens[..len].to_vec())
+            .collect()
+    }
+
+    pub fn advance(mut self) -> Self {
+        let Some(info) = self.iter().next() else {
+            return self;
+        };
+        for ((tokens, _), (len, _)) in self.batches.iter_mut().zip_eq(info.0) {
+            *tokens = tokens.split_off(len);
+        }
+        self
+    }
 }
 
 impl IntoIterator for &RunInput {
