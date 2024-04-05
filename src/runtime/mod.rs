@@ -8,6 +8,7 @@ pub mod model;
 pub mod run;
 pub mod v6;
 
+/// A [`Job`] to be executed on GPU.
 pub trait Job: Sized {
     type Input;
     type Output;
@@ -18,13 +19,15 @@ pub trait Job: Sized {
 
 pub trait JobBuilder {
     type Seed;
-    type Input;
+    type Input: JobInput;
     type Output;
 
+    /// Build a [`Job`] from the given seed.
+    /// This usually involves creating a list of GPU commands (but not actually execution).
     fn build(
         &self,
         seed: Self::Seed,
-    ) -> Result<impl Job<Input = Self::Input, Output = Self::Output>>;
+    ) -> Result<impl Job<Input = <Self::Input as JobInput>::Chunk, Output = Self::Output>>;
 }
 
 pub struct Submission<I, O> {
@@ -33,8 +36,13 @@ pub struct Submission<I, O> {
 }
 
 pub trait JobInput {
+    /// One chunk of the whole input at a step.
+    type Chunk;
+
     /// Advance the input for a step.
-    fn step(self) -> Self;
+    fn step(&mut self);
+    /// The current step's chunk to feed into the job.
+    fn chunk(&self) -> Self::Chunk;
 }
 
 pub struct JobRunner<I, O>(Receiver<Submission<I, O>>);
@@ -55,30 +63,32 @@ where
         &self,
         builder: impl JobBuilder<Seed = T, Input = I, Output = O>,
     ) -> Result<()> {
-        let mut speculation = None;
-        while let Ok(Submission { input, sender }) = self.0.recv_async().await {
+        let mut predict = None;
+        while let Ok(Submission { mut input, sender }) = self.0.recv_async().await {
             let mut iter = (&input).into_iter();
             let Some(info) = iter.next() else {
                 continue;
             };
 
+            let chunk = input.chunk();
             fn load<J: Job>(job: J, input: &J::Input) -> Option<J> {
                 job.load(input).ok()
             }
-            let job = match speculation.take().and_then(|job| load(job, &input)) {
+            let job = match predict.take().and_then(|job| load(job, &chunk)) {
                 Some(job) => job,
-                None => builder.build(info)?.load(&input)?,
+                None => builder.build(info)?.load(&chunk)?,
             };
             let handle = tokio::spawn(job.submit());
 
-            speculation = match iter.next() {
+            predict = match iter.next() {
                 Some(info) => Some(builder.build(info)?),
                 None => None,
             };
             drop(iter);
 
             let output = handle.await??;
-            let _ = sender.send_async((input.step(), output)).await;
+            input.step();
+            let _ = sender.send_async((input, output)).await;
         }
         Ok(())
     }

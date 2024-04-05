@@ -10,6 +10,7 @@ use wgpu::CommandBuffer;
 use super::{
     model::{EmbedDevice, ModelInfo},
     run::{RunRedirect, MIN_TOKEN_CHUNK_SIZE},
+    JobInput,
 };
 use crate::{
     context::Context,
@@ -300,12 +301,11 @@ struct RunJob<F: Float> {
 }
 
 impl<F: Float> Job for RunJob<F> {
-    type Input = RunInput;
+    type Input = Vec<Vec<u16>>;
     type Output = RunOutput<F>;
 
     fn load(self, input: &Self::Input) -> Result<Self> {
-        let chunk = input.chunk();
-        let stack: Vec<TensorCpu<F>> = chunk
+        let stack: Vec<TensorCpu<F>> = input
             .iter()
             .map(|tokens| -> Result<TensorCpu<'_, F>, _> {
                 let num_emb = self.embed.shape()[0];
@@ -333,7 +333,8 @@ impl<F: Float> Job for RunJob<F> {
         match self.embed_device {
             EmbedDevice::Cpu => self.input.load(&stack.tensor)?,
             EmbedDevice::Gpu => {
-                let tokens = chunk
+                let tokens = input
+                    .clone()
                     .into_iter()
                     .concat()
                     .into_iter()
@@ -374,7 +375,7 @@ impl<F: Float> JobBuilder for RunJobBuilder<F> {
     fn build(
         &self,
         seed: Self::Seed,
-    ) -> Result<impl Job<Input = Self::Input, Output = Self::Output>> {
+    ) -> Result<impl Job<Input = <Self::Input as JobInput>::Chunk, Output = Self::Output>> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;

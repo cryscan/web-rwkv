@@ -75,28 +75,29 @@ impl RunInput {
     pub fn iter(&self) -> RunIter {
         self.into_iter()
     }
+}
 
-    pub fn chunk(&self) -> Vec<Vec<u16>> {
+impl JobInput for RunInput {
+    type Chunk = Vec<Vec<u16>>;
+
+    fn step(&mut self) {
         let Some(info) = self.iter().next() else {
-            return vec![];
+            return;
+        };
+        for ((tokens, _), (len, _)) in self.batches.iter_mut().zip_eq(info.0) {
+            *tokens = tokens.split_off(len);
+        }
+    }
+
+    fn chunk(&self) -> Self::Chunk {
+        let Some(info) = self.iter().next() else {
+            return vec![vec![]; self.batches.len()];
         };
         self.batches
             .iter()
             .zip_eq(info.0)
             .map(|((tokens, _), (len, _))| tokens[..len].to_vec())
             .collect()
-    }
-}
-
-impl JobInput for RunInput {
-    fn step(mut self) -> Self {
-        let Some(info) = self.iter().next() else {
-            return self;
-        };
-        for ((tokens, _), (len, _)) in self.batches.iter_mut().zip_eq(info.0) {
-            *tokens = tokens.split_off(len);
-        }
-        self
     }
 }
 
@@ -263,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_advance() -> Result<()> {
-        let run = RunInput {
+        let mut run = RunInput {
             batches: vec![
                 (vec![0; 139], RunOption::Last),
                 (vec![1; 1], RunOption::Last),
@@ -273,7 +274,7 @@ mod tests {
             token_chunk_size: 128,
         };
 
-        let run = run.step();
+        run.step();
         assert_eq!(
             run.iter().next(),
             Some(RunInfo(vec![
