@@ -15,7 +15,7 @@ pub mod run;
 pub mod v6;
 
 /// A [`Job`] to be executed on GPU.
-pub trait Job: Sized {
+pub trait Job: Sized + Send + 'static {
     type Input;
     type Output;
 
@@ -23,7 +23,7 @@ pub trait Job: Sized {
     fn submit(self) -> impl Future<Output = Result<Self::Output>> + Send + 'static;
 }
 
-pub trait JobBuilder {
+pub trait JobBuilder: Send + 'static {
     type Seed;
     type Input: JobInput;
     type Output;
@@ -36,12 +36,13 @@ pub trait JobBuilder {
     ) -> Result<impl Job<Input = <Self::Input as JobInput>::Chunk, Output = Self::Output>>;
 }
 
+#[derive(Debug, Clone)]
 pub struct Submission<I, O> {
     pub input: I,
     pub sender: Sender<(I, O)>,
 }
 
-pub trait JobInput {
+pub trait JobInput: Send + 'static {
     /// One chunk of the whole input at a step.
     type Chunk;
 
@@ -51,30 +52,35 @@ pub trait JobInput {
     fn chunk(&self) -> Self::Chunk;
 }
 
-pub struct JobRunner<I, O>(Receiver<Submission<I, O>>);
+#[derive(Debug, Clone)]
+pub struct JobRuntime<I, O>(Receiver<Submission<I, O>>);
 
-impl<I, O> JobRunner<I, O> {
-    pub fn new(input: Receiver<Submission<I, O>>) -> Self {
-        Self(input)
-    }
-}
-
-impl<T, I, O> JobRunner<I, O>
+impl<T, I, O> JobRuntime<I, O>
 where
     for<'a> &'a I: IntoIterator<Item = T>,
     I: JobInput,
     O: Send + 'static,
 {
-    pub async fn run(
-        &self,
+    pub async fn start(
         builder: impl JobBuilder<Seed = T, Input = I, Output = O>,
-    ) -> Result<()> {
+    ) -> Sender<Submission<I, O>> {
+        let (sender, receiver) = flume::unbounded();
+        let runtime = JobRuntime(receiver);
+        tokio::spawn(async move {
+            runtime.run(builder).await.expect("runtime error");
+        });
+        sender
+    }
+
+    async fn run(&self, builder: impl JobBuilder<Seed = T, Input = I, Output = O>) -> Result<()> {
         let mut predict = None;
         while let Ok(Submission { mut input, sender }) = self.0.recv_async().await {
             let mut iter = (&input).into_iter();
             let Some(info) = iter.next() else {
                 continue;
             };
+            let next = iter.next();
+            drop(iter);
 
             let chunk = input.chunk();
             fn load<J: Job>(job: J, input: &J::Input) -> Option<J> {
@@ -84,17 +90,18 @@ where
                 Some(job) => job,
                 None => builder.build(info)?.load(&chunk)?,
             };
-            let handle = tokio::spawn(job.submit());
 
-            predict = match iter.next() {
+            let output = job.submit();
+            tokio::spawn(async move {
+                let output = output.await.expect("job execution error");
+                input.step();
+                let _ = sender.send_async((input, output)).await;
+            });
+
+            predict = match next {
                 Some(info) => Some(builder.build(info)?),
                 None => None,
             };
-            drop(iter);
-
-            let output = handle.await??;
-            input.step();
-            let _ = sender.send_async((input, output)).await;
         }
         Ok(())
     }
@@ -104,7 +111,7 @@ pub trait Build<T> {
     fn build(self) -> impl Future<Output = Result<T>>;
 }
 
-pub struct RunnerBuilder<R: Reader> {
+pub struct ModelBuilder<R: Reader> {
     context: Context,
     model: R,
     lora: Vec<Lora<R>>,
@@ -113,7 +120,7 @@ pub struct RunnerBuilder<R: Reader> {
     num_batch: usize,
 }
 
-impl<R: Reader> RunnerBuilder<R> {
+impl<R: Reader> ModelBuilder<R> {
     pub fn new(context: &Context, model: R) -> Self {
         Self {
             context: context.clone(),

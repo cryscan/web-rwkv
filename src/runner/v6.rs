@@ -11,7 +11,7 @@ use super::{
     loader::{Loader, Reader},
     model::{EmbedDevice, ModelInfo, Quant},
     run::{RunInfo, RunInput, RunOutput, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
-    Build, Job, JobBuilder, JobInput, RunnerBuilder,
+    Build, Job, JobBuilder, JobInput, ModelBuilder,
 };
 use crate::{
     context::Context,
@@ -358,13 +358,13 @@ impl<F: Float> Job for RunJob<F> {
     }
 }
 
-pub struct Runner<F: Float> {
+pub struct ModelRuntime<F: Float> {
     model: Model,
     state: State,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> JobBuilder for Runner<F> {
+impl<F: Float> JobBuilder for ModelRuntime<F> {
     type Seed = RunInfo;
     type Input = RunInput;
     type Output = RunOutput<F>;
@@ -809,9 +809,9 @@ impl<F: Float> JobBuilder for Runner<F> {
     }
 }
 
-impl<F: Float, R: Reader> Build<Runner<F>> for RunnerBuilder<R> {
-    async fn build(self) -> Result<Runner<F>> {
-        let RunnerBuilder {
+impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
+    async fn build(self) -> Result<ModelRuntime<F>> {
+        let ModelBuilder {
             context,
             model,
             lora,
@@ -994,7 +994,7 @@ impl<F: Float, R: Reader> Build<Runner<F>> for RunnerBuilder<R> {
             }
         };
 
-        Ok(Runner {
+        Ok(ModelRuntime {
             model,
             state,
             phantom: PhantomData,
