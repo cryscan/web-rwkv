@@ -1,10 +1,13 @@
+use std::{collections::HashMap, future::Future};
+
 use anyhow::Result;
 use half::f16;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use crate::{impl_deserialize_seed, num::Scalar};
+use super::loader::{Lora, Reader};
+use crate::{context::Context, impl_deserialize_seed, num::Scalar};
 
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -72,4 +75,43 @@ pub enum EmbedDevice {
     #[default]
     Cpu,
     Gpu,
+}
+
+pub trait Build<T> {
+    fn build(self) -> impl Future<Output = Result<T>>;
+}
+
+pub struct ModelBuilder<R: Reader> {
+    pub(super) context: Context,
+    pub(super) model: R,
+    pub(super) lora: Vec<Lora<R>>,
+    pub(super) quant: HashMap<usize, Quant>,
+    pub(super) embed_device: EmbedDevice,
+}
+
+impl<R: Reader> ModelBuilder<R> {
+    pub fn new(context: &Context, model: R) -> Self {
+        Self {
+            context: context.clone(),
+            model,
+            lora: vec![],
+            quant: Default::default(),
+            embed_device: Default::default(),
+        }
+    }
+
+    pub fn with_quant(mut self, value: HashMap<usize, Quant>) -> Self {
+        self.quant = value;
+        self
+    }
+
+    pub fn add_lora(mut self, value: Lora<R>) -> Self {
+        self.lora.push(value);
+        self
+    }
+
+    pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
+        self.embed_device = value;
+        self
+    }
 }

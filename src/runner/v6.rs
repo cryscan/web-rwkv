@@ -9,9 +9,9 @@ use wgpu::CommandBuffer;
 
 use super::{
     loader::{Loader, Reader},
-    model::{EmbedDevice, ModelInfo, Quant},
+    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
     run::{RunInfo, RunInput, RunOutput, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
-    Build, Job, JobBuilder, JobInput, ModelBuilder,
+    Job, JobBuilder, JobInput,
 };
 use crate::{
     context::Context,
@@ -832,8 +832,8 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             },
             w: loader.load_embed().await?.into(),
             u: match embed_device {
-                super::EmbedDevice::Cpu => None,
-                super::EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight").await?),
+                EmbedDevice::Cpu => None,
+                EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight").await?),
             },
         };
 

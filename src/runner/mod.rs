@@ -1,13 +1,7 @@
-use std::{collections::HashMap, future::Future};
+use std::future::Future;
 
 use anyhow::Result;
 use flume::{Receiver, Sender};
-
-use self::{
-    loader::{Lora, Reader},
-    model::{EmbedDevice, Quant},
-};
-use crate::context::Context;
 
 pub mod loader;
 pub mod model;
@@ -104,44 +98,5 @@ where
             };
         }
         Ok(())
-    }
-}
-
-pub trait Build<T> {
-    fn build(self) -> impl Future<Output = Result<T>>;
-}
-
-pub struct ModelBuilder<R: Reader> {
-    context: Context,
-    model: R,
-    lora: Vec<Lora<R>>,
-    quant: HashMap<usize, Quant>,
-    embed_device: EmbedDevice,
-}
-
-impl<R: Reader> ModelBuilder<R> {
-    pub fn new(context: &Context, model: R) -> Self {
-        Self {
-            context: context.clone(),
-            model,
-            lora: vec![],
-            quant: Default::default(),
-            embed_device: Default::default(),
-        }
-    }
-
-    pub fn with_quant(mut self, value: HashMap<usize, Quant>) -> Self {
-        self.quant = value;
-        self
-    }
-
-    pub fn add_lora(mut self, value: Lora<R>) -> Self {
-        self.lora.push(value);
-        self
-    }
-
-    pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
-        self.embed_device = value;
-        self
     }
 }
