@@ -1,4 +1,4 @@
-use std::{fmt, marker::PhantomData};
+use std::{fmt, marker::PhantomData, sync::Arc};
 
 use serde::{
     de::{DeserializeSeed, Error, SeqAccess, Visitor},
@@ -111,6 +111,17 @@ impl<'de, 'a, T: Scalar + Deserialize<'de>> DeserializeSeed<'de>
     for Seed<'de, Context, TensorCpu<'a, T>>
 {
     type Value = TensorCpu<'a, T>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Deserialize::deserialize(deserializer)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> DeserializeSeed<'de> for Seed<'de, Context, Arc<T>> {
+    type Value = Arc<T>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where

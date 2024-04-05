@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
     context::Context,
-    num::{CoHom, Float},
+    num::Float,
     runtime::{
         run::{RunInfo, RunInput, RunOutput},
         Job, JobBuilder,
@@ -105,7 +105,7 @@ pub struct Layer {
 #[derive(Debug, Serialize, DeserializeSeed)]
 pub struct Embed {
     pub layer_norm: LayerNorm,
-    pub w: TensorCpu<'static, f16>,
+    pub w: Arc<TensorCpu<'static, f16>>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
@@ -288,10 +288,11 @@ pub enum Hook {
 }
 
 struct RunJob<F: Float> {
-    commands: Vec<CommandBuffer>,
+    command: CommandBuffer,
     redirect: RunRedirect,
+
     embed_device: EmbedDevice,
-    model: Arc<Model>,
+    embed: Arc<TensorCpu<'static, f16>>,
 
     cursors: TensorGpu<u32, ReadWrite>,
     tokens: TensorGpu<u32, ReadWrite>,
@@ -307,24 +308,21 @@ impl<F: Float> Job for RunJob<F> {
         let chunk = input.chunk();
         let stack: Vec<TensorCpu<F>> = chunk
             .iter()
-            .map(|tokens| -> Result<_> {
-                let info = &self.model.info;
-                let embed = &self.model.tensor.embed.w;
-                TensorCpu::stack(
-                    tokens
-                        .iter()
-                        .map(|&token| embed.slice(.., token as usize, .., ..))
-                        .try_collect()?,
-                )
-                .unwrap_or_else(|_| TensorCpu::init(Shape::new(info.num_emb, 1, 0, 1)))
-                .map(|x| CoHom::co_hom(*x))
-                .reshape(
-                    TensorDimension::Full,
-                    TensorDimension::Auto,
-                    TensorDimension::Dimension(1),
-                    TensorDimension::Full,
-                )
-                .map_err(Into::into)
+            .map(|tokens| -> Result<TensorCpu<'_, F>, _> {
+                let num_emb = self.embed.shape()[0];
+                let num_token = tokens.len();
+                let data = self.embed.data();
+                let data = tokens
+                    .iter()
+                    .map(|&token| {
+                        let start = num_emb * token as usize;
+                        let end = start + num_emb;
+                        data[start..end].to_vec()
+                    })
+                    .concat();
+                let data = data.into_iter().map(|x| F::co_hom(x)).collect_vec();
+                let shape = Shape::new(num_emb, num_token, 1, 1);
+                TensorCpu::from_data(shape, data)
             })
             .try_collect()?;
         let stack = TensorStack::try_from(stack)?;
@@ -351,7 +349,7 @@ impl<F: Float> Job for RunJob<F> {
     }
 
     async fn submit(self) -> Result<Self::Output> {
-        self.output.context.queue.submit(self.commands);
+        self.output.context.queue.submit(Some(self.command));
         let output = self.output.back().await;
         let batches = self
             .redirect
@@ -363,13 +361,13 @@ impl<F: Float> Job for RunJob<F> {
     }
 }
 
-struct RunJobBuilder<F: Float> {
-    model: Arc<Model>,
-    state: Arc<State>,
+struct RunJobBuilder<'a, F: Float> {
+    model: &'a Model,
+    state: &'a State,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> JobBuilder for RunJobBuilder<F> {
+impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
     type Seed = RunInfo;
     type Input = RunInput;
     type Output = RunOutput<F>;
@@ -378,8 +376,8 @@ impl<F: Float> JobBuilder for RunJobBuilder<F> {
         &self,
         seed: Self::Seed,
     ) -> Result<impl Job<Input = Self::Input, Output = Self::Output>> {
-        let model = self.model.clone();
-        let state = self.state.clone();
+        let model = self.model;
+        let state = self.state;
         let context = &model.context;
         let info = &model.info;
         let tensor = &model.tensor;
@@ -394,7 +392,7 @@ impl<F: Float> JobBuilder for RunJobBuilder<F> {
         let header = Header::<F>::new(context, info, num_header);
 
         let turbo = |num_token: usize| num_token % MIN_TOKEN_CHUNK_SIZE == 0;
-        let hook_op = |_hook: Hook| -> Result<TensorOp, TensorError> { Ok(TensorOp::List(vec![])) };
+        let hook_op = |_hook: Hook| -> Result<_, TensorError> { Ok(TensorOp::List(vec![])) };
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
@@ -801,13 +799,11 @@ impl<F: Float> JobBuilder for RunJobBuilder<F> {
             pass.execute_tensor_op(&ops);
         }
 
-        let commands = vec![encoder.finish()];
-
         Ok(RunJob {
-            commands,
+            command: encoder.finish(),
             redirect,
             embed_device,
-            model,
+            embed: model.tensor.embed.w.clone(),
             tokens: buffer.tokens,
             cursors: buffer.cursors,
             input: buffer.input,
