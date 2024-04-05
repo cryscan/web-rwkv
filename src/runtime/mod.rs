@@ -1,4 +1,4 @@
-use std::{future::Future, marker::PhantomData};
+use std::future::Future;
 
 use anyhow::Result;
 use flume::{Receiver, Sender};
@@ -7,32 +7,23 @@ pub mod model;
 pub mod run;
 pub mod v6;
 
-pub trait JobInput {
-    fn advance(self) -> Self;
-}
-
 pub trait Job: Sized {
     type Input;
     type Output;
-    type Error;
 
-    fn load(self, input: &Self::Input) -> Result<Self, Self::Error>;
-    fn submit(self) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send + 'static;
+    fn load(self, input: &Self::Input) -> Result<Self>;
+    fn submit(self) -> impl Future<Output = Result<Self::Output>> + Send + 'static;
 }
 
 pub trait JobBuilder {
-    type Info;
+    type Seed;
     type Input;
     type Output;
-    type Error;
 
     fn build(
         &self,
-        input: Self::Info,
-    ) -> Result<
-        impl Job<Input = Self::Input, Output = Self::Output, Error = Self::Error>,
-        Self::Error,
-    >;
+        seed: Self::Seed,
+    ) -> Result<impl Job<Input = Self::Input, Output = Self::Output>>;
 }
 
 pub struct Submission<I, O> {
@@ -40,24 +31,28 @@ pub struct Submission<I, O> {
     pub sender: Sender<(I, O)>,
 }
 
-pub struct JobRunner<I, O, E>(Receiver<Submission<I, O>>, PhantomData<E>);
+pub trait JobInput {
+    /// Advance the input for a step.
+    fn step(self) -> Self;
+}
 
-impl<I, O, E> JobRunner<I, O, E> {
+pub struct JobRunner<I, O>(Receiver<Submission<I, O>>);
+
+impl<I, O> JobRunner<I, O> {
     pub fn new(input: Receiver<Submission<I, O>>) -> Self {
-        Self(input, PhantomData)
+        Self(input)
     }
 }
 
-impl<F, I, O, E> JobRunner<I, O, E>
+impl<T, I, O> JobRunner<I, O>
 where
-    for<'a> &'a I: IntoIterator<Item = F>,
+    for<'a> &'a I: IntoIterator<Item = T>,
     I: JobInput,
     O: Send + 'static,
-    E: std::error::Error + Send + Sync + 'static,
 {
     pub async fn run(
         &self,
-        builder: impl JobBuilder<Info = F, Input = I, Output = O, Error = E>,
+        builder: impl JobBuilder<Seed = T, Input = I, Output = O>,
     ) -> Result<()> {
         let mut speculation = None;
         while let Ok(Submission { input, sender }) = self.0.recv_async().await {
@@ -82,7 +77,7 @@ where
             drop(iter);
 
             let output = handle.await??;
-            let _ = sender.send_async((input.advance(), output)).await;
+            let _ = sender.send_async((input.step(), output)).await;
         }
         Ok(())
     }

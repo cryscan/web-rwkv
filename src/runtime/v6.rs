@@ -1,5 +1,6 @@
 use std::{marker::PhantomData, sync::Arc};
 
+use anyhow::Result;
 use half::f16;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -302,17 +303,12 @@ struct RunJob<F: Float> {
 impl<F: Float> Job for RunJob<F> {
     type Input = RunInput;
     type Output = RunOutput<F>;
-    type Error = TensorError;
 
-    fn load(self, input: &Self::Input) -> Result<Self, Self::Error> {
-        if input.iter().next().is_none() {
-            return Ok(self);
-        }
-
+    fn load(self, input: &Self::Input) -> Result<Self> {
         let chunk = input.chunk();
         let stack: Vec<TensorCpu<F>> = chunk
             .iter()
-            .map(|tokens| -> Result<_, Self::Error> {
+            .map(|tokens| -> Result<_> {
                 let info = &self.model.info;
                 let embed = &self.model.tensor.embed.w;
                 TensorCpu::stack(
@@ -329,6 +325,7 @@ impl<F: Float> Job for RunJob<F> {
                     TensorDimension::Dimension(1),
                     TensorDimension::Full,
                 )
+                .map_err(Into::into)
             })
             .try_collect()?;
         let stack = TensorStack::try_from(stack)?;
@@ -354,7 +351,7 @@ impl<F: Float> Job for RunJob<F> {
         Ok(self)
     }
 
-    async fn submit(self) -> Result<Self::Output, Self::Error> {
+    async fn submit(self) -> Result<Self::Output> {
         self.output.context.queue.submit(self.commands);
         let output = self.output.back().await;
         let batches = self
@@ -374,28 +371,24 @@ struct RunJobBuilder<F: Float> {
 }
 
 impl<F: Float> JobBuilder for RunJobBuilder<F> {
-    type Info = RunInfo;
+    type Seed = RunInfo;
     type Input = RunInput;
     type Output = RunOutput<F>;
-    type Error = TensorError;
 
     fn build(
         &self,
-        input: Self::Info,
-    ) -> Result<
-        impl Job<Input = Self::Input, Output = Self::Output, Error = Self::Error>,
-        Self::Error,
-    > {
+        seed: Self::Seed,
+    ) -> Result<impl Job<Input = Self::Input, Output = Self::Output>> {
         let model = self.model.clone();
         let state = self.state.clone();
         let context = &model.context;
         let info = &model.info;
         let tensor = &model.tensor;
 
-        let num_token = input.num_token();
+        let num_token = seed.num_token();
         let head_size = info.num_emb / info.num_head;
 
-        let redirect = input.redirect();
+        let redirect = seed.redirect();
         let num_header = redirect.headers.len();
 
         let buffer = Runtime::<F>::new(context, info, num_token);
