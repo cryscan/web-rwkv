@@ -3,6 +3,7 @@ use std::future::Future;
 use anyhow::Result;
 use flume::{Receiver, Sender};
 
+pub mod loader;
 pub mod model;
 pub mod run;
 pub mod v6;

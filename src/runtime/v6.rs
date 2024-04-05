@@ -288,11 +288,10 @@ pub enum Hook {
 }
 
 struct RunJob<F: Float> {
-    model: Arc<Model>,
-
     commands: Vec<CommandBuffer>,
     redirect: RunRedirect,
     embed_device: EmbedDevice,
+    model: Arc<Model>,
 
     cursors: TensorGpu<u32, ReadWrite>,
     tokens: TensorGpu<u32, ReadWrite>,
@@ -805,10 +804,10 @@ impl<F: Float> JobBuilder for RunJobBuilder<F> {
         let commands = vec![encoder.finish()];
 
         Ok(RunJob {
-            model,
             commands,
             redirect,
             embed_device,
+            model,
             tokens: buffer.tokens,
             cursors: buffer.cursors,
             input: buffer.input,
