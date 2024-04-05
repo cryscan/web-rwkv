@@ -33,6 +33,7 @@
 pub mod context;
 pub mod model;
 pub mod num;
+#[cfg(feature = "tokio")]
 pub mod runtime;
 pub mod tensor;
 pub mod tokenizer;

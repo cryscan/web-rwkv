@@ -2,6 +2,8 @@ use itertools::Itertools;
 
 use crate::{num::Float, tensor::TensorCpu};
 
+use super::JobInput;
+
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -86,8 +88,10 @@ impl RunInput {
             .map(|((tokens, _), (len, _))| tokens[..len].to_vec())
             .collect()
     }
+}
 
-    pub fn advance(mut self) -> Self {
+impl JobInput for RunInput {
+    fn advance(mut self) -> Self {
         let Some(info) = self.iter().next() else {
             return self;
         };
@@ -193,6 +197,8 @@ pub struct RunOutput<F: Float>(pub Vec<TensorCpu<'static, F>>);
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+
+    use crate::runtime::JobInput;
 
     use super::{RunInfo, RunInput, RunOption};
 
