@@ -5,22 +5,17 @@ use crate::{num::Float, tensor::TensorCpu};
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RunInfo(pub Vec<(usize, Option<RunOption>)>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunInfo<const N: usize>(pub [(usize, Option<RunOption>); N]);
 
-impl RunInfo {
-    #[inline]
-    pub fn num_batch(&self) -> usize {
-        self.0.len()
-    }
-
+impl<const N: usize> RunInfo<N> {
     #[inline]
     pub fn num_token(&self) -> usize {
         self.0.iter().map(|(x, _)| x).sum()
     }
 
     pub fn redirect(&self) -> RunRedirect {
-        let mut batches = vec![(0, 0); self.num_batch()];
+        let mut batches = vec![(0, 0); N];
         let mut headers = vec![];
         let mut p = 0;
         for (batch, (len, option)) in self.0.iter().enumerate() {
@@ -66,18 +61,18 @@ pub enum RunOption {
 }
 
 #[derive(Debug, Clone)]
-pub struct RunInput {
-    pub batches: Vec<(Vec<u16>, RunOption)>,
+pub struct RunInput<const N: usize> {
+    pub batches: [(Vec<u16>, RunOption); N],
     pub token_chunk_size: usize,
 }
 
-impl RunInput {
-    pub fn iter(&self) -> RunIter {
+impl<const N: usize> RunInput<N> {
+    pub fn iter(&self) -> RunIter<N> {
         self.into_iter()
     }
 }
 
-impl JobInput for RunInput {
+impl<const N: usize> JobInput for RunInput<N> {
     type Chunk = Vec<Vec<u16>>;
 
     fn step(&mut self) {
@@ -101,16 +96,15 @@ impl JobInput for RunInput {
     }
 }
 
-impl IntoIterator for &RunInput {
-    type Item = RunInfo;
-    type IntoIter = RunIter;
+impl<const N: usize> IntoIterator for &RunInput<N> {
+    type Item = RunInfo<N>;
+    type IntoIter = RunIter<N>;
 
     fn into_iter(self) -> Self::IntoIter {
         let batches = self
             .batches
-            .iter()
-            .map(|(tokens, option)| (BatchState::Read(tokens.len()), *option))
-            .collect();
+            .clone()
+            .map(|(tokens, option)| (BatchState::Read(tokens.len()), option));
         let token_chunk_size = self.token_chunk_size;
         Self::IntoIter {
             batches,
@@ -119,25 +113,20 @@ impl IntoIterator for &RunInput {
     }
 }
 
-pub struct RunIter {
-    batches: Vec<(BatchState, RunOption)>,
+pub struct RunIter<const N: usize> {
+    batches: [(BatchState, RunOption); N],
     token_chunk_size: usize,
 }
 
-impl Iterator for RunIter {
-    type Item = RunInfo;
+impl<const N: usize> Iterator for RunIter<N> {
+    type Item = RunInfo<N>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut batches = self
-            .batches
-            .iter()
-            .map(|(x, _)| match x {
-                BatchState::Gen => 1,
-                BatchState::Read(x) => *x,
-            })
-            .collect_vec();
+        let mut batches = self.batches.map(|(x, _)| match x {
+            BatchState::Gen => 1,
+            BatchState::Read(x) => x,
+        });
 
-        let num_batch = batches.len();
         let num_token: usize = batches.iter().sum();
         let num_token = num_token.min(self.token_chunk_size);
         let mut num_token = match num_token > MIN_TOKEN_CHUNK_SIZE {
@@ -149,10 +138,9 @@ impl Iterator for RunIter {
             return None;
         }
 
-        let mut info = vec![(0, Default::default()); num_batch];
+        let mut info = [(0, Default::default()); N];
         while num_token > 0 {
             let mid = batches
-                .clone()
                 .into_iter()
                 .filter(|x| *x > 0)
                 .min()
@@ -203,7 +191,7 @@ mod tests {
     #[test]
     fn test_run_iter() -> Result<()> {
         let run = RunInput {
-            batches: vec![
+            batches: [
                 (vec![0; 139], RunOption::Last),
                 (vec![1; 1], RunOption::Last),
                 (vec![2; 0], RunOption::Full),
@@ -215,7 +203,7 @@ mod tests {
 
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
+            Some(RunInfo([
                 (65, None),
                 (1, Some(RunOption::Last)),
                 (0, None),
@@ -224,7 +212,7 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
+            Some(RunInfo([
                 (60, None),
                 (1, Some(RunOption::Last)),
                 (0, None),
@@ -233,7 +221,7 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
+            Some(RunInfo([
                 (14, Some(RunOption::Last)),
                 (1, Some(RunOption::Last)),
                 (0, None),
@@ -242,7 +230,7 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
+            Some(RunInfo([
                 (1, Some(RunOption::Last)),
                 (1, Some(RunOption::Last)),
                 (0, None),
@@ -251,7 +239,7 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
+            Some(RunInfo([
                 (1, Some(RunOption::Last)),
                 (1, Some(RunOption::Last)),
                 (0, None),
@@ -265,7 +253,7 @@ mod tests {
     #[test]
     fn test_advance() -> Result<()> {
         let mut run = RunInput {
-            batches: vec![
+            batches: [
                 (vec![0; 139], RunOption::Last),
                 (vec![1; 1], RunOption::Last),
                 (vec![2; 0], RunOption::Full),
@@ -277,7 +265,7 @@ mod tests {
         run.step();
         assert_eq!(
             run.iter().next(),
-            Some(RunInfo(vec![
+            Some(RunInfo([
                 (61, None),
                 (0, None),
                 (0, None),
@@ -287,7 +275,7 @@ mod tests {
 
         // simulate adding one token to batch 1 after advancing.
         let run = RunInput {
-            batches: vec![
+            batches: [
                 (vec![0; 61], RunOption::Last),
                 (vec![1; 1], RunOption::Last),
                 (vec![2; 0], RunOption::Full),
@@ -297,7 +285,7 @@ mod tests {
         };
         assert_eq!(
             run.iter().next(),
-            Some(RunInfo(vec![
+            Some(RunInfo([
                 (60, None),
                 (1, Some(RunOption::Last)),
                 (0, None),
@@ -311,7 +299,7 @@ mod tests {
     #[test]
     fn test_redirect() -> Result<()> {
         let run = RunInput {
-            batches: vec![
+            batches: [
                 (vec![0; 61], RunOption::Last),
                 (vec![1; 0], RunOption::Last),
                 (vec![2; 0], RunOption::Full),

@@ -113,13 +113,12 @@ pub struct Head {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
-pub struct State {
+pub struct State<const N: usize> {
     pub info: ModelInfo,
-    pub num_batch: usize,
     pub data: Vec<TensorGpu<f32, ReadWrite>>,
 }
 
-impl State {
+impl<const N: usize> State<N> {
     fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         self.data[layer].view(.., 0..head_size + 1, .., ..)
@@ -131,7 +130,7 @@ impl State {
     }
 }
 
-impl DeepClone for State {
+impl<const N: usize> DeepClone for State<N> {
     fn deep_clone(&self) -> Self {
         let data = self.data.iter().map(|tensor| tensor.deep_clone()).collect();
         Self {
@@ -358,15 +357,15 @@ impl<F: Float> Job for RunJob<F> {
     }
 }
 
-pub struct ModelRuntime<F: Float> {
+pub struct ModelRuntime<F: Float, const N: usize> {
     model: Model,
-    state: State,
+    state: State<N>,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> JobBuilder for ModelRuntime<F> {
-    type Seed = RunInfo;
-    type Input = RunInput;
+impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
+    type Seed = RunInfo<N>;
+    type Input = RunInput<N>;
     type Output = RunOutput<F>;
 
     fn build(
@@ -809,15 +808,14 @@ impl<F: Float> JobBuilder for ModelRuntime<F> {
     }
 }
 
-impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
-    async fn build(self) -> Result<ModelRuntime<F>> {
+impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBuilder<R> {
+    async fn build(self) -> Result<ModelRuntime<F, N>> {
         let ModelBuilder {
             context,
             model,
             lora,
             quant,
             embed_device,
-            num_batch,
         } = self;
 
         let info = Loader::info(&model)?;
@@ -985,13 +983,9 @@ impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
         let state = {
             let head_size = info.num_emb / info.num_head;
             let data = (0..info.num_layer)
-                .map(|_| context.zeros(Shape::new(info.num_emb, head_size + 2, num_batch, 1)))
+                .map(|_| context.zeros(Shape::new(info.num_emb, head_size + 2, N, 1)))
                 .collect();
-            State {
-                info,
-                num_batch,
-                data,
-            }
+            State { info, data }
         };
 
         Ok(ModelRuntime {

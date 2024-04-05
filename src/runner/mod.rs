@@ -117,7 +117,6 @@ pub struct ModelBuilder<R: Reader> {
     lora: Vec<Lora<R>>,
     quant: HashMap<usize, Quant>,
     embed_device: EmbedDevice,
-    num_batch: usize,
 }
 
 impl<R: Reader> ModelBuilder<R> {
@@ -128,7 +127,6 @@ impl<R: Reader> ModelBuilder<R> {
             lora: vec![],
             quant: Default::default(),
             embed_device: Default::default(),
-            num_batch: 1,
         }
     }
 
@@ -144,12 +142,6 @@ impl<R: Reader> ModelBuilder<R> {
 
     pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
         self.embed_device = value;
-        self
-    }
-
-    pub fn with_num_batch(mut self, value: usize) -> Self {
-        let value = value.max(1);
-        self.num_batch = value;
         self
     }
 }
