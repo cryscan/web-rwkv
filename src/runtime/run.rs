@@ -245,6 +245,15 @@ mod tests {
                 (1, Some(RunOption::Full))
             ]))
         );
+        assert_eq!(
+            iter.next(),
+            Some(RunInfo(vec![
+                (1, Some(RunOption::Last)),
+                (1, Some(RunOption::Last)),
+                (0, None),
+                (1, Some(RunOption::Full))
+            ]))
+        );
 
         Ok(())
     }
