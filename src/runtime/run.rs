@@ -24,7 +24,7 @@ impl RunInfo {
         let mut p = 0;
         for (batch, (len, option)) in self.0.iter().enumerate() {
             match option {
-                None => continue,
+                None => batches[batch] = (p, p),
                 Some(RunOption::Last) => {
                     assert_ne!(*len, 0);
                     batches[batch] = (p, p + len);
@@ -198,21 +198,13 @@ mod tests {
 
     #[test]
     fn test_run_iter() -> Result<()> {
-        let batches = vec![
-            (vec![0; 139], RunOption::Last),
-            (vec![0; 1], RunOption::Last),
-            (vec![0; 0], RunOption::Full),
-            (vec![0; 65], RunOption::Full),
-        ];
-        // let tensors = batches
-        //     .iter()
-        //     .map(|(v, _)| TensorCpu::init(Shape::new(65535, v.len(), 1, 1)))
-        //     .collect_vec()
-        //     .try_into()?;
-
         let run = RunInput {
-            batches,
-            // stack: tensors,
+            batches: vec![
+                (vec![0; 139], RunOption::Last),
+                (vec![1; 1], RunOption::Last),
+                (vec![2; 0], RunOption::Full),
+                (vec![3; 65], RunOption::Full),
+            ],
             token_chunk_size: 128,
         };
         let mut iter = run.iter();
@@ -252,6 +244,74 @@ mod tests {
                 (0, None),
                 (1, Some(RunOption::Full))
             ]))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_advance() -> Result<()> {
+        let run = RunInput {
+            batches: vec![
+                (vec![0; 139], RunOption::Last),
+                (vec![1; 1], RunOption::Last),
+                (vec![2; 0], RunOption::Full),
+                (vec![3; 65], RunOption::Full),
+            ],
+            token_chunk_size: 128,
+        };
+
+        let run = run.advance();
+        assert_eq!(
+            run.iter().next(),
+            Some(RunInfo(vec![
+                (61, None),
+                (0, None),
+                (0, None),
+                (3, Some(RunOption::Full))
+            ]))
+        );
+
+        // simulate adding one token to batch 1 after advancing.
+        let run = RunInput {
+            batches: vec![
+                (vec![0; 61], RunOption::Last),
+                (vec![1; 1], RunOption::Last),
+                (vec![2; 0], RunOption::Full),
+                (vec![3; 3], RunOption::Full),
+            ],
+            token_chunk_size: 128,
+        };
+        assert_eq!(
+            run.iter().next(),
+            Some(RunInfo(vec![
+                (60, None),
+                (1, Some(RunOption::Last)),
+                (0, None),
+                (3, Some(RunOption::Full))
+            ]))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_redirect() -> Result<()> {
+        let run = RunInput {
+            batches: vec![
+                (vec![0; 61], RunOption::Last),
+                (vec![1; 0], RunOption::Last),
+                (vec![2; 0], RunOption::Full),
+                (vec![3; 3], RunOption::Full),
+            ],
+            token_chunk_size: 128,
+        };
+        let redirect = run.iter().next().unwrap().redirect();
+
+        assert_eq!(redirect.headers, vec![60, 61, 62, 63]);
+        assert_eq!(
+            redirect.batches,
+            vec![(0, 61), (61, 61), (61, 61), (61, 64)]
         );
 
         Ok(())
