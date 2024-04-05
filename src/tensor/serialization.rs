@@ -74,11 +74,13 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     }
 }
 
-pub fn serialize_context<S: serde::Serializer>(
-    _context: &Context,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    PhantomData::<Context>::serialize(&PhantomData, serializer)
+impl Serialize for Context {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        PhantomData::<Context>::serialize(&PhantomData, serializer)
+    }
 }
 
 pub struct Seed<'a, C, T> {

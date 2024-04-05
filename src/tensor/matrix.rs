@@ -42,7 +42,7 @@ impl Default for Nf4Quant<'_> {
     }
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub enum Matrix {
     Fp16(TensorGpu<f16, ReadWrite>),
     Int8 {

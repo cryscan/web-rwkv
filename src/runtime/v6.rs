@@ -28,9 +28,8 @@ use crate::{
     },
 };
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Model {
-    #[serde(serialize_with = "crate::tensor::serialization::serialize_context")]
     pub context: Context,
     pub info: ModelInfo,
     pub tensor: ModelTensor,
@@ -45,20 +44,20 @@ impl Model {
     pub const GN_EPS: f32 = 64.0e-5;
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct ModelTensor {
     pub embed: Embed,
     pub head: Head,
     pub layers: Vec<Layer>,
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct LayerNorm {
     pub w: TensorGpu<f16, ReadWrite>,
     pub b: TensorGpu<f16, ReadWrite>,
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Att {
     pub time_decay: TensorGpu<f16, ReadWrite>,
     pub time_first: TensorGpu<f32, ReadWrite>,
@@ -84,7 +83,7 @@ pub struct Att {
     pub group_norm: LayerNorm,
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Ffn {
     pub time_mix_k: TensorGpu<f16, ReadWrite>,
     pub time_mix_r: TensorGpu<f16, ReadWrite>,
@@ -94,7 +93,7 @@ pub struct Ffn {
     pub w_r: Matrix,
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Layer {
     pub att_layer_norm: LayerNorm,
     pub ffn_layer_norm: LayerNorm,
@@ -102,14 +101,14 @@ pub struct Layer {
     pub ffn: Ffn,
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Embed {
     pub layer_norm: LayerNorm,
     pub w: Arc<TensorCpu<'static, f16>>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Head {
     pub layer_norm: LayerNorm,
     pub w: Matrix,
@@ -361,13 +360,13 @@ impl<F: Float> Job for RunJob<F> {
     }
 }
 
-struct RunJobBuilder<'a, F: Float> {
-    model: &'a Model,
-    state: &'a State,
+struct RunJobBuilder<F: Float> {
+    model: Model,
+    state: State,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
+impl<F: Float> JobBuilder for RunJobBuilder<F> {
     type Seed = RunInfo;
     type Input = RunInput;
     type Output = RunOutput<F>;
@@ -376,8 +375,8 @@ impl<F: Float> JobBuilder for RunJobBuilder<'_, F> {
         &self,
         seed: Self::Seed,
     ) -> Result<impl Job<Input = Self::Input, Output = Self::Output>> {
-        let model = self.model;
-        let state = self.state;
+        let model = &self.model;
+        let state = &self.state;
         let context = &model.context;
         let info = &model.info;
         let tensor = &model.tensor;
