@@ -9,6 +9,7 @@ use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
+use instant::{Duration, Instant};
 #[cfg(not(debug_assertions))]
 use itertools::Itertools;
 use memmap2::Mmap;
@@ -154,18 +155,34 @@ async fn main() -> Result<()> {
 
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
+    let prompt_len = tokens.len();
     let mut prompt = RunInput::new([(tokens, RunOption::Last)], cli.token_chunk_size);
 
-    for _ in 0..500 {
+    let mut read = false;
+    let mut instant;
+    let mut prefill = Duration::ZERO;
+    let mut duration = Duration::ZERO;
+
+    let num_token = 500;
+    for _ in 0..num_token {
         let (sender, receiver) = flume::unbounded();
         let input = prompt.clone();
         let submission = Submission { input, sender };
 
+        instant = Instant::now();
         let _ = runtime.send(submission);
         let (input, output) = receiver.recv_async().await?;
         prompt = input;
+        duration += instant.elapsed();
 
         if output[0].size() > 0 {
+            if !read {
+                print!("\n{}", PROMPT);
+                prefill = duration;
+                duration = Duration::ZERO;
+                read = true;
+            }
+
             let output = softmax(&context, &output[0]).await?;
             let probs = output.map(|x| x.to_f32()).to_vec();
             let token = sample(&probs, 0.0);
@@ -175,8 +192,26 @@ async fn main() -> Result<()> {
             let word = String::from_utf8_lossy(&decoded);
             print!("{}", word);
             std::io::stdout().flush().unwrap();
+        } else {
+            print!(".");
+            std::io::stdout().flush().unwrap();
         }
     }
+
+    println!();
+    println!(
+        "Prefill: {} tokens, {} mills, {} tps.",
+        prompt_len,
+        prefill.as_millis(),
+        prompt_len as f64 / prefill.as_secs_f64()
+    );
+    println!(
+        "Generation: {} tokens, {} mills, {} tps.",
+        num_token,
+        duration.as_millis(),
+        num_token as f64 / duration.as_secs_f64()
+    );
+    std::io::stdout().flush()?;
 
     Ok(())
 }
