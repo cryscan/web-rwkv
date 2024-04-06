@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use web_rwkv_derive::{Deref, DerefMut};
 
 use super::JobInput;
 use crate::{num::Float, tensor::TensorCpu};
@@ -15,27 +16,40 @@ impl<const N: usize> RunInfo<N> {
     }
 
     pub fn redirect(&self) -> RunRedirect {
-        let mut batches = vec![(0, 0); N];
         let mut headers = vec![];
-        let mut p = 0;
+        let mut inputs = vec![(0, 0); N];
+        let mut outputs = vec![(0, 0); N];
+        let mut p_in = 0;
+        let mut p_out = 0;
         for (batch, (len, option)) in self.0.iter().enumerate() {
             match option {
-                None => batches[batch] = (p, p),
+                None => {
+                    inputs[batch] = (p_in, p_in);
+                    outputs[batch] = (p_out, p_out);
+                }
                 Some(RunOption::Last) => {
                     assert_ne!(*len, 0);
-                    batches[batch] = (p, p + len);
-                    headers.push(p + len - 1);
-                    p += len;
+                    inputs[batch] = (p_in, p_in + len);
+                    outputs[batch] = (p_out, p_out + 1);
+                    headers.push(p_in + len - 1);
+                    p_out += 1;
+                    p_in += len;
                 }
                 Some(RunOption::Full) => {
                     assert_ne!(*len, 0);
-                    batches[batch] = (p, p + len);
-                    headers.append(&mut (p..p + len).collect());
-                    p += len;
+                    inputs[batch] = (p_in, p_in + len);
+                    outputs[batch] = (p_out, p_out + len);
+                    headers.append(&mut (p_in..p_in + len).collect());
+                    p_out += len;
+                    p_in += len;
                 }
             }
         }
-        RunRedirect { headers, batches }
+        RunRedirect {
+            headers,
+            inputs,
+            outputs,
+        }
     }
 }
 
@@ -43,8 +57,10 @@ impl<const N: usize> RunInfo<N> {
 pub struct RunRedirect {
     /// Indices in the *input* tensor that are included in the output.
     pub headers: Vec<usize>,
+    /// Maps batches to ranges in the *input* tensor.
+    pub inputs: Vec<(usize, usize)>,
     /// Maps batches to ranges in the *output* tensor.
-    pub batches: Vec<(usize, usize)>,
+    pub outputs: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,7 +78,7 @@ pub enum RunOption {
 
 #[derive(Debug, Clone)]
 pub struct RunInput<const N: usize> {
-    batches: [(Vec<u16>, RunOption); N],
+    pub batches: [(Vec<u16>, RunOption); N],
     token_chunk_size: usize,
 }
 
@@ -188,7 +204,7 @@ impl<const N: usize> Iterator for RunIter<N> {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deref, DerefMut)]
 pub struct RunOutput<F: Float>(pub Vec<TensorCpu<'static, F>>);
 
 #[cfg(test)]
@@ -196,7 +212,7 @@ mod tests {
     use anyhow::Result;
 
     use super::{RunInfo, RunInput, RunOption};
-    use crate::runner::JobInput;
+    use crate::runtime::JobInput;
 
     #[test]
     fn test_run_iter() -> Result<()> {
@@ -320,10 +336,8 @@ mod tests {
         let redirect = run.iter().next().unwrap().redirect();
 
         assert_eq!(redirect.headers, vec![60, 61, 62, 63]);
-        assert_eq!(
-            redirect.batches,
-            vec![(0, 61), (61, 61), (61, 61), (61, 64)]
-        );
+        assert_eq!(redirect.inputs, vec![(0, 61), (61, 61), (61, 61), (61, 64)]);
+        assert_eq!(redirect.outputs, vec![(0, 1), (1, 1), (1, 1), (1, 4)]);
 
         Ok(())
     }

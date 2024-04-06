@@ -7,7 +7,11 @@ use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::loader::{Lora, Reader};
-use crate::{context::Context, impl_deserialize_seed, num::Scalar};
+use crate::{
+    context::{Context, ContextBuilder},
+    impl_deserialize_seed,
+    num::Scalar,
+};
 
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -82,11 +86,11 @@ pub trait Build<T> {
 }
 
 pub struct ModelBuilder<R: Reader> {
-    pub(super) context: Context,
-    pub(super) model: R,
-    pub(super) lora: Vec<Lora<R>>,
-    pub(super) quant: HashMap<usize, Quant>,
-    pub(super) embed_device: EmbedDevice,
+    pub context: Context,
+    pub model: R,
+    pub lora: Vec<Lora<R>>,
+    pub quant: HashMap<usize, Quant>,
+    pub embed_device: EmbedDevice,
 }
 
 impl<R: Reader> ModelBuilder<R> {
@@ -112,6 +116,20 @@ impl<R: Reader> ModelBuilder<R> {
 
     pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
         self.embed_device = value;
+        self
+    }
+}
+
+impl ContextBuilder {
+    /// Compute the limits automatically based on given model build info.
+    pub fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
+        self.limits.max_buffer_size = ModelInfo::BUFFER_SIZE
+            .max(info.max_non_head_buffer_size())
+            .max(info.head_buffer_size()) as u64;
+        self.limits.max_storage_buffer_binding_size = ModelInfo::STORAGE_BUFFER_BINDING_SIZE
+            .max(info.max_non_head_buffer_size())
+            .max(info.head_buffer_size())
+            as u32;
         self
     }
 }

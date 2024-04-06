@@ -53,9 +53,34 @@ dialoguer = "0.11.0"
 ratatui = { version = "0.26", features = ["all-widgets"] }
 
 [features]
-default = ["tokio"]
+default = ["runtime"]
 
-tokio = ["dep:tokio"]
+runtime = ["dep:tokio"]
+vanilla = []
+
+[[example]]
+name = "gen"
+required-features = ["vanilla"]
+
+[[example]]
+name = "chat"
+required-features = ["vanilla"]
+
+[[example]]
+name = "batch"
+required-features = ["vanilla"]
+
+[[example]]
+name = "inspector"
+required-features = ["vanilla"]
+
+[[example]]
+name = "serialization"
+required-features = ["vanilla"]
+
+[[example]]
+name = "run"
+required-features = ["runtime"]
 
 [profile.release]
 lto = false

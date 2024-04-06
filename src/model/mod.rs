@@ -11,7 +11,12 @@ use self::{
     run::ModelRun,
     softmax::ModelSoftmax,
 };
-use crate::{context::Context, impl_deserialize_seed, num::Scalar, tensor::TensorError};
+use crate::{
+    context::{Context, ContextBuilder},
+    impl_deserialize_seed,
+    num::Scalar,
+    tensor::TensorError,
+};
 
 pub mod loader;
 pub mod run;
@@ -318,6 +323,20 @@ impl StateBuilder {
 
     pub fn with_chunk_size(mut self, value: usize) -> Self {
         self.chunk_size = value;
+        self
+    }
+}
+
+impl ContextBuilder {
+    /// Compute the limits automatically based on given model build info.
+    pub fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
+        self.limits.max_buffer_size = ModelInfo::BUFFER_SIZE
+            .max(info.max_non_head_buffer_size())
+            .max(info.head_buffer_size()) as u64;
+        self.limits.max_storage_buffer_binding_size = ModelInfo::STORAGE_BUFFER_BINDING_SIZE
+            .max(info.max_non_head_buffer_size())
+            .max(info.head_buffer_size())
+            as u32;
         self
     }
 }

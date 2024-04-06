@@ -6,6 +6,7 @@ use flume::{Receiver, Sender};
 pub mod loader;
 pub mod model;
 pub mod run;
+pub mod softmax;
 pub mod v6;
 
 /// A [`Job`] to be executed on GPU.
@@ -38,7 +39,7 @@ pub struct Submission<I, O> {
 
 pub trait JobInput: Send + 'static {
     /// One chunk of the whole input at a step.
-    type Chunk;
+    type Chunk: Send + 'static;
 
     /// Advance the input for a step.
     fn step(&mut self);
@@ -49,11 +50,13 @@ pub trait JobInput: Send + 'static {
 #[derive(Debug, Clone)]
 pub struct JobRuntime<I, O>(Receiver<Submission<I, O>>);
 
-impl<T, I, O> JobRuntime<I, O>
+impl<T, F, I, O> JobRuntime<I, O>
 where
-    for<'a> &'a I: IntoIterator<Item = T>,
+    T: Send,
+    F: Iterator<Item = T> + Send,
     I: JobInput,
     O: Send + 'static,
+    for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
     pub async fn start(
         builder: impl JobBuilder<Seed = T, Input = I, Output = O>,
@@ -85,17 +88,16 @@ where
                 None => builder.build(info)?.load(&chunk)?,
             };
 
-            let output = job.submit();
-            tokio::spawn(async move {
-                let output = output.await.expect("job execution error");
-                input.step();
-                let _ = sender.send_async((input, output)).await;
-            });
+            let handle = tokio::spawn(job.submit());
 
             predict = match next {
                 Some(info) => Some(builder.build(info)?),
                 None => None,
             };
+
+            let output = handle.await??;
+            input.step();
+            let _ = sender.send_async((input, output)).await;
         }
         Ok(())
     }

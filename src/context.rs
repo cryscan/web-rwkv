@@ -13,13 +13,10 @@ use wgpu::{
     RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
-use crate::{
-    model::ModelInfo,
-    tensor::{
-        cache::ResourceCache,
-        shape::{IntoBytes, Shape},
-        View,
-    },
+use crate::tensor::{
+    cache::ResourceCache,
+    shape::{IntoBytes, Shape},
+    View,
 };
 
 #[derive(Deref)]
@@ -101,9 +98,9 @@ impl Drop for Context {
 }
 
 pub struct ContextBuilder {
-    adapter: Adapter,
-    features: Features,
-    limits: Limits,
+    pub adapter: Adapter,
+    pub features: Features,
+    pub limits: Limits,
 }
 
 #[wasm_bindgen]
@@ -187,18 +184,6 @@ impl<'a> ContextBuilder {
 
     pub fn modify_limits(mut self, f: impl FnOnce(&mut Limits)) -> Self {
         f(&mut self.limits);
-        self
-    }
-
-    /// Compute the limits automatically based on given model build info.
-    pub fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
-        self.limits.max_buffer_size = ModelInfo::BUFFER_SIZE
-            .max(info.max_non_head_buffer_size())
-            .max(info.head_buffer_size()) as u64;
-        self.limits.max_storage_buffer_binding_size = ModelInfo::STORAGE_BUFFER_BINDING_SIZE
-            .max(info.max_non_head_buffer_size())
-            .max(info.head_buffer_size())
-            as u32;
         self
     }
 

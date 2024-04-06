@@ -10,12 +10,13 @@ use web_rwkv_derive::{Deref, DerefMut};
 use super::{ModelError, ModelInfo, ModelVersion, Quant};
 use crate::{
     context::Context,
+    num::Scalar,
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
         ops::{TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
-        TensorCpu, TensorGpu, TensorInit, TensorInto, TensorReshape, TensorShape,
+        TensorCpu, TensorError, TensorGpu, TensorInit, TensorInto, TensorReshape, TensorShape,
     },
 };
 
@@ -52,6 +53,24 @@ impl ReaderSend for SafeTensors<'_> {
         let shape = tensor.shape().to_vec();
         let data = Cow::from(tensor.data());
         Ok((tensor.dtype(), shape, data))
+    }
+}
+
+impl<'a, T: Scalar> TensorCpu<'a, T> {
+    /// Create a tensor from safetensors reader.
+    pub fn from_reader((dt, shape, data): ReaderTensor<'a>) -> Result<Self, TensorError> {
+        if T::DATA_TYPE != dt {
+            return Err(TensorError::Type);
+        }
+        let shape = Shape::from_slice_rev(&shape)?;
+        match data {
+            Cow::Borrowed(data) => Self::from_data(shape, bytemuck::cast_slice(data)),
+            Cow::Owned(data) => {
+                let data = bytemuck::cast_slice(&data);
+                let data = Cow::Owned(data.to_vec());
+                Self::from_data(shape, data)
+            }
+        }
     }
 }
 

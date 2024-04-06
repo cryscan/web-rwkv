@@ -31,10 +31,11 @@
 //! - Runtime. Without a runtime makes it easy to be integrated into any applications from servers, front-end apps (yes, `web-rwkv` can run in browser) to game engines.
 
 pub mod context;
+#[cfg(feature = "vanilla")]
 pub mod model;
 pub mod num;
-#[cfg(feature = "tokio")]
-pub mod runner;
+#[cfg(feature = "runtime")]
+pub mod runtime;
 pub mod tensor;
 pub mod tokenizer;
 

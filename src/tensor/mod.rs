@@ -12,7 +12,6 @@ use self::{
 };
 use crate::{
     context::Context,
-    model::loader::ReaderTensor,
     num::{Float, Scalar},
 };
 
@@ -200,22 +199,6 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
     fn from_data(shape: Shape, data: impl Into<Cow<'a, [T]>>) -> Result<Self, TensorError>;
     /// Init the tensor with given shape.
     fn init(shape: Shape) -> Self;
-
-    /// Create a tensor from safetensors reader.
-    fn from_reader((dt, shape, data): ReaderTensor<'a>) -> Result<Self, TensorError> {
-        if T::DATA_TYPE != dt {
-            return Err(TensorError::Type);
-        }
-        let shape = Shape::from_slice_rev(&shape)?;
-        match data {
-            Cow::Borrowed(data) => Self::from_data(shape, bytemuck::cast_slice(data)),
-            Cow::Owned(data) => {
-                let data = bytemuck::cast_slice(&data);
-                let data = Cow::Owned(data.to_vec());
-                Self::from_data(shape, data)
-            }
-        }
-    }
 }
 
 pub trait TensorFrom<From> {

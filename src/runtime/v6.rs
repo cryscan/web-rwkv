@@ -346,13 +346,25 @@ impl<F: Float> Job for RunJob<F> {
 
     async fn submit(self) -> Result<Self::Output> {
         self.output.context.queue.submit(Some(self.command));
-        let output = self.output.back().await;
-        let batches = self
-            .redirect
-            .batches
-            .into_iter()
-            .map(|(start, end)| output.slice(.., start..end, .., ..))
-            .try_collect()?;
+        let batches = match self.redirect.headers.len() {
+            0 => {
+                let num_emb = self.embed.shape()[0];
+                let shape = Shape::new(num_emb, 0, 1, 1);
+                self.redirect
+                    .outputs
+                    .into_iter()
+                    .map(|_| TensorCpu::init(shape))
+                    .collect()
+            }
+            _ => {
+                let output = self.output.back().await;
+                self.redirect
+                    .outputs
+                    .into_iter()
+                    .map(|(start, end)| output.slice(.., start..end, .., ..))
+                    .try_collect()?
+            }
+        };
         Ok(RunOutput(batches))
     }
 }
@@ -360,8 +372,26 @@ impl<F: Float> Job for RunJob<F> {
 pub struct ModelRuntime<F: Float, const N: usize> {
     model: Model,
     state: State<N>,
+    // runtime_cache: ResourceCache<usize, Runtime<F>>,
+    // header_cache: ResourceCache<usize, Header<F>>,
     phantom: PhantomData<F>,
 }
+
+// impl<F: Float, const N: usize> ModelRuntime<F, N> {
+//     fn checkout_runtime(&self, num_token: usize) -> Arc<Runtime<F>> {
+//         let context = &self.model.context;
+//         let info = &self.model.info;
+//         self.runtime_cache
+//             .checkout(num_token, || Runtime::new(context, info, num_token))
+//     }
+
+//     fn checkout_header(&self, num_header: usize) -> Arc<Header<F>> {
+//         let context = &self.model.context;
+//         let info = &self.model.info;
+//         self.header_cache
+//             .checkout(num_header, || Header::new(context, info, num_header))
+//     }
+// }
 
 impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
     type Seed = RunInfo<N>;
@@ -386,6 +416,8 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
 
         let buffer = Runtime::<F>::new(context, info, num_token);
         let header = Header::<F>::new(context, info, num_header);
+        // let buffer = self.checkout_runtime(num_token);
+        // let header = self.checkout_header(num_header);
 
         let turbo = |num_token: usize| num_token % MIN_TOKEN_CHUNK_SIZE == 0;
         let hook_op = |_hook: Hook| -> Result<_, TensorError> { Ok(TensorOp::List(vec![])) };
@@ -991,6 +1023,8 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
         Ok(ModelRuntime {
             model,
             state,
+            // runtime_cache: ResourceCache::new(1),
+            // header_cache: ResourceCache::new(1),
             phantom: PhantomData,
         })
     }
