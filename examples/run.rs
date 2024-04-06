@@ -192,14 +192,17 @@ async fn main() -> Result<()> {
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);
             print!("{}", word);
+            std::io::stdout().flush().unwrap();
+        } else {
+            print!(".");
+            std::io::stdout().flush().unwrap();
         }
     }
 
     let duration = instant.elapsed();
 
-    println!();
     println!(
-        "Prefill: {} tokens, {} mills, {} tps.",
+        "\n\nPrefill: {} tokens, {} mills, {} tps.",
         prompt_len,
         prefill.as_millis(),
         prompt_len as f64 / prefill.as_secs_f64()

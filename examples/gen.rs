@@ -208,7 +208,6 @@ where
     }];
 
     let prompt_len = tokens[0].tokens.len();
-    println!("Reading {} tokens.", prompt_len);
 
     let mut read = false;
     let mut count = 0usize;
@@ -245,9 +244,8 @@ where
 
     let duration = instant.elapsed();
 
-    println!();
     println!(
-        "Prefill: {} tokens, {} mills, {} tps.",
+        "\n\nPrefill: {} tokens, {} mills, {} tps.",
         prompt_len,
         prefill.as_millis(),
         prompt_len as f64 / prefill.as_secs_f64()
