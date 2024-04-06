@@ -166,12 +166,14 @@ async fn main() -> Result<()> {
 
     let num_token = 500;
     for _ in 0..num_token {
-        let (sender, receiver) = flume::unbounded();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
         let input = prompt.clone();
         let submission = Submission { input, sender };
 
-        let _ = runtime.send_async(submission).await;
-        let (input, output) = receiver.recv_async().await?;
+        let _ = runtime.send(submission).await;
+        let Ok((input, output)) = receiver.await else {
+            break;
+        };
         prompt = input;
 
         if output[0].size() > 0 {

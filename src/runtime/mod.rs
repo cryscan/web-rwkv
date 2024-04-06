@@ -1,7 +1,6 @@
 use std::future::Future;
 
 use anyhow::Result;
-use flume::{Receiver, Sender};
 use web_rwkv_derive::Deref;
 
 pub mod loader;
@@ -32,10 +31,10 @@ pub trait JobBuilder: Send + 'static {
     fn build(&self, seed: Self::Seed) -> Result<Self::Job>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Submission<I, O> {
     pub input: I,
-    pub sender: Sender<(I, O)>,
+    pub sender: tokio::sync::oneshot::Sender<(I, O)>,
 }
 
 pub trait JobInput: Send + 'static {
@@ -49,7 +48,7 @@ pub trait JobInput: Send + 'static {
 }
 
 #[derive(Debug, Clone, Deref)]
-pub struct JobRuntime<I, O>(Sender<Submission<I, O>>);
+pub struct JobRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
 
 #[allow(clippy::type_complexity)]
 impl<I, O, T, F> JobRuntime<I, O>
@@ -64,20 +63,20 @@ where
     where
         J: Job<Input = I::Chunk, Output = O>,
     {
-        let (sender, receiver) = flume::unbounded();
+        let (sender, receiver) = tokio::sync::mpsc::channel(1);
         tokio::spawn(Self::run(builder, receiver));
         Self(sender)
     }
 
     async fn run<J>(
         builder: impl JobBuilder<Seed = T, Job = J>,
-        receiver: Receiver<Submission<I, O>>,
+        mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
     ) -> Result<()>
     where
         J: Job<Input = I::Chunk, Output = O>,
     {
         let mut predict: Option<J> = None;
-        while let Ok(Submission { mut input, sender }) = receiver.recv_async().await {
+        while let Some(Submission { mut input, sender }) = receiver.recv().await {
             let mut iter = (&input).into_iter();
             let Some(info) = iter.next() else {
                 continue;
@@ -104,7 +103,7 @@ where
 
             let output = handle.await??;
             input.step();
-            let _ = sender.send_async((input, output)).await;
+            let _ = sender.send((input, output));
         }
         Ok(())
     }
