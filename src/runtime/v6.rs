@@ -61,11 +61,7 @@ pub struct Att {
     pub time_first: TensorGpu<f32, ReadWrite>,
 
     pub time_mix_x: TensorGpu<f16, ReadWrite>,
-    pub time_mix_w: TensorGpu<f16, ReadWrite>,
-    pub time_mix_k: TensorGpu<f16, ReadWrite>,
-    pub time_mix_v: TensorGpu<f16, ReadWrite>,
-    pub time_mix_r: TensorGpu<f16, ReadWrite>,
-    pub time_mix_g: TensorGpu<f16, ReadWrite>,
+    pub time_mix: TensorGpu<f16, ReadWrite>,
 
     pub time_decay_w1: Matrix,
     pub time_decay_w2: Matrix,
@@ -539,24 +535,8 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                 )?,
                 hook_op(Hook::PostAttTokenShiftAdapt(index))?,
                 TensorOp::add(
-                    layer.att.time_mix_w.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 0, ..)?,
-                )?,
-                TensorOp::add(
-                    layer.att.time_mix_k.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 1, ..)?,
-                )?,
-                TensorOp::add(
-                    layer.att.time_mix_v.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 2, ..)?,
-                )?,
-                TensorOp::add(
-                    layer.att.time_mix_r.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 3, ..)?,
-                )?,
-                TensorOp::add(
-                    layer.att.time_mix_g.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 4, ..)?,
+                    layer.att.time_mix.view(.., .., .., ..)?,
+                    buffer.time_mix.view(.., .., .., ..)?,
                 )?,
                 hook_op(Hook::PreAttGatedTokenShift(index))?,
                 TensorOp::token_shift(
@@ -888,6 +868,39 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r")).await?;
             let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g")).await?;
 
+            let time_mix: TensorGpu<_, _> = context.zeros(Shape::new(info.num_emb, 1, 5, 1));
+            {
+                let mut encoder = context.device.create_command_encoder(&Default::default());
+                let ops = TensorOp::List(vec![
+                    TensorOp::add(
+                        time_mix_w.view(.., .., .., ..)?,
+                        time_mix.view(.., .., 0, ..)?,
+                    )?,
+                    TensorOp::add(
+                        time_mix_k.view(.., .., .., ..)?,
+                        time_mix.view(.., .., 1, ..)?,
+                    )?,
+                    TensorOp::add(
+                        time_mix_v.view(.., .., .., ..)?,
+                        time_mix.view(.., .., 2, ..)?,
+                    )?,
+                    TensorOp::add(
+                        time_mix_r.view(.., .., .., ..)?,
+                        time_mix.view(.., .., 3, ..)?,
+                    )?,
+                    TensorOp::add(
+                        time_mix_g.view(.., .., .., ..)?,
+                        time_mix.view(.., .., 4, ..)?,
+                    )?,
+                ]);
+
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.execute_tensor_op(&ops);
+                drop(pass);
+
+                context.queue.submit(Some(encoder.finish()));
+            }
+
             let time_decay_w1 = loader
                 .load_matrix_f16(format!("{att}.time_decay_w1"))
                 .await?;
@@ -923,11 +936,7 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
                 time_decay,
                 time_first,
                 time_mix_x,
-                time_mix_w,
-                time_mix_k,
-                time_mix_v,
-                time_mix_r,
-                time_mix_g,
+                time_mix,
                 time_decay_w1: Matrix::Fp16(time_decay_w1),
                 time_decay_w2: Matrix::Fp16(time_decay_w2),
                 time_mix_w1: Matrix::Fp16(time_mix_w1),
