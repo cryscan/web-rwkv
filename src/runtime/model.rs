@@ -91,6 +91,7 @@ pub struct ModelBuilder<R: Reader> {
     pub lora: Vec<Lora<R>>,
     pub quant: HashMap<usize, Quant>,
     pub embed_device: EmbedDevice,
+    pub state_chunk_size: usize,
 }
 
 impl<R: Reader> ModelBuilder<R> {
@@ -101,6 +102,7 @@ impl<R: Reader> ModelBuilder<R> {
             lora: vec![],
             quant: Default::default(),
             embed_device: Default::default(),
+            state_chunk_size: 4,
         }
     }
 
@@ -116,6 +118,12 @@ impl<R: Reader> ModelBuilder<R> {
 
     pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
         self.embed_device = value;
+        self
+    }
+
+    pub fn with_state_chunk_size(mut self, value: usize) -> Self {
+        let value = value.max(1);
+        self.state_chunk_size = value;
         self
     }
 }
