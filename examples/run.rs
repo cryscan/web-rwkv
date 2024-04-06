@@ -21,7 +21,7 @@ use web_rwkv::{
         model::{Build, ModelBuilder, ModelInfo, ModelVersion, Quant},
         run::{RunInput, RunOption},
         softmax::softmax,
-        v6, JobRuntime, Submission,
+        v5, v6, JobRuntime, Submission,
     },
     tokenizer::Tokenizer,
 };
@@ -134,23 +134,25 @@ async fn main() -> Result<()> {
     let info = Loader::info(&model)?;
     println!("{:#?}", info);
 
+    let context = create_context(&info, cli.adapter).await?;
     let quant = (0..cli.quant)
         .map(|layer| (layer, Quant::Int8))
         .chain((0..cli.quant_nf4).map(|layer| (layer, Quant::NF4)))
         .collect();
+    let embed_device = cli.embed_device.unwrap_or_default().into();
 
-    let context = create_context(&info, cli.adapter).await?;
+    let builder = ModelBuilder::new(&context, model)
+        .with_embed_device(embed_device)
+        .with_quant(quant);
 
     let runtime = match info.version {
         ModelVersion::V4 => todo!(),
-        ModelVersion::V5 => todo!(),
+        ModelVersion::V5 => {
+            let runtime = Build::<v5::ModelRuntime<f16, 1>>::build(builder).await?;
+            JobRuntime::new(runtime).await
+        }
         ModelVersion::V6 => {
-            let embed_device = cli.embed_device.unwrap_or_default().into();
-            let runtime: v6::ModelRuntime<f16, 1> = ModelBuilder::new(&context, model)
-                .with_embed_device(embed_device)
-                .with_quant(quant)
-                .build()
-                .await?;
+            let runtime = Build::<v6::ModelRuntime<f16, 1>>::build(builder).await?;
             JobRuntime::new(runtime).await
         }
     };

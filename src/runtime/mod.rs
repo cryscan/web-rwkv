@@ -7,6 +7,7 @@ pub mod loader;
 pub mod model;
 pub mod run;
 pub mod softmax;
+pub mod v5;
 pub mod v6;
 
 /// A [`Job`] to be executed on GPU.

@@ -35,8 +35,6 @@ pub struct Model {
 
 impl Model {
     pub const RESCALE_LAYER: usize = 6;
-    pub const TIME_MIX_ADAPTER_SIZE: usize = 32;
-    pub const TIME_DECAY_ADAPTER_SIZE: usize = 64;
 
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
@@ -57,20 +55,13 @@ pub struct LayerNorm {
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Att {
-    pub time_decay: TensorGpu<f16, ReadWrite>,
+    pub time_decay: TensorGpu<f32, ReadWrite>,
     pub time_first: TensorGpu<f32, ReadWrite>,
 
-    pub time_mix_x: TensorGpu<f16, ReadWrite>,
-    pub time_mix_w: TensorGpu<f16, ReadWrite>,
     pub time_mix_k: TensorGpu<f16, ReadWrite>,
     pub time_mix_v: TensorGpu<f16, ReadWrite>,
     pub time_mix_r: TensorGpu<f16, ReadWrite>,
     pub time_mix_g: TensorGpu<f16, ReadWrite>,
-
-    pub time_decay_w1: Matrix,
-    pub time_decay_w2: Matrix,
-    pub time_mix_w1: Matrix,
-    pub time_mix_w2: Matrix,
 
     pub w_k: Matrix,
     pub w_v: Matrix,
@@ -152,33 +143,20 @@ impl<const N: usize> DeepClone for State<N> {
 
 #[derive(Debug)]
 pub struct Runtime<F: Float> {
-    pub cursors: TensorGpu<u32, ReadWrite>,
     pub tokens: TensorGpu<u32, ReadWrite>,
+    pub cursors: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<F, ReadWrite>,
 
     pub att_x: TensorGpu<F, ReadWrite>,
-    pub att_xx: TensorGpu<F, ReadWrite>,
-    /// Token shifted time decay input, `[C, T]`.
-    pub att_wx: TensorGpu<F, ReadWrite>,
     pub att_kx: TensorGpu<F, ReadWrite>,
     pub att_vx: TensorGpu<F, ReadWrite>,
     pub att_rx: TensorGpu<F, ReadWrite>,
     pub att_gx: TensorGpu<F, ReadWrite>,
-    /// Time decay LoRA intermediate, `[64, T]`.
-    pub att_w: TensorGpu<F, ReadWrite>,
     pub att_k: TensorGpu<f32, ReadWrite>,
     pub att_v: TensorGpu<f32, ReadWrite>,
     pub att_r: TensorGpu<f32, ReadWrite>,
     pub att_g: TensorGpu<F, ReadWrite>,
     pub att_o: TensorGpu<F, ReadWrite>,
-
-    /// Token shift LoRA intermediate, `[32, 5, T]`.
-    pub time_mix_x: TensorGpu<F, ReadWrite>,
-    /// Token shift LoRA intermediate transposed, `[32, T, 5]`.
-    pub time_mix_t: TensorGpu<F, ReadWrite>,
-    /// Token shift LoRA output, `[C, T, 5]`.
-    pub time_mix: TensorGpu<F, ReadWrite>,
-    pub time_decay: TensorGpu<f32, ReadWrite>,
 
     pub ffn_x: TensorGpu<F, ReadWrite>,
     pub ffn_kx: TensorGpu<F, ReadWrite>,
@@ -196,32 +174,21 @@ impl<F: Float> Runtime<F> {
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
-        let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
-        let time_mix_x_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, 5, num_token, 1);
-        let time_mix_t_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, num_token, 5, 1);
-        let time_decay_shape = Shape::new(Model::TIME_DECAY_ADAPTER_SIZE, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
             tokens: context.tensor_init(tokens_shape),
             input: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
-            att_xx: context.tensor_init(shape),
-            att_wx: context.tensor_init(shape),
             att_kx: context.tensor_init(shape),
             att_vx: context.tensor_init(shape),
             att_rx: context.tensor_init(shape),
             att_gx: context.tensor_init(shape),
-            att_w: context.tensor_init(time_decay_shape),
             att_k: context.tensor_init(shape),
             att_v: context.tensor_init(shape),
             att_r: context.tensor_init(shape),
             att_g: context.tensor_init(shape),
             att_o: context.tensor_init(shape),
-            time_mix_x: context.tensor_init(time_mix_x_shape),
-            time_mix_t: context.tensor_init(time_mix_t_shape),
-            time_mix: context.tensor_init(time_mix_shape),
-            time_decay: context.tensor_init(shape),
             ffn_x: context.tensor_init(shape),
             ffn_kx: context.tensor_init(shape),
             ffn_rx: context.tensor_init(shape),
@@ -259,16 +226,6 @@ pub enum Hook {
     PostAttLayerNorm(usize),
     PreAttTokenShift(usize),
     PostAttTokenShift(usize),
-    PreAttTokenShiftAdapt(usize),
-    PostAttTokenShiftAdapt(usize),
-    PostAttTokenShiftAdaptActivate(usize),
-    PreAttGatedTokenShift(usize),
-    PostAttGatedTokenShift(usize),
-    PreAttTimeDecayAdapt(usize),
-    PostAttTimeDecayAdapt(usize),
-    PostAttTimeDecayAdaptActivate(usize),
-    PreAttTimeDecayActivate(usize),
-    PostAttTimeDecayActivate(usize),
     PreAttLinear(usize),
     PostAttLinear(usize),
     PreAttTimeMix(usize),
@@ -460,15 +417,9 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                 Dimension(1),
                 Dimension(1),
             )?;
-            let time_decay = buffer.time_decay.reshape(
+            let time_decay = layer.att.time_decay.reshape(
                 Dimension(head_size),
                 Auto,
-                Dimension(num_token),
-                Dimension(1),
-            )?;
-            let time_mix_x = buffer.time_mix_x.reshape(
-                Auto,
-                Dimension(num_token),
                 Dimension(1),
                 Dimension(1),
             )?;
@@ -512,94 +463,37 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                 hook_op(Hook::PreAttTokenShift(index))?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    layer.att.time_mix_x.view(.., .., .., ..)?,
-                    state.att(index)?,
-                    &buffer.att_x,
-                    &buffer.att_xx,
-                    true,
-                )?,
-                hook_op(Hook::PostAttTokenShift(index))?,
-                hook_op(Hook::PreAttTokenShiftAdapt(index))?,
-                layer.att.time_mix_w1.matmul_op(
-                    buffer.att_xx.view(.., .., .., ..)?,
-                    time_mix_x.view(.., .., .., ..)?,
-                    Activation::Tanh,
-                    turbo(num_token),
-                )?,
-                TensorOp::transpose(
-                    buffer.time_mix_x.view(.., .., .., ..)?,
-                    buffer.time_mix_t.view(.., .., .., ..)?,
-                )?,
-                hook_op(Hook::PostAttTokenShiftAdaptActivate(index))?,
-                layer.att.time_mix_w2.matmul_op(
-                    buffer.time_mix_t.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_token),
-                )?,
-                hook_op(Hook::PostAttTokenShiftAdapt(index))?,
-                TensorOp::add(
-                    layer.att.time_mix_w.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 0, ..)?,
-                )?,
-                TensorOp::add(
                     layer.att.time_mix_k.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 1, ..)?,
-                )?,
-                TensorOp::add(
-                    layer.att.time_mix_v.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 2, ..)?,
-                )?,
-                TensorOp::add(
-                    layer.att.time_mix_r.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 3, ..)?,
-                )?,
-                TensorOp::add(
-                    layer.att.time_mix_g.view(.., .., .., ..)?,
-                    buffer.time_mix.view(.., .., 4, ..)?,
-                )?,
-                hook_op(Hook::PreAttGatedTokenShift(index))?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    buffer.time_mix.view(.., .., 0, ..)?,
-                    state.att(index)?,
-                    &buffer.att_x,
-                    &buffer.att_wx,
-                    true,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    buffer.time_mix.view(.., .., 1, ..)?,
                     state.att(index)?,
                     &buffer.att_x,
                     &buffer.att_kx,
-                    true,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    buffer.time_mix.view(.., .., 2, ..)?,
+                    layer.att.time_mix_v.view(.., .., .., ..)?,
                     state.att(index)?,
                     &buffer.att_x,
                     &buffer.att_vx,
-                    true,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    buffer.time_mix.view(.., .., 3, ..)?,
+                    layer.att.time_mix_r.view(.., .., .., ..)?,
                     state.att(index)?,
                     &buffer.att_x,
                     &buffer.att_rx,
-                    true,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
-                    buffer.time_mix.view(.., .., 4, ..)?,
+                    layer.att.time_mix_g.view(.., .., .., ..)?,
                     state.att(index)?,
                     &buffer.att_x,
                     &buffer.att_gx,
-                    true,
+                    false,
                 )?,
-                hook_op(Hook::PostAttGatedTokenShift(index))?,
+                hook_op(Hook::PostAttTokenShift(index))?,
                 hook_op(Hook::PreAttLinear(index))?,
                 layer.att.w_k.matmul_op(
                     buffer.att_kx.view(.., .., .., ..)?,
@@ -626,34 +520,12 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                     turbo(num_token),
                 )?,
                 hook_op(Hook::PostAttLinear(index))?,
-                hook_op(Hook::PreAttTimeDecayAdapt(index))?,
-                layer.att.time_decay_w1.matmul_op(
-                    buffer.att_wx.view(.., .., .., ..)?,
-                    buffer.att_w.view(.., .., .., ..)?,
-                    Activation::Tanh,
-                    turbo(num_token),
-                )?,
-                hook_op(Hook::PostAttTimeDecayAdaptActivate(index))?,
-                layer.att.time_decay_w2.matmul_op(
-                    buffer.att_w.view(.., .., .., ..)?,
-                    buffer.time_decay.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_token),
-                )?,
-                hook_op(Hook::PostAttTimeDecayAdapt(index))?,
-                TensorOp::add(
-                    layer.att.time_decay.view(.., .., .., ..)?,
-                    buffer.time_decay.view(.., .., .., ..)?,
-                )?,
-                hook_op(Hook::PreAttTimeDecayActivate(index))?,
-                TensorOp::stable_exp(&buffer.time_decay)?,
-                hook_op(Hook::PostAttTimeDecayActivate(index))?,
                 hook_op(Hook::PreAttTimeMix(index))?,
                 TensorOp::blit(
                     buffer.att_x.view(.., .., .., ..)?,
                     buffer.aux_x.view(.., .., .., ..)?,
                 )?,
-                TensorOp::time_mix_v6(
+                TensorOp::time_mix_v5(
                     &buffer.cursors,
                     &time_decay,
                     &time_first,
@@ -716,7 +588,7 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                     state.ffn(index)?,
                     &buffer.ffn_x,
                     &buffer.ffn_kx,
-                    true,
+                    false,
                 )?,
                 TensorOp::token_shift(
                     &buffer.cursors,
@@ -724,7 +596,7 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                     state.ffn(index)?,
                     &buffer.ffn_x,
                     &buffer.ffn_rx,
-                    true,
+                    false,
                 )?,
                 hook_op(Hook::PostFfnTokenShift(index))?,
                 hook_op(Hook::PreFfnLinear(index))?,
@@ -775,7 +647,7 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                 pass.execute_tensor_op(&op);
             }
 
-            if index != model.info.num_layer - 1 {
+            if index != info.num_layer - 1 {
                 encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
             }
         }
@@ -879,24 +751,14 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             };
 
             let att = format!("blocks.{layer}.att");
-            let time_decay = loader.load_vector_f16(format!("{att}.time_decay")).await?;
+            let time_decay = loader
+                .load_vector_exp_exp_f32(format!("{att}.time_decay"))
+                .await?;
             let time_first = loader.load_vector_f32(format!("{att}.time_first")).await?;
-            let time_mix_x = loader.load_vector_f16(format!("{att}.time_mix_x")).await?;
-            let time_mix_w = loader.load_vector_f16(format!("{att}.time_mix_w")).await?;
             let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k")).await?;
             let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v")).await?;
             let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r")).await?;
             let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g")).await?;
-
-            let time_decay_w1 = loader
-                .load_matrix_f16(format!("{att}.time_decay_w1"))
-                .await?;
-            let time_decay_w2 = loader
-                .load_matrix_f16(format!("{att}.time_decay_w2"))
-                .await?;
-
-            let time_mix_w1 = loader.load_matrix_f16(format!("{att}.time_mix_w1")).await?;
-            let time_mix_w2 = loader.load_matrix_f16(format!("{att}.time_mix_w2")).await?;
 
             let group_norm = LayerNorm {
                 w: loader
@@ -922,16 +784,10 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             let att = Att {
                 time_decay,
                 time_first,
-                time_mix_x,
-                time_mix_w,
                 time_mix_k,
                 time_mix_v,
                 time_mix_r,
                 time_mix_g,
-                time_decay_w1: Matrix::Fp16(time_decay_w1),
-                time_decay_w2: Matrix::Fp16(time_decay_w2),
-                time_mix_w1: Matrix::Fp16(time_mix_w1),
-                time_mix_w2: Matrix::Fp16(time_mix_w2),
                 w_k: load_matrix(format!("{att}.key.weight"), quant).await?,
                 w_v: load_matrix(format!("{att}.value.weight"), quant).await?,
                 w_r: load_matrix(format!("{att}.receptance.weight"), quant).await?,
