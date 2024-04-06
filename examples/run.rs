@@ -192,9 +192,6 @@ async fn main() -> Result<()> {
             let word = String::from_utf8_lossy(&decoded);
             print!("{}", word);
             std::io::stdout().flush().unwrap();
-        } else {
-            print!(".");
-            std::io::stdout().flush().unwrap();
         }
     }
 
