@@ -85,7 +85,7 @@ pub struct RunInput<const N: usize> {
 impl<const N: usize> RunInput<N> {
     pub fn new(batches: [(Vec<u16>, RunOption); N], token_chunk_size: usize) -> Self {
         let token_chunk_size = token_chunk_size
-            .min(MIN_TOKEN_CHUNK_SIZE)
+            .max(MIN_TOKEN_CHUNK_SIZE)
             .next_multiple_of(MIN_TOKEN_CHUNK_SIZE);
         Self {
             batches,
