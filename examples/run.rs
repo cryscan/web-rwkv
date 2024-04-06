@@ -202,13 +202,13 @@ async fn main() -> Result<()> {
     let duration = instant.elapsed();
 
     println!(
-        "\n\nPrefill: {} tokens, {} mills, {} tps.",
+        "\n\nPrefill:\t{} tokens,\t{} mills,\t{} tps",
         prompt_len,
         prefill.as_millis(),
         prompt_len as f64 / prefill.as_secs_f64()
     );
     println!(
-        "Generation: {} tokens, {} mills, {} tps.",
+        "Generation:\t{} tokens,\t{} mills,\t{} tps",
         num_token,
         duration.as_millis(),
         num_token as f64 / duration.as_secs_f64()
