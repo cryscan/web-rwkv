@@ -103,6 +103,8 @@ struct Cli {
     quant: usize,
     #[arg(long, value_name = "LAYERS", default_value_t = 0)]
     quant_nf4: usize,
+    #[arg(short, long, action)]
+    turbo: bool,
     #[arg(short, long)]
     embed_device: Option<EmbedDevice>,
     #[arg(long, default_value_t = 32)]
@@ -149,7 +151,7 @@ async fn main() -> Result<()> {
                 .with_quant(quant)
                 .build()
                 .await?;
-            JobRuntime::start(runtime).await
+            JobRuntime::new(runtime).await
         }
     };
 
@@ -159,9 +161,8 @@ async fn main() -> Result<()> {
     let mut prompt = RunInput::new([(tokens, RunOption::Last)], cli.token_chunk_size);
 
     let mut read = false;
-    let mut instant;
+    let mut instant = Instant::now();
     let mut prefill = Duration::ZERO;
-    let mut duration = Duration::ZERO;
 
     let num_token = 500;
     for _ in 0..num_token {
@@ -169,17 +170,15 @@ async fn main() -> Result<()> {
         let input = prompt.clone();
         let submission = Submission { input, sender };
 
-        instant = Instant::now();
-        let _ = runtime.send(submission);
+        let _ = runtime.send_async(submission).await;
         let (input, output) = receiver.recv_async().await?;
         prompt = input;
-        duration += instant.elapsed();
 
         if output[0].size() > 0 {
             if !read {
                 print!("\n{}", PROMPT);
-                prefill = duration;
-                duration = Duration::ZERO;
+                prefill = instant.elapsed();
+                instant = Instant::now();
                 read = true;
             }
 
@@ -191,9 +190,10 @@ async fn main() -> Result<()> {
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);
             print!("{}", word);
-            std::io::stdout().flush().unwrap();
         }
     }
+
+    let duration = instant.elapsed();
 
     println!();
     println!(

@@ -2,6 +2,7 @@ use std::future::Future;
 
 use anyhow::Result;
 use flume::{Receiver, Sender};
+use web_rwkv_derive::Deref;
 
 pub mod loader;
 pub mod model;
@@ -20,15 +21,11 @@ pub trait Job: Sized + Send + 'static {
 
 pub trait JobBuilder: Send + 'static {
     type Seed;
-    type Input: JobInput;
-    type Output;
+    type Job: Job;
 
     /// Build a [`Job`] from the given seed.
     /// This usually involves creating a list of GPU commands (but not actually execution).
-    fn build(
-        &self,
-        seed: Self::Seed,
-    ) -> Result<impl Job<Input = <Self::Input as JobInput>::Chunk, Output = Self::Output>>;
+    fn build(&self, seed: Self::Seed) -> Result<Self::Job>;
 }
 
 #[derive(Debug, Clone)]
@@ -47,31 +44,36 @@ pub trait JobInput: Send + 'static {
     fn chunk(&self) -> Self::Chunk;
 }
 
-#[derive(Debug, Clone)]
-pub struct JobRuntime<I, O>(Receiver<Submission<I, O>>);
+#[derive(Debug, Clone, Deref)]
+pub struct JobRuntime<I, O>(Sender<Submission<I, O>>);
 
-impl<T, F, I, O> JobRuntime<I, O>
+#[allow(clippy::type_complexity)]
+impl<I, O, T, F> JobRuntime<I, O>
 where
-    T: Send,
-    F: Iterator<Item = T> + Send,
+    T: Send + 'static,
+    F: Iterator<Item = T> + Send + 'static,
     I: JobInput,
     O: Send + 'static,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn start(
-        builder: impl JobBuilder<Seed = T, Input = I, Output = O>,
-    ) -> Sender<Submission<I, O>> {
+    pub async fn new<J>(builder: impl JobBuilder<Seed = T, Job = J>) -> Self
+    where
+        J: Job<Input = I::Chunk, Output = O>,
+    {
         let (sender, receiver) = flume::unbounded();
-        let runtime = JobRuntime(receiver);
-        tokio::spawn(async move {
-            runtime.run(builder).await.expect("runtime error");
-        });
-        sender
+        tokio::spawn(Self::run(builder, receiver));
+        Self(sender)
     }
 
-    async fn run(&self, builder: impl JobBuilder<Seed = T, Input = I, Output = O>) -> Result<()> {
-        let mut predict = None;
-        while let Ok(Submission { mut input, sender }) = self.0.recv_async().await {
+    async fn run<J>(
+        builder: impl JobBuilder<Seed = T, Job = J>,
+        receiver: Receiver<Submission<I, O>>,
+    ) -> Result<()>
+    where
+        J: Job<Input = I::Chunk, Output = O>,
+    {
+        let mut predict: Option<J> = None;
+        while let Ok(Submission { mut input, sender }) = receiver.recv_async().await {
             let mut iter = (&input).into_iter();
             let Some(info) = iter.next() else {
                 continue;

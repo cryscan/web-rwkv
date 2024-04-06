@@ -213,22 +213,19 @@ where
     let mut read = false;
     let mut count = 0usize;
 
-    let mut instant;
+    let mut instant = Instant::now();
     let mut prefill = Duration::ZERO;
-    let mut duration = Duration::ZERO;
 
     let num_tokens = 500;
     while count < num_tokens {
-        instant = Instant::now();
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
-        duration += instant.elapsed();
 
         if let ModelOutput::Last(probs) = &probs[0] {
             if !read {
                 print!("\n{}", PROMPT);
-                prefill = duration;
-                duration = Duration::ZERO;
+                prefill = instant.elapsed();
+                instant = Instant::now();
                 read = true;
             }
 
@@ -245,6 +242,8 @@ where
             std::io::stdout().flush().unwrap();
         }
     }
+
+    let duration = instant.elapsed();
 
     println!();
     println!(

@@ -81,6 +81,3 @@ required-features = ["vanilla"]
 [[example]]
 name = "run"
 required-features = ["runtime"]
-
-[profile.release]
-lto = false

@@ -10,8 +10,8 @@ use wgpu::CommandBuffer;
 use super::{
     loader::{Loader, Reader},
     model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
-    run::{RunInfo, RunInput, RunOutput, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
-    Job, JobBuilder, JobInput,
+    run::{RunInfo, RunOutput, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
+    Job, JobBuilder,
 };
 use crate::{
     context::Context,
@@ -283,7 +283,7 @@ pub enum Hook {
     PostHead,
 }
 
-struct RunJob<F: Float> {
+pub struct RunJob<F: Float> {
     command: CommandBuffer,
     redirect: RunRedirect,
 
@@ -383,13 +383,9 @@ pub struct ModelRuntime<F: Float, const N: usize> {
 
 impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
     type Seed = RunInfo<N>;
-    type Input = RunInput<N>;
-    type Output = RunOutput<F>;
+    type Job = RunJob<F>;
 
-    fn build(
-        &self,
-        seed: Self::Seed,
-    ) -> Result<impl Job<Input = <Self::Input as JobInput>::Chunk, Output = Self::Output>> {
+    fn build(&self, seed: Self::Seed) -> Result<Self::Job> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
