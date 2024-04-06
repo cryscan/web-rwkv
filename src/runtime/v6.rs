@@ -294,7 +294,7 @@ pub enum Hook {
 }
 
 pub struct RunJob<F: Float> {
-    command: CommandBuffer,
+    command: Option<CommandBuffer>,
     redirect: RunRedirect,
 
     embed_device: EmbedDevice,
@@ -354,8 +354,12 @@ impl<F: Float> Job for RunJob<F> {
         Ok(self)
     }
 
-    async fn submit(self) -> Result<Self::Output> {
-        self.output.context.queue.submit(Some(self.command));
+    fn submit(&mut self) {
+        let command = self.command.take();
+        self.output.context.queue.submit(command);
+    }
+
+    async fn back(self) -> Result<Self::Output> {
         let output = self.output.back().await;
         let batches = self
             .redirect
@@ -802,7 +806,7 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
         }
 
         Ok(RunJob {
-            command: encoder.finish(),
+            command: Some(encoder.finish()),
             redirect,
             embed_device,
             embed: model.tensor.embed.w.clone(),

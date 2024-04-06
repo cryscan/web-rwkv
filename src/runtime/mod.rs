@@ -15,8 +15,12 @@ pub trait Job: Sized + Send + 'static {
     type Input;
     type Output;
 
+    /// Load the data from CPU to GPU.
     fn load(self, input: &Self::Input) -> Result<Self>;
-    fn submit(self) -> impl Future<Output = Result<Self::Output>> + Send + 'static;
+    /// Submit the job to GPU and execute it immediately.
+    fn submit(&mut self);
+    /// Wait for the job to finish and read the data back.
+    fn back(self) -> impl Future<Output = Result<Self::Output>> + Send + 'static;
 }
 
 pub trait JobBuilder: Send + 'static {
@@ -85,12 +89,13 @@ where
             fn load<J: Job>(job: J, input: &J::Input) -> Option<J> {
                 job.load(input).ok()
             }
-            let job = match predict.take().and_then(|job| load(job, &chunk)) {
+            let mut job = match predict.take().and_then(|job| load(job, &chunk)) {
                 Some(job) => job,
                 None => builder.build(info)?.load(&chunk)?,
             };
 
-            let handle = tokio::spawn(job.submit());
+            job.submit();
+            let handle = tokio::spawn(job.back());
 
             predict = match next {
                 Some(info) => Some(builder.build(info)?),
