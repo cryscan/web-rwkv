@@ -346,25 +346,13 @@ impl<F: Float> Job for RunJob<F> {
 
     async fn submit(self) -> Result<Self::Output> {
         self.output.context.queue.submit(Some(self.command));
-        let batches = match self.redirect.headers.len() {
-            0 => {
-                let num_emb = self.embed.shape()[0];
-                let shape = Shape::new(num_emb, 0, 1, 1);
-                self.redirect
-                    .outputs
-                    .into_iter()
-                    .map(|_| TensorCpu::init(shape))
-                    .collect()
-            }
-            _ => {
-                let output = self.output.back().await;
-                self.redirect
-                    .outputs
-                    .into_iter()
-                    .map(|(start, end)| output.slice(.., start..end, .., ..))
-                    .try_collect()?
-            }
-        };
+        let output = self.output.back().await;
+        let batches = self
+            .redirect
+            .outputs
+            .into_iter()
+            .map(|(start, end)| output.slice(.., start..end, .., ..))
+            .try_collect()?;
         Ok(RunOutput(batches))
     }
 }
