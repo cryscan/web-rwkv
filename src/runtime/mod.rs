@@ -77,7 +77,7 @@ where
         J: Job<Input = I::Chunk, Output = O>,
     {
         let mut predict: Option<J> = None;
-        while let Some(Submission { mut input, sender }) = receiver.recv().await {
+        while let Some(Submission { input, sender }) = receiver.recv().await {
             let mut iter = (&input).into_iter();
             let Some(info) = iter.next() else {
                 continue;
@@ -94,17 +94,24 @@ where
                 None => builder.build(info)?.load(&chunk)?,
             };
 
+            async fn back<J: Job, I: JobInput>(
+                job: J,
+                mut input: I,
+                sender: tokio::sync::oneshot::Sender<(I, J::Output)>,
+            ) -> Result<()> {
+                let output = job.back().await?;
+                input.step();
+                let _ = sender.send((input, output));
+                Ok(())
+            }
+
             job.submit();
-            let handle = tokio::spawn(job.back());
+            tokio::spawn(back(job, input, sender));
 
             predict = match next {
                 Some(info) => Some(builder.build(info)?),
                 None => None,
             };
-
-            let output = handle.await??;
-            input.step();
-            let _ = sender.send((input, output));
         }
         Ok(())
     }

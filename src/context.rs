@@ -189,11 +189,11 @@ impl<'a> ContextBuilder {
         {
             let id = context.id;
             let context = Arc::downgrade(&context);
-            tokio::spawn(async move {
-                while let Some(event) = receiver.recv().await {
+            tokio::task::spawn_blocking(move || {
+                while let Some(event) = receiver.blocking_recv() {
                     match (event, context.upgrade()) {
                         (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
-                            let data = context.read_back_buffer(buffer).await;
+                            let data = context.read_back_buffer(buffer);
                             let _ = sender.send(data);
                         }
                         _ => break,
@@ -404,7 +404,7 @@ impl ContextInternal {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "runtime")]
-    async fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
+    fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
         assert!(buffer.usage().contains(BufferUsages::MAP_READ));
 
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -412,7 +412,7 @@ impl ContextInternal {
         slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
         self.device.poll(wgpu::MaintainBase::Wait);
-        receiver.await.unwrap().unwrap();
+        receiver.blocking_recv().unwrap().unwrap();
 
         let data = {
             let map = slice.get_mapped_range();
