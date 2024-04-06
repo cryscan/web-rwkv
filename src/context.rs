@@ -1,7 +1,5 @@
 use std::{borrow::Cow, sync::Arc};
 
-#[cfg(not(target_arch = "wasm32"))]
-use flume::Sender;
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
@@ -66,7 +64,10 @@ pub struct ContextId;
 pub enum ContextEvent {
     ReadBack {
         buffer: Arc<Buffer>,
-        sender: Sender<Box<[u8]>>,
+        #[cfg(feature = "vanilla")]
+        sender: flume::Sender<Box<[u8]>>,
+        #[cfg(feature = "runtime")]
+        sender: tokio::sync::oneshot::Sender<Box<[u8]>>,
     },
     Drop,
 }
@@ -82,7 +83,12 @@ pub struct ContextInternal {
     view_cache: ResourceCache<View, Buffer>,
 
     #[cfg(not(target_arch = "wasm32"))]
-    event: Sender<ContextEvent>,
+    #[cfg(feature = "vanilla")]
+    event: flume::Sender<ContextEvent>,
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "runtime")]
+    event: tokio::sync::mpsc::UnboundedSender<ContextEvent>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -141,7 +147,10 @@ impl<'a> ContextBuilder {
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
         #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "vanilla")]
         let (sender, receiver) = flume::unbounded();
+        #[cfg(feature = "runtime")]
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
 
         let context = Arc::new(ContextInternal {
             id: uid::Id::new(),
@@ -157,6 +166,7 @@ impl<'a> ContextBuilder {
 
         // start a thread for reading back buffers
         #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "vanilla")]
         {
             let id = context.id;
             let context = Arc::downgrade(&context);
@@ -165,6 +175,25 @@ impl<'a> ContextBuilder {
                     match (event, context.upgrade()) {
                         (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
                             let data = context.read_back_buffer(buffer);
+                            let _ = sender.send(data);
+                        }
+                        _ => break,
+                    }
+                }
+                log::info!("context {} destroyed", id);
+            });
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "runtime")]
+        {
+            let id = context.id;
+            let context = Arc::downgrade(&context);
+            tokio::spawn(async move {
+                while let Some(event) = receiver.recv().await {
+                    match (event, context.upgrade()) {
+                        (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
+                            let data = context.read_back_buffer(buffer).await;
                             let _ = sender.send(data);
                         }
                         _ => break,
@@ -342,11 +371,19 @@ impl ContextInternal {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn event(&self) -> Sender<ContextEvent> {
+    #[cfg(feature = "vanilla")]
+    pub(crate) fn event(&self) -> flume::Sender<ContextEvent> {
         self.event.clone()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "runtime")]
+    pub(crate) fn event(&self) -> tokio::sync::mpsc::UnboundedSender<ContextEvent> {
+        self.event.clone()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "vanilla")]
     fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
         assert!(buffer.usage().contains(BufferUsages::MAP_READ));
 
@@ -356,6 +393,26 @@ impl ContextInternal {
 
         self.device.poll(wgpu::MaintainBase::Wait);
         receiver.recv().unwrap().unwrap();
+
+        let data = {
+            let map = slice.get_mapped_range();
+            map.to_vec().into_boxed_slice()
+        };
+        buffer.unmap();
+        data
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "runtime")]
+    async fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
+        assert!(buffer.usage().contains(BufferUsages::MAP_READ));
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+        self.device.poll(wgpu::MaintainBase::Wait);
+        receiver.await.unwrap().unwrap();
 
         let data = {
             let map = slice.get_mapped_range();

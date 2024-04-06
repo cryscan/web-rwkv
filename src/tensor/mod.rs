@@ -496,13 +496,19 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
         context.queue.submit(Some(encoder.finish()));
 
+        #[cfg(feature = "vanilla")]
         let (sender, receiver) = flume::unbounded();
+        #[cfg(feature = "runtime")]
+        let (sender, receiver) = tokio::sync::oneshot::channel();
 
         let _ = context.event().send(ContextEvent::ReadBack {
             buffer: map,
             sender,
         });
+        #[cfg(feature = "vanilla")]
         let data = receiver.recv().unwrap();
+        #[cfg(feature = "runtime")]
+        let data = receiver.blocking_recv().unwrap();
         let data = unsafe {
             let data = Box::leak(data);
             let len = data.len() / std::mem::size_of::<T>();
@@ -533,13 +539,19 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
         context.queue.submit(Some(encoder.finish()));
 
+        #[cfg(feature = "vanilla")]
         let (sender, receiver) = flume::unbounded();
+        #[cfg(feature = "runtime")]
+        let (sender, receiver) = tokio::sync::oneshot::channel();
 
         let _ = context.event().send(ContextEvent::ReadBack {
             buffer: map,
             sender,
         });
+        #[cfg(feature = "vanilla")]
         let data = receiver.recv_async().await.unwrap();
+        #[cfg(feature = "runtime")]
+        let data = receiver.await.unwrap();
         let data = unsafe {
             let data = Box::leak(data);
             let len = data.len() / std::mem::size_of::<T>();
