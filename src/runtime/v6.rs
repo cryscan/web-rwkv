@@ -457,9 +457,10 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
             let state = state.clone();
             let buffer = buffer.clone();
             tasks.spawn_blocking(move || {
-                let command =
-                    Self::build_layer(context, layer, state, buffer, index, num_token, head_size)?;
-                Ok((index + 32, command))
+                Ok((
+                    index + 32,
+                    Self::build_layer(context, layer, state, buffer, index, num_token, head_size)?,
+                ))
             });
         }
 
@@ -468,9 +469,10 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
             let head = model.tensor.head.clone();
             let header = header.clone();
             tasks.spawn_blocking(move || {
-                let command =
-                    Self::build_header(context, head, header, head_x, num_header, head_ops)?;
-                Ok((usize::MAX, command))
+                Ok((
+                    usize::MAX,
+                    Self::build_header(context, head, header, head_x, num_header, head_ops)?,
+                ))
             });
         }
 
