@@ -57,6 +57,12 @@ impl Shape {
     }
 }
 
+impl From<[usize; 4]> for Shape {
+    fn from(value: [usize; 4]) -> Self {
+        Self(value)
+    }
+}
+
 impl IntoBytes for Shape {
     fn into_bytes(self) -> Vec<u8> {
         let data = self.0.map(|x| x as u32);

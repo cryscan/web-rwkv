@@ -992,12 +992,18 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = output.shape();
-        input.check_shape(shape)?;
-        time_mix
-            .check_shape(Shape::new(shape[0], 1, 1, 1))
-            .or(time_mix.check_shape(shape))?;
-        sx.check_shape(Shape::new(shape[0], sx.shape()[1], sx.shape()[2], 1))?;
+        let shape = {
+            let [index, token, item, _] = *output.shape();
+            let [_, head, batch, _] = *sx.shape();
+            input
+                .check_shape([index, token, 1, 1])
+                .or(input.check_shape([index, token, item, 1]))?;
+            time_mix
+                .check_shape([index, 1, 1, 1])
+                .or(time_mix.check_shape([index, token, item, 1]))?;
+            sx.check_shape([index, head, batch, 1])?;
+            output.shape()
+        };
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
@@ -1018,30 +1024,34 @@ impl TensorOp {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: time_mix.meta_binding(),
+                    resource: output.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: sx.meta_binding(),
+                    resource: time_mix.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: cursors.binding(),
+                    resource: sx.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: time_mix.binding(),
+                    resource: cursors.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: sx.binding(),
+                    resource: time_mix.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: input.binding(),
+                    resource: sx.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
+                    resource: input.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
                     resource: output.binding(),
                 },
             ],
@@ -1053,7 +1063,7 @@ impl TensorOp {
             dispatch: [
                 Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
-                1,
+                shape[2] as u32,
             ],
         })
     }

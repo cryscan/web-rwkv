@@ -221,7 +221,8 @@ where
 pub trait TensorShape: Sized {
     fn shape(&self) -> Shape;
 
-    fn check_shape(&self, shape: Shape) -> Result<(), TensorError> {
+    fn check_shape(&self, shape: impl Into<Shape>) -> Result<(), TensorError> {
+        let shape = shape.into();
         (self.shape() == shape)
             .then_some(())
             .ok_or(TensorError::Shape(self.shape(), shape))
