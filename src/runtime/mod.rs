@@ -20,7 +20,7 @@ pub trait Job: Sized + Send + 'static {
     /// Submit the job to GPU and execute it immediately.
     fn submit(&mut self);
     /// Wait for the job to finish and read the data back.
-    fn back(self) -> impl Future<Output = Result<Self::Output>> + Send + 'static;
+    fn back(self) -> impl Future<Output = Result<Self::Output>> + Send;
 }
 
 pub trait JobBuilder: Send + 'static {

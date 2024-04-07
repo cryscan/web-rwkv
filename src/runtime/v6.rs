@@ -449,16 +449,13 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
 
         let mut tasks = tokio::task::JoinSet::new();
         for (index, layer) in tensor.layers.iter().enumerate() {
-            tasks.spawn(Self::build_layer(
-                index,
-                context.clone(),
-                info.clone(),
-                layer.clone(),
-                state.clone(),
-                buffer.clone(),
-                num_token,
-                head_size,
-            ));
+            let context = context.clone();
+            let layer = layer.clone();
+            let state = state.clone();
+            let buffer = buffer.clone();
+            tasks.spawn_blocking(move || {
+                Self::build_layer(index, context, layer, state, buffer, num_token, head_size)
+            });
         }
 
         let mut subcommands = vec![];
@@ -514,16 +511,16 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
 
 impl<F: Float, const N: usize> ModelRuntime<F, N> {
     #[allow(clippy::too_many_arguments)]
-    async fn build_layer(
+    fn build_layer(
         index: usize,
         context: Context,
-        info: ModelInfo,
         layer: Layer,
         state: State<N>,
         buffer: Runtime<F>,
         num_token: usize,
         head_size: usize,
     ) -> Result<(usize, CommandBuffer)> {
+        let info = &state.info;
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
         use TensorDimension::{Auto, Dimension};
