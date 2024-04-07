@@ -21,7 +21,7 @@ use web_rwkv::{
         model::{Build, ModelBuilder, ModelInfo, ModelVersion, Quant},
         run::{RunInput, RunOption},
         softmax::softmax,
-        v5, v6, JobRuntime, Submission,
+        v4, v5, v6, JobRuntime, Submission,
     },
     tokenizer::Tokenizer,
 };
@@ -146,7 +146,10 @@ async fn main() -> Result<()> {
         .with_quant(quant);
 
     let runtime = match info.version {
-        ModelVersion::V4 => todo!(),
+        ModelVersion::V4 => {
+            let runtime = Build::<v4::ModelRuntime<f16, 1>>::build(builder).await?;
+            JobRuntime::new(runtime).await
+        }
         ModelVersion::V5 => {
             let runtime = Build::<v5::ModelRuntime<f16, 1>>::build(builder).await?;
             JobRuntime::new(runtime).await
