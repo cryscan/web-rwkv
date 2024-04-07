@@ -201,21 +201,8 @@ pub trait TensorInit<'a, T: Scalar>: Sized {
     fn init(shape: Shape) -> Self;
 }
 
-pub trait TensorFrom<From> {
-    fn transfer_from(context: &Context, value: From) -> Self;
-}
-
 pub trait TensorInto<Into> {
     fn transfer_into(self, context: &Context) -> Into;
-}
-
-impl<From, Into> TensorInto<Into> for From
-where
-    Into: TensorFrom<From>,
-{
-    fn transfer_into(self, context: &Context) -> Into {
-        Into::transfer_from(context, self)
-    }
 }
 
 pub trait TensorShape: Sized {
@@ -347,9 +334,9 @@ impl<'a, T: Scalar> TensorInitContext<'a, T> for TensorCpu<'a, T> {
     }
 }
 
-impl<'a, T: Scalar> TensorFrom<TensorCpu<'a, T>> for TensorCpu<'a, T> {
-    fn transfer_from(_context: &Context, value: TensorCpu<'a, T>) -> Self {
-        value
+impl<'a, T: Scalar> TensorInto<TensorCpu<'a, T>> for TensorCpu<'a, T> {
+    fn transfer_into(self, _: &Context) -> Self {
+        self
     }
 }
 
@@ -412,15 +399,14 @@ impl<'a, T: Scalar, K: Kind> TensorInitContext<'a, T> for TensorGpu<T, K> {
     }
 }
 
-impl<'a, T: Scalar, K: Kind> TensorFrom<TensorCpu<'a, T>> for TensorGpu<T, K> {
-    fn transfer_from(context: &Context, value: TensorCpu<'a, T>) -> Self {
-        let Tensor { shape, data, .. } = value;
+impl<'a, T: Scalar, K: Kind> TensorInto<TensorGpu<T, K>> for TensorCpu<'a, T> {
+    fn transfer_into(self, context: &Context) -> TensorGpu<T, K> {
+        let Tensor { shape, data, .. } = self;
         let context = context.clone();
         let meta = context.checkout_shape_uniform(shape);
         let contents = bytemuck::cast_slice(&data);
         let buffer = context.checkout_buffer_init(contents, K::buffer_usages());
-
-        Self {
+        TensorGpu {
             shape,
             data: TensorGpuData {
                 context,
@@ -433,19 +419,19 @@ impl<'a, T: Scalar, K: Kind> TensorFrom<TensorCpu<'a, T>> for TensorGpu<T, K> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl<T: Scalar> TensorFrom<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
-    fn transfer_from(context: &Context, value: TensorGpu<T, ReadWrite>) -> Self {
+impl<T: Scalar> TensorInto<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
+    fn transfer_into(self, context: &Context) -> Self {
         match context {
-            context if context == &value.context => value,
-            _ => value.back_block().transfer_into(context),
+            context if context == &self.context => self,
+            _ => self.back_block().transfer_into(context),
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
-impl<T: Scalar> TensorFrom<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
-    fn transfer_from(_context: &Context, value: TensorGpu<T, ReadWrite>) -> Self {
-        value
+impl<T: Scalar> TensorInto<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
+    fn transfer_into(self, _: &Context) -> Self {
+        self
     }
 }
 
@@ -936,15 +922,22 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<'_, T>>> for TensorStack<'_, T> {
 
 impl<'a> Context {
     #[inline]
-    pub fn zeros<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(&self, shape: Shape) -> Tensor {
-        Tensor::transfer_from(self, TensorInit::init(shape))
+    pub fn zeros<T: Scalar, Tensor>(&self, shape: Shape) -> Tensor
+    where
+        TensorCpu<'a, T>: TensorInto<Tensor>,
+    {
+        let tensor: TensorCpu<'a, T> = TensorInit::init(shape);
+        tensor.transfer_into(self)
     }
 
     #[inline]
-    pub fn ones<T: Scalar, Tensor: TensorFrom<TensorCpu<'a, T>>>(&self, shape: Shape) -> Tensor {
+    pub fn ones<T: Scalar, Tensor>(&self, shape: Shape) -> Tensor
+    where
+        TensorCpu<'a, T>: TensorInto<Tensor>,
+    {
         let data = vec![T::one(); shape.len()];
-        let tensor = TensorInit::from_data(shape, data).unwrap();
-        Tensor::transfer_from(self, tensor)
+        let tensor: TensorCpu<'a, T> = TensorInit::from_data(shape, data).unwrap();
+        tensor.transfer_into(self)
     }
 
     #[inline]
