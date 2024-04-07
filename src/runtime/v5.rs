@@ -338,7 +338,7 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
     type Seed = RunInfo<N>;
     type Job = RunJob<F>;
 
-    fn build(&self, seed: Self::Seed) -> Result<Self::Job> {
+    async fn build(&self, seed: Self::Seed) -> Result<Self::Job> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;

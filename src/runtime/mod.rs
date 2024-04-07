@@ -29,7 +29,7 @@ pub trait JobBuilder: Send + 'static {
 
     /// Build a [`Job`] from the given seed.
     /// This usually involves creating a list of GPU commands (but not actually execution).
-    fn build(&self, seed: Self::Seed) -> Result<Self::Job>;
+    fn build(&self, seed: Self::Seed) -> impl Future<Output = Result<Self::Job>> + Send;
 }
 
 #[derive(Debug)]
@@ -91,7 +91,7 @@ where
             }
             let mut job = match predict.take().and_then(|job| load(job, &chunk)) {
                 Some(job) => job,
-                None => builder.build(info)?.load(&chunk)?,
+                None => builder.build(info).await?.load(&chunk)?,
             };
 
             async fn back<J: Job, I: JobInput>(
@@ -109,7 +109,7 @@ where
             tokio::spawn(back(job, input, sender));
 
             predict = match next {
-                Some(info) => Some(builder.build(info)?),
+                Some(info) => Some(builder.build(info).await?),
                 None => None,
             };
         }
