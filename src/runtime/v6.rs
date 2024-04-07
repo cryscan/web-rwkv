@@ -393,10 +393,10 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
         let buffer = Runtime::<F>::new(context, info, num_token);
         let header = Header::<F>::new(context, info, num_header);
 
-        let mut commands = vec![];
+        let mut tasks = tokio::task::JoinSet::new();
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
-            (TensorOp::List(vec![]), buffer.ffn_x.clone())
+            (vec![], buffer.ffn_x.clone())
         } else {
             let headers = &redirect.headers;
             let mut start = 0;
@@ -416,7 +416,7 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                 }
                 end += 1;
             }
-            (TensorOp::List(ops), header.head_x.clone())
+            (ops, header.head_x.clone())
         };
 
         let mut ops = vec![];
@@ -439,62 +439,50 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
             hook_op(Hook::PostEmbedLayerNorm)?,
         ]);
 
-        let mut encoder = context.device.create_command_encoder(&Default::default());
         {
-            let ops = TensorOp::List(ops);
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&ops);
+            let context = context.clone();
+            tasks.spawn_blocking(move || -> Result<_> {
+                let ops = TensorOp::List(ops);
+                let mut encoder = context.device.create_command_encoder(&Default::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.execute_tensor_op(&ops);
+                drop(pass);
+                Ok((0, encoder.finish()))
+            });
         }
-        commands.push(encoder.finish());
 
-        let mut tasks = tokio::task::JoinSet::new();
         for (index, layer) in tensor.layers.iter().enumerate() {
             let context = context.clone();
             let layer = layer.clone();
             let state = state.clone();
             let buffer = buffer.clone();
             tasks.spawn_blocking(move || {
-                Self::build_layer(index, context, layer, state, buffer, num_token, head_size)
+                let command =
+                    Self::build_layer(context, layer, state, buffer, index, num_token, head_size)?;
+                Ok((index + 32, command))
             });
         }
 
-        let mut subcommands = vec![];
-        while let Some(result) = tasks.join_next().await {
-            subcommands.push(result??);
+        {
+            let context = context.clone();
+            let head = model.tensor.head.clone();
+            let header = header.clone();
+            tasks.spawn_blocking(move || {
+                let command =
+                    Self::build_header(context, head, header, head_x, num_header, head_ops)?;
+                Ok((usize::MAX, command))
+            });
         }
-        let mut subcommands = subcommands
+
+        let mut commands = vec![];
+        while let Some(result) = tasks.join_next().await {
+            commands.push(result??);
+        }
+        let commands = commands
             .into_iter()
             .sorted_by_key(|x| x.0)
             .map(|x| x.1)
             .collect_vec();
-        commands.append(&mut subcommands);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        if num_header > 0 {
-            let ops = TensorOp::List(vec![
-                hook_op(Hook::PreHead)?,
-                TensorOp::layer_norm(
-                    &tensor.head.layer_norm.w,
-                    &tensor.head.layer_norm.b,
-                    &head_x,
-                    None,
-                    Model::LN_EPS,
-                )?,
-                hook_op(Hook::PostHeadLayerNorm)?,
-                tensor.head.w.matmul_op(
-                    head_x.view(.., .., .., ..)?,
-                    header.head_o.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_header),
-                )?,
-                hook_op(Hook::PostHead)?,
-            ]);
-
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&head_ops);
-            pass.execute_tensor_op(&ops);
-        }
-        commands.push(encoder.finish());
 
         Ok(RunJob {
             commands,
@@ -512,14 +500,14 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
 impl<F: Float, const N: usize> ModelRuntime<F, N> {
     #[allow(clippy::too_many_arguments)]
     fn build_layer(
-        index: usize,
         context: Context,
         layer: Layer,
         state: State<N>,
         buffer: Runtime<F>,
+        index: usize,
         num_token: usize,
         head_size: usize,
-    ) -> Result<(usize, CommandBuffer)> {
+    ) -> Result<CommandBuffer> {
         let info = &state.info;
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
@@ -798,7 +786,43 @@ impl<F: Float, const N: usize> ModelRuntime<F, N> {
             encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
         }
 
-        Ok((index, encoder.finish()))
+        Ok(encoder.finish())
+    }
+
+    fn build_header(
+        context: Context,
+        head: Head,
+        header: Header<F>,
+        head_x: TensorGpu<F, ReadWrite>,
+        num_header: usize,
+        mut ops: Vec<TensorOp>,
+    ) -> Result<CommandBuffer> {
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        if num_header > 0 {
+            ops.append(&mut vec![
+                hook_op(Hook::PreHead)?,
+                TensorOp::layer_norm(
+                    &head.layer_norm.w,
+                    &head.layer_norm.b,
+                    &head_x,
+                    None,
+                    Model::LN_EPS,
+                )?,
+                hook_op(Hook::PostHeadLayerNorm)?,
+                head.w.matmul_op(
+                    head_x.view(.., .., .., ..)?,
+                    header.head_o.view(.., .., .., ..)?,
+                    Activation::None,
+                    turbo(num_header),
+                )?,
+                hook_op(Hook::PostHead)?,
+            ]);
+            let ops = TensorOp::List(ops);
+
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&ops);
+        }
+        Ok(encoder.finish())
     }
 }
 
