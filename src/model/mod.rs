@@ -327,9 +327,13 @@ impl StateBuilder {
     }
 }
 
-impl ContextBuilder {
+pub trait ContextAutoLimits {
     /// Compute the limits automatically based on given model build info.
-    pub fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
+    fn with_auto_limits(self, info: &ModelInfo) -> Self;
+}
+
+impl ContextAutoLimits for ContextBuilder {
+    fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
         self.limits.max_buffer_size = ModelInfo::BUFFER_SIZE
             .max(info.max_non_head_buffer_size())
             .max(info.head_buffer_size()) as u64;

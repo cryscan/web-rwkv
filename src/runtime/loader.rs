@@ -56,9 +56,13 @@ impl ReaderSend for SafeTensors<'_> {
     }
 }
 
-impl<'a, T: Scalar> TensorCpu<'a, T> {
+pub trait TensorFromReader<'a, T: Scalar> {
     /// Create a tensor from safetensors reader.
-    pub fn from_reader((dt, shape, data): ReaderTensor<'a>) -> Result<Self, TensorError> {
+    fn from_reader(reader: ReaderTensor<'a>) -> Result<TensorCpu<'a, T>, TensorError>;
+}
+
+impl<'a, T: Scalar> TensorFromReader<'a, T> for TensorCpu<'a, T> {
+    fn from_reader((dt, shape, data): ReaderTensor<'a>) -> Result<Self, TensorError> {
         if T::DATA_TYPE != dt {
             return Err(TensorError::Type);
         }

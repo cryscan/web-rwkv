@@ -19,8 +19,8 @@ use web_rwkv::{
         loader::{Loader, Lora},
         run::{HookMap, ModelRun},
         softmax::ModelSoftmax,
-        v5, Build, BuildFuture, Model, ModelBuilder, ModelInfo, ModelInput, ModelOutput,
-        ModelState, ModelVersion, Quant, StateBuilder,
+        v5, Build, BuildFuture, ContextAutoLimits, Model, ModelBuilder, ModelInfo, ModelInput,
+        ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
     tensor::{
         kind::ReadWrite,

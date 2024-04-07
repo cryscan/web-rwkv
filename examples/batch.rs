@@ -30,8 +30,8 @@ use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
         loader::{Loader, Lora},
-        v4, v5, v6, Build, BuildFuture, Model, ModelBuilder, ModelInfo, ModelInput, ModelOutput,
-        ModelState, ModelVersion, Quant, StateBuilder,
+        v4, v5, v6, Build, BuildFuture, ContextAutoLimits, Model, ModelBuilder, ModelInfo,
+        ModelInput, ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };

@@ -18,7 +18,7 @@ use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     runtime::{
         loader::Loader,
-        model::{Build, ModelBuilder, ModelInfo, ModelVersion, Quant},
+        model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         run::{RunInput, RunOption},
         softmax::softmax,
         v4, v5, v6, JobRuntime, Submission,

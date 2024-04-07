@@ -64,9 +64,6 @@ pub struct ContextId;
 pub enum ContextEvent {
     ReadBack {
         buffer: Arc<Buffer>,
-        #[cfg(feature = "vanilla")]
-        sender: flume::Sender<Box<[u8]>>,
-        #[cfg(feature = "runtime")]
         sender: tokio::sync::oneshot::Sender<Box<[u8]>>,
     },
     Drop,
@@ -83,11 +80,6 @@ pub struct ContextInternal {
     view_cache: ResourceCache<View, Buffer>,
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "vanilla")]
-    event: flume::Sender<ContextEvent>,
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "runtime")]
     event: tokio::sync::mpsc::UnboundedSender<ContextEvent>,
 }
 
@@ -147,7 +139,7 @@ impl<'a> ContextBuilder {
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
         #[cfg(not(target_arch = "wasm32"))]
-        #[cfg(feature = "vanilla")]
+        #[cfg(feature = "no-runtime")]
         let (sender, receiver) = flume::unbounded();
         #[cfg(feature = "runtime")]
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -166,7 +158,7 @@ impl<'a> ContextBuilder {
 
         // start a thread for reading back buffers
         #[cfg(not(target_arch = "wasm32"))]
-        #[cfg(feature = "vanilla")]
+        #[cfg(feature = "no-runtime")]
         {
             let id = context.id;
             let context = Arc::downgrade(&context);
@@ -371,7 +363,7 @@ impl ContextInternal {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "vanilla")]
+    #[cfg(feature = "no-runtime")]
     pub(crate) fn event(&self) -> flume::Sender<ContextEvent> {
         self.event.clone()
     }
@@ -383,7 +375,7 @@ impl ContextInternal {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "vanilla")]
+    #[cfg(feature = "no-runtime")]
     fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
         assert!(buffer.usage().contains(BufferUsages::MAP_READ));
 
