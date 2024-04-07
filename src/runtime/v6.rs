@@ -111,28 +111,20 @@ pub struct Head {
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct State<const N: usize> {
     pub info: ModelInfo,
-    pub chunk_size: usize,
     pub data: Vec<TensorGpu<f32, ReadWrite>>,
 }
 
 impl<const N: usize> State<N> {
     fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
-        let chunk = layer / self.chunk_size;
-        let offset = layer % self.chunk_size;
         let head_size = self.info.num_emb / self.info.num_head;
-
-        let start = offset * (head_size + 2);
-        let end = start + head_size + 1;
-        self.data[chunk].view(.., start..end, .., ..)
+        let end = head_size + 1;
+        self.data[layer].view(.., 0..end, .., ..)
     }
 
     fn ffn(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
-        let chunk = layer / self.chunk_size;
-        let offset = layer % self.chunk_size;
         let head_size = self.info.num_emb / self.info.num_head;
-
-        let start = offset * (head_size + 2) + head_size + 1;
-        self.data[chunk].view(.., start, .., ..)
+        let start = head_size + 1;
+        self.data[layer].view(.., start, .., ..)
     }
 }
 
@@ -836,7 +828,6 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             lora,
             quant,
             embed_device,
-            state_chunk_size,
         } = self;
 
         let info = Loader::info(&model)?;
@@ -1033,15 +1024,9 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
 
         let state = {
             let head_size = info.num_emb / info.num_head;
-            let chunk_size = state_chunk_size;
-            let num_chunk = (info.num_layer + chunk_size - 1) / chunk_size;
-            let shape = Shape::new(info.num_emb, chunk_size * (head_size + 2), N, 1);
-            let data = (0..num_chunk).map(|_| context.zeros(shape)).collect();
-            State {
-                info,
-                chunk_size,
-                data,
-            }
+            let shape = Shape::new(info.num_emb, head_size + 2, N, 1);
+            let data = (0..info.num_layer).map(|_| context.zeros(shape)).collect();
+            State { info, data }
         };
 
         Ok(ModelRuntime {

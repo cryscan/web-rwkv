@@ -616,7 +616,6 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             lora,
             quant,
             embed_device,
-            ..
         } = self;
 
         let info = Loader::info(&model)?;
