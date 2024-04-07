@@ -822,33 +822,33 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             let time_decay = loader.load_vector_f16(format!("{att}.time_decay")).await?;
             let time_first = loader.load_vector_f32(format!("{att}.time_first")).await?;
             let time_mix_x = loader.load_vector_f16(format!("{att}.time_mix_x")).await?;
-            let time_mix_w = loader.load_vector_f16(format!("{att}.time_mix_w")).await?;
-            let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k")).await?;
-            let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v")).await?;
-            let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r")).await?;
-            let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g")).await?;
+            let time_mix = {
+                let time_mix: TensorGpu<_, _> = context.zeros(Shape::new(info.num_emb, 1, 5, 1));
+                let time_mix_w = loader.load_vector_f16(format!("{att}.time_mix_w")).await?;
+                let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k")).await?;
+                let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v")).await?;
+                let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r")).await?;
+                let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g")).await?;
 
-            let time_mix: TensorGpu<_, _> = context.zeros(Shape::new(info.num_emb, 1, 5, 1));
-            {
                 let mut encoder = context.device.create_command_encoder(&Default::default());
                 let ops = TensorOp::List(vec![
-                    TensorOp::add(
+                    TensorOp::blit(
                         time_mix_w.view(.., .., .., ..)?,
                         time_mix.view(.., .., 0, ..)?,
                     )?,
-                    TensorOp::add(
+                    TensorOp::blit(
                         time_mix_k.view(.., .., .., ..)?,
                         time_mix.view(.., .., 1, ..)?,
                     )?,
-                    TensorOp::add(
+                    TensorOp::blit(
                         time_mix_v.view(.., .., .., ..)?,
                         time_mix.view(.., .., 2, ..)?,
                     )?,
-                    TensorOp::add(
+                    TensorOp::blit(
                         time_mix_r.view(.., .., .., ..)?,
                         time_mix.view(.., .., 3, ..)?,
                     )?,
-                    TensorOp::add(
+                    TensorOp::blit(
                         time_mix_g.view(.., .., .., ..)?,
                         time_mix.view(.., .., 4, ..)?,
                     )?,
@@ -859,7 +859,8 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
                 drop(pass);
 
                 context.queue.submit(Some(encoder.finish()));
-            }
+                time_mix
+            };
 
             let time_decay_w1 = loader
                 .load_matrix_f16(format!("{att}.time_decay_w1"))
