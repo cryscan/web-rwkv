@@ -65,7 +65,13 @@ where
         J: Job<Input = I::Chunk, Output = O>,
     {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
-        tokio::spawn(Self::run(builder, receiver));
+        let handle = tokio::spawn(Self::run(builder, receiver));
+        tokio::spawn(async move {
+            match handle.await {
+                Ok(_) => {}
+                Err(err) => log::error!("{}", err),
+            }
+        });
         Self(sender)
     }
 
@@ -106,12 +112,13 @@ where
             }
 
             job.submit();
-            tokio::spawn(back(job, input, sender));
+            let handle = tokio::spawn(back(job, input, sender));
 
             predict = match next {
                 Some(info) => Some(builder.build(info).await?),
                 None => None,
             };
+            handle.await??;
         }
         Ok(())
     }
