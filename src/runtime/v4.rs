@@ -128,7 +128,7 @@ impl<const N: usize> DeepClone for State<N> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Runtime<F: Float> {
     pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
@@ -183,7 +183,7 @@ impl<F: Float> Runtime<F> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Header<F: Float> {
     pub head_x: TensorGpu<F, ReadWrite>,
     pub head_o: TensorGpu<F, ReadWrite>,
@@ -232,7 +232,7 @@ pub enum Hook {
 }
 
 pub struct RunJob<F: Float> {
-    command: Option<CommandBuffer>,
+    commands: Vec<CommandBuffer>,
     redirect: RunRedirect,
 
     embed_device: EmbedDevice,
@@ -293,8 +293,8 @@ impl<F: Float> Job for RunJob<F> {
     }
 
     fn submit(&mut self) {
-        let command = self.command.take();
-        self.output.context.queue.submit(command);
+        let commands = std::mem::take(&mut self.commands);
+        self.output.context.queue.submit(commands);
     }
 
     async fn back(self) -> Result<Self::Output> {
@@ -313,6 +313,14 @@ pub struct ModelRuntime<F: Float, const N: usize> {
     model: Model,
     state: State<N>,
     phantom: PhantomData<F>,
+}
+
+fn turbo(num_token: usize) -> bool {
+    num_token % MIN_TOKEN_CHUNK_SIZE == 0
+}
+
+fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
+    Ok(TensorOp::List(vec![]))
 }
 
 impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
@@ -334,13 +342,13 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
         let buffer = Runtime::<F>::new(context, info, num_token);
         let header = Header::<F>::new(context, info, num_header);
 
-        let turbo = |num_token: usize| num_token % MIN_TOKEN_CHUNK_SIZE == 0;
-        let hook_op = |_hook: Hook| -> Result<_, TensorError> { Ok(TensorOp::List(vec![])) };
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
+        #[cfg(feature = "async-build")]
+        let mut tasks = tokio::task::JoinSet::new();
+        #[cfg(not(feature = "async-build"))]
+        let mut commands = Vec::new();
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
-            (TensorOp::List(vec![]), buffer.ffn_x.clone())
+            (vec![], buffer.ffn_x.clone())
         } else {
             let headers = &redirect.headers;
             let mut start = 0;
@@ -360,7 +368,7 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
                 }
                 end += 1;
             }
-            (TensorOp::List(ops), header.head_x.clone())
+            (ops, header.head_x.clone())
         };
 
         let mut ops = vec![];
@@ -384,219 +392,68 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
         ]);
 
         {
-            let ops = TensorOp::List(ops);
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&ops);
+            let context = context.clone();
+            let f = move || -> Result<_> {
+                let ops = TensorOp::List(ops);
+                let mut encoder = context.device.create_command_encoder(&Default::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.execute_tensor_op(&ops);
+                drop(pass);
+                Ok((0, encoder.finish()))
+            };
+            #[cfg(feature = "async-build")]
+            tasks.spawn_blocking(f);
+            #[cfg(not(feature = "async-build"))]
+            commands.push(f()?)
         }
 
         for (index, layer) in tensor.layers.iter().enumerate() {
-            encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
-
-            let ops = TensorOp::List(vec![
-                hook_op(Hook::PreAtt(index))?,
-                TensorOp::layer_norm(
-                    &layer.att_layer_norm.w,
-                    &layer.att_layer_norm.b,
-                    &buffer.att_x,
-                    None,
-                    Model::LN_EPS,
-                )?,
-                hook_op(Hook::PostAttLayerNorm(index))?,
-                hook_op(Hook::PreAttTokenShift(index))?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    layer.att.time_mix_k.view(.., .., .., ..)?,
-                    state.att(index)?,
-                    &buffer.att_x,
-                    &buffer.att_kx,
-                    false,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    layer.att.time_mix_v.view(.., .., .., ..)?,
-                    state.att(index)?,
-                    &buffer.att_x,
-                    &buffer.att_vx,
-                    false,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    layer.att.time_mix_r.view(.., .., .., ..)?,
-                    state.att(index)?,
-                    &buffer.att_x,
-                    &buffer.att_rx,
-                    false,
-                )?,
-                hook_op(Hook::PostAttTokenShift(index))?,
-                hook_op(Hook::PreAttLinear(index))?,
-                layer.att.w_k.matmul_op(
-                    buffer.att_kx.view(.., .., .., ..)?,
-                    buffer.att_k.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_token),
-                )?,
-                layer.att.w_v.matmul_op(
-                    buffer.att_vx.view(.., .., .., ..)?,
-                    buffer.att_v.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_token),
-                )?,
-                layer.att.w_r.matmul_op(
-                    buffer.att_rx.view(.., .., .., ..)?,
-                    buffer.att_r.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_token),
-                )?,
-                hook_op(Hook::PostAttLinear(index))?,
-                hook_op(Hook::PreAttTimeMix(index))?,
-                TensorOp::blit(
-                    buffer.att_x.view(.., .., .., ..)?,
-                    buffer.aux_x.view(.., .., .., ..)?,
-                )?,
-                TensorOp::time_mix_v4(
-                    &buffer.cursors,
-                    &layer.att.time_decay,
-                    &layer.att.time_first,
-                    state.att(index)?,
-                    &buffer.att_k,
-                    &buffer.att_v,
-                    &buffer.att_r,
-                    &buffer.aux_x,
-                )?,
-                TensorOp::blit(
-                    buffer.aux_x.view(.., .., .., ..)?,
-                    buffer.att_x.view(.., .., .., ..)?,
-                )?,
-                hook_op(Hook::PostAttTimeMix(index))?,
-                hook_op(Hook::PreAttOut(index))?,
-                layer.att.w_o.matmul_op(
-                    buffer.att_x.view(.., .., .., ..)?,
-                    buffer.att_o.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_token),
-                )?,
-                hook_op(Hook::PostAttOut(index))?,
-                TensorOp::add(
-                    buffer.input.view(.., .., .., ..)?,
-                    buffer.att_o.view(.., .., .., ..)?,
-                )?,
-                hook_op(Hook::PostAtt(index))?,
-            ]);
-
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&ops);
-            drop(pass);
-
-            encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
-
-            let ops = TensorOp::List(vec![
-                hook_op(Hook::PreFfn(index))?,
-                TensorOp::layer_norm(
-                    &layer.ffn_layer_norm.w,
-                    &layer.ffn_layer_norm.b,
-                    &buffer.ffn_x,
-                    None,
-                    Model::LN_EPS,
-                )?,
-                hook_op(Hook::PostFfnLayerNorm(index))?,
-                hook_op(Hook::PreFfnTokenShift(index))?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    layer.ffn.time_mix_k.view(.., .., .., ..)?,
-                    state.ffn(index)?,
-                    &buffer.ffn_x,
-                    &buffer.ffn_kx,
-                    false,
-                )?,
-                TensorOp::token_shift(
-                    &buffer.cursors,
-                    layer.ffn.time_mix_r.view(.., .., .., ..)?,
-                    state.ffn(index)?,
-                    &buffer.ffn_x,
-                    &buffer.ffn_rx,
-                    false,
-                )?,
-                hook_op(Hook::PostFfnTokenShift(index))?,
-                hook_op(Hook::PreFfnLinear(index))?,
-                layer.ffn.w_k.matmul_op(
-                    buffer.ffn_kx.view(.., .., .., ..)?,
-                    buffer.ffn_k.view(.., .., .., ..)?,
-                    Activation::SquaredRelu,
-                    turbo(num_token),
-                )?,
-                hook_op(Hook::PostFfnActivate(index))?,
-                layer.ffn.w_v.matmul_op(
-                    buffer.ffn_k.view(.., .., .., ..)?,
-                    buffer.ffn_v.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_token),
-                )?,
-                layer.ffn.w_r.matmul_op(
-                    buffer.ffn_rx.view(.., .., .., ..)?,
-                    buffer.ffn_r.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_token),
-                )?,
-                hook_op(Hook::PostFfnLinear(index))?,
-                hook_op(Hook::PreFfnChannelMix(index))?,
-                TensorOp::channel_mix(
-                    &buffer.cursors,
-                    state.ffn(index)?,
-                    &buffer.ffn_r,
-                    &buffer.ffn_v,
-                    &buffer.ffn_x,
-                )?,
-                hook_op(Hook::PostFfnChannelMix(index))?,
-                TensorOp::add(
-                    buffer.att_o.view(.., .., .., ..)?,
-                    buffer.ffn_x.view(.., .., .., ..)?,
-                )?,
-                hook_op(Hook::PostFfn(index))?,
-            ]);
-
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&ops);
-            drop(pass);
-
-            if (index + 1) % Model::RESCALE_LAYER == 0 {
-                let op = TensorOp::discount(&buffer.ffn_x, 0.5)?;
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.execute_tensor_op(&op);
-                drop(pass);
-            }
-
-            if index != info.num_layer - 1 {
-                encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
-            }
+            let context = context.clone();
+            let layer = layer.clone();
+            let state = state.clone();
+            let buffer = buffer.clone();
+            let f = move || -> Result<_> {
+                Ok((
+                    index + 32,
+                    Self::build_layer(context, layer, state, buffer, index, num_token)?,
+                ))
+            };
+            #[cfg(feature = "async-build")]
+            tasks.spawn_blocking(f);
+            #[cfg(not(feature = "async-build"))]
+            commands.push(f()?)
         }
 
-        if num_header > 0 {
-            let ops = TensorOp::List(vec![
-                hook_op(Hook::PreHead)?,
-                TensorOp::layer_norm(
-                    &tensor.head.layer_norm.w,
-                    &tensor.head.layer_norm.b,
-                    &head_x,
-                    None,
-                    Model::LN_EPS,
-                )?,
-                hook_op(Hook::PostHeadLayerNorm)?,
-                tensor.head.w.matmul_op(
-                    head_x.view(.., .., .., ..)?,
-                    header.head_o.view(.., .., .., ..)?,
-                    Activation::None,
-                    turbo(num_header),
-                )?,
-                hook_op(Hook::PostHead)?,
-            ]);
-
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&head_ops);
-            pass.execute_tensor_op(&ops);
+        {
+            let context = context.clone();
+            let head = model.tensor.head.clone();
+            let header = header.clone();
+            let f = move || -> Result<_> {
+                Ok((
+                    usize::MAX,
+                    Self::build_header(context, head, header, head_x, num_header, head_ops)?,
+                ))
+            };
+            #[cfg(feature = "async-build")]
+            tasks.spawn_blocking(f);
+            #[cfg(not(feature = "async-build"))]
+            commands.push(f()?)
         }
+
+        #[cfg(feature = "async-build")]
+        let mut commands = vec![];
+        #[cfg(feature = "async-build")]
+        while let Some(result) = tasks.join_next().await {
+            commands.push(result??);
+        }
+        let commands = commands
+            .into_iter()
+            .sorted_by_key(|x| x.0)
+            .map(|x| x.1)
+            .collect_vec();
 
         Ok(RunJob {
-            command: Some(encoder.finish()),
+            commands,
             redirect,
             embed_device,
             embed: model.tensor.embed.w.clone(),
@@ -605,6 +462,240 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
             input: buffer.input,
             output: header.head_o,
         })
+    }
+}
+
+impl<F: Float, const N: usize> ModelRuntime<F, N> {
+    #[allow(clippy::too_many_arguments)]
+    fn build_layer(
+        context: Context,
+        layer: Layer,
+        state: State<N>,
+        buffer: Runtime<F>,
+        index: usize,
+        num_token: usize,
+    ) -> Result<CommandBuffer> {
+        let info = &state.info;
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+
+        encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
+
+        let ops = TensorOp::List(vec![
+            hook_op(Hook::PreAtt(index))?,
+            TensorOp::layer_norm(
+                &layer.att_layer_norm.w,
+                &layer.att_layer_norm.b,
+                &buffer.att_x,
+                None,
+                Model::LN_EPS,
+            )?,
+            hook_op(Hook::PostAttLayerNorm(index))?,
+            hook_op(Hook::PreAttTokenShift(index))?,
+            TensorOp::token_shift(
+                &buffer.cursors,
+                layer.att.time_mix_k.view(.., .., .., ..)?,
+                state.att(index)?,
+                &buffer.att_x,
+                &buffer.att_kx,
+                false,
+            )?,
+            TensorOp::token_shift(
+                &buffer.cursors,
+                layer.att.time_mix_v.view(.., .., .., ..)?,
+                state.att(index)?,
+                &buffer.att_x,
+                &buffer.att_vx,
+                false,
+            )?,
+            TensorOp::token_shift(
+                &buffer.cursors,
+                layer.att.time_mix_r.view(.., .., .., ..)?,
+                state.att(index)?,
+                &buffer.att_x,
+                &buffer.att_rx,
+                false,
+            )?,
+            hook_op(Hook::PostAttTokenShift(index))?,
+            hook_op(Hook::PreAttLinear(index))?,
+            layer.att.w_k.matmul_op(
+                buffer.att_kx.view(.., .., .., ..)?,
+                buffer.att_k.view(.., .., .., ..)?,
+                Activation::None,
+                turbo(num_token),
+            )?,
+            layer.att.w_v.matmul_op(
+                buffer.att_vx.view(.., .., .., ..)?,
+                buffer.att_v.view(.., .., .., ..)?,
+                Activation::None,
+                turbo(num_token),
+            )?,
+            layer.att.w_r.matmul_op(
+                buffer.att_rx.view(.., .., .., ..)?,
+                buffer.att_r.view(.., .., .., ..)?,
+                Activation::None,
+                turbo(num_token),
+            )?,
+            hook_op(Hook::PostAttLinear(index))?,
+            hook_op(Hook::PreAttTimeMix(index))?,
+            TensorOp::blit(
+                buffer.att_x.view(.., .., .., ..)?,
+                buffer.aux_x.view(.., .., .., ..)?,
+            )?,
+            TensorOp::time_mix_v4(
+                &buffer.cursors,
+                &layer.att.time_decay,
+                &layer.att.time_first,
+                state.att(index)?,
+                &buffer.att_k,
+                &buffer.att_v,
+                &buffer.att_r,
+                &buffer.aux_x,
+            )?,
+            TensorOp::blit(
+                buffer.aux_x.view(.., .., .., ..)?,
+                buffer.att_x.view(.., .., .., ..)?,
+            )?,
+            hook_op(Hook::PostAttTimeMix(index))?,
+            hook_op(Hook::PreAttOut(index))?,
+            layer.att.w_o.matmul_op(
+                buffer.att_x.view(.., .., .., ..)?,
+                buffer.att_o.view(.., .., .., ..)?,
+                Activation::None,
+                turbo(num_token),
+            )?,
+            hook_op(Hook::PostAttOut(index))?,
+            TensorOp::add(
+                buffer.input.view(.., .., .., ..)?,
+                buffer.att_o.view(.., .., .., ..)?,
+            )?,
+            hook_op(Hook::PostAtt(index))?,
+        ]);
+
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&ops);
+        }
+
+        encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
+
+        let ops = TensorOp::List(vec![
+            hook_op(Hook::PreFfn(index))?,
+            TensorOp::layer_norm(
+                &layer.ffn_layer_norm.w,
+                &layer.ffn_layer_norm.b,
+                &buffer.ffn_x,
+                None,
+                Model::LN_EPS,
+            )?,
+            hook_op(Hook::PostFfnLayerNorm(index))?,
+            hook_op(Hook::PreFfnTokenShift(index))?,
+            TensorOp::token_shift(
+                &buffer.cursors,
+                layer.ffn.time_mix_k.view(.., .., .., ..)?,
+                state.ffn(index)?,
+                &buffer.ffn_x,
+                &buffer.ffn_kx,
+                false,
+            )?,
+            TensorOp::token_shift(
+                &buffer.cursors,
+                layer.ffn.time_mix_r.view(.., .., .., ..)?,
+                state.ffn(index)?,
+                &buffer.ffn_x,
+                &buffer.ffn_rx,
+                false,
+            )?,
+            hook_op(Hook::PostFfnTokenShift(index))?,
+            hook_op(Hook::PreFfnLinear(index))?,
+            layer.ffn.w_k.matmul_op(
+                buffer.ffn_kx.view(.., .., .., ..)?,
+                buffer.ffn_k.view(.., .., .., ..)?,
+                Activation::SquaredRelu,
+                turbo(num_token),
+            )?,
+            hook_op(Hook::PostFfnActivate(index))?,
+            layer.ffn.w_v.matmul_op(
+                buffer.ffn_k.view(.., .., .., ..)?,
+                buffer.ffn_v.view(.., .., .., ..)?,
+                Activation::None,
+                turbo(num_token),
+            )?,
+            layer.ffn.w_r.matmul_op(
+                buffer.ffn_rx.view(.., .., .., ..)?,
+                buffer.ffn_r.view(.., .., .., ..)?,
+                Activation::None,
+                turbo(num_token),
+            )?,
+            hook_op(Hook::PostFfnLinear(index))?,
+            hook_op(Hook::PreFfnChannelMix(index))?,
+            TensorOp::channel_mix(
+                &buffer.cursors,
+                state.ffn(index)?,
+                &buffer.ffn_r,
+                &buffer.ffn_v,
+                &buffer.ffn_x,
+            )?,
+            hook_op(Hook::PostFfnChannelMix(index))?,
+            TensorOp::add(
+                buffer.att_o.view(.., .., .., ..)?,
+                buffer.ffn_x.view(.., .., .., ..)?,
+            )?,
+            hook_op(Hook::PostFfn(index))?,
+        ]);
+
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&ops);
+        }
+
+        if (index + 1) % Model::RESCALE_LAYER == 0 {
+            let op = TensorOp::discount(&buffer.ffn_x, 0.5)?;
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
+            drop(pass);
+        }
+
+        if index != info.num_layer - 1 {
+            encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
+        }
+
+        Ok(encoder.finish())
+    }
+
+    fn build_header(
+        context: Context,
+        head: Head,
+        header: Header<F>,
+        head_x: TensorGpu<F, ReadWrite>,
+        num_header: usize,
+        mut ops: Vec<TensorOp>,
+    ) -> Result<CommandBuffer> {
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        if num_header > 0 {
+            ops.append(&mut vec![
+                hook_op(Hook::PreHead)?,
+                TensorOp::layer_norm(
+                    &head.layer_norm.w,
+                    &head.layer_norm.b,
+                    &head_x,
+                    None,
+                    Model::LN_EPS,
+                )?,
+                hook_op(Hook::PostHeadLayerNorm)?,
+                head.w.matmul_op(
+                    head_x.view(.., .., .., ..)?,
+                    header.head_o.view(.., .., .., ..)?,
+                    Activation::None,
+                    turbo(num_header),
+                )?,
+                hook_op(Hook::PostHead)?,
+            ]);
+            let ops = TensorOp::List(ops);
+
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&ops);
+        }
+        Ok(encoder.finish())
     }
 }
 
