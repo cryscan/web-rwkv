@@ -385,7 +385,10 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
         let buffer = Runtime::<F>::new(context, info, num_token);
         let header = Header::<F>::new(context, info, num_header);
 
+        #[cfg(feature = "async-build")]
         let mut tasks = tokio::task::JoinSet::new();
+        #[cfg(not(feature = "async-build"))]
+        let mut commands = Vec::new();
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
             (vec![], buffer.ffn_x.clone())
@@ -433,14 +436,18 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
 
         {
             let context = context.clone();
-            tasks.spawn_blocking(move || -> Result<_> {
+            let f = move || -> Result<_> {
                 let ops = TensorOp::List(ops);
                 let mut encoder = context.device.create_command_encoder(&Default::default());
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&ops);
                 drop(pass);
                 Ok((0, encoder.finish()))
-            });
+            };
+            #[cfg(feature = "async-build")]
+            tasks.spawn_blocking(f);
+            #[cfg(not(feature = "async-build"))]
+            commands.push(f()?)
         }
 
         for (index, layer) in tensor.layers.iter().enumerate() {
@@ -448,27 +455,37 @@ impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
             let layer = layer.clone();
             let state = state.clone();
             let buffer = buffer.clone();
-            tasks.spawn_blocking(move || {
+            let f = move || -> Result<_> {
                 Ok((
                     index + 32,
                     Self::build_layer(context, layer, state, buffer, index, num_token, head_size)?,
                 ))
-            });
+            };
+            #[cfg(feature = "async-build")]
+            tasks.spawn_blocking(f);
+            #[cfg(not(feature = "async-build"))]
+            commands.push(f()?)
         }
 
         {
             let context = context.clone();
             let head = model.tensor.head.clone();
             let header = header.clone();
-            tasks.spawn_blocking(move || {
+            let f = move || -> Result<_> {
                 Ok((
                     usize::MAX,
                     Self::build_header(context, head, header, head_x, num_header, head_ops)?,
                 ))
-            });
+            };
+            #[cfg(feature = "async-build")]
+            tasks.spawn_blocking(f);
+            #[cfg(not(feature = "async-build"))]
+            commands.push(f()?)
         }
 
+        #[cfg(feature = "async-build")]
         let mut commands = vec![];
+        #[cfg(feature = "async-build")]
         while let Some(result) = tasks.join_next().await {
             commands.push(result??);
         }

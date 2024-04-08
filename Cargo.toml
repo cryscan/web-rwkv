@@ -58,6 +58,8 @@ ratatui = { version = "0.26", features = ["all-widgets"] }
 
 [features]
 default = ["runtime"]
+
+async-build = []
 runtime = ["tokio/rt-multi-thread"]
 
 [[example]]
