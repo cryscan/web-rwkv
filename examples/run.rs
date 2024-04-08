@@ -19,7 +19,7 @@ use web_rwkv::{
     runtime::{
         loader::Loader,
         model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
-        run::{RunInput, RunOption},
+        run::{RunInput, RunInputBatch, RunOption},
         softmax::softmax,
         v4, v5, v6, JobRuntime, Submission,
     },
@@ -163,7 +163,12 @@ async fn main() -> Result<()> {
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
     let prompt_len = tokens.len();
-    let mut prompt = RunInput::new([(tokens, RunOption::Last)], cli.token_chunk_size);
+    let prompt = RunInputBatch {
+        tokens,
+        option: RunOption::Last,
+        ..Default::default()
+    };
+    let mut prompt = RunInput::new([prompt], cli.token_chunk_size);
 
     let mut read = false;
     let mut instant = Instant::now();
@@ -192,7 +197,7 @@ async fn main() -> Result<()> {
             let output = softmax(&context, &output[0]).await?;
             let probs = output.map(|x| x.to_f32()).to_vec();
             let token = sample(&probs, 0.0);
-            prompt.batches[0].0.push(token);
+            prompt.batches[0].tokens.push(token);
 
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);

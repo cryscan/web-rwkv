@@ -335,7 +335,7 @@ fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
 }
 
 impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
-    type Seed = RunInfo<N>;
+    type Seed = RunInfo;
     type Job = RunJob<F>;
 
     async fn build(&self, seed: Self::Seed) -> Result<Self::Job> {
