@@ -10,7 +10,7 @@ use wgpu::CommandBuffer;
 use super::{
     loader::{Loader, Reader},
     model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
-    run::{RunInfo, RunOutput, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
+    run::{RunInfo, RunOutput, RunOutputBatch, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
     Job, JobBuilder,
 };
 use crate::{
@@ -299,12 +299,19 @@ impl<F: Float> Job for RunJob<F> {
 
     async fn back(self) -> Result<Self::Output> {
         let output = self.output.back().await;
-        let batches = self
+        let batches: Vec<_> = self
             .redirect
             .outputs
             .into_iter()
             .map(|(start, end)| output.slice(.., start..end, .., ..))
             .try_collect()?;
+        let batches = batches
+            .into_iter()
+            .map(|output| RunOutputBatch {
+                output,
+                state: None,
+            })
+            .collect();
         Ok(RunOutput(batches))
     }
 }

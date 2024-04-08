@@ -81,10 +81,10 @@ pub struct RunInputBatch {
     pub tokens: Vec<u16>,
     /// Inference option for outputs.
     pub option: RunOption,
-    /// Whether to read back the state. Back happens before inference and load.
-    pub back: bool,
-    /// Whether to load a state before inference. Load happens after back.
+    /// Load a state before inference.
     pub load: Option<TensorCpu<'static, f32>>,
+    /// Enable reading back the state after inference.
+    pub back: bool,
 }
 
 /// Inference option for outputs.
@@ -232,8 +232,14 @@ impl Iterator for RunIter {
     }
 }
 
-#[derive(Debug, Default, Clone, Deref, DerefMut)]
-pub struct RunOutput<F: Float>(pub Vec<TensorCpu<'static, F>>);
+#[derive(Debug, Clone)]
+pub struct RunOutputBatch<F: Float> {
+    pub output: TensorCpu<'static, F>,
+    pub state: Option<TensorCpu<'static, f32>>,
+}
+
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct RunOutput<F: Float>(pub Vec<RunOutputBatch<F>>);
 
 #[cfg(test)]
 mod tests {

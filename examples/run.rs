@@ -186,7 +186,8 @@ async fn main() -> Result<()> {
         };
         prompt = input;
 
-        if output[0].size() > 0 {
+        let output = &output[0].output;
+        if output.size() > 0 {
             if !read {
                 print!("\n{}", PROMPT);
                 prefill = instant.elapsed();
@@ -194,7 +195,7 @@ async fn main() -> Result<()> {
                 read = true;
             }
 
-            let output = softmax(&context, &output[0]).await?;
+            let output = softmax(&context, output).await?;
             let probs = output.map(|x| x.to_f32()).to_vec();
             let token = sample(&probs, 0.0);
             prompt.batches[0].tokens.push(token);
