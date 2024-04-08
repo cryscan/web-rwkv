@@ -3,9 +3,9 @@ use std::future::Future;
 use anyhow::Result;
 use web_rwkv_derive::Deref;
 
+pub mod infer;
 pub mod loader;
 pub mod model;
-pub mod run;
 pub mod softmax;
 pub mod v4;
 pub mod v5;

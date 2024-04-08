@@ -7,9 +7,9 @@ use crate::{num::Float, tensor::TensorCpu};
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunInfo(pub Vec<(usize, Option<RunOption>)>);
+pub struct InferInfo(pub Vec<(usize, Option<InferOption>)>);
 
-impl RunInfo {
+impl InferInfo {
     #[inline]
     pub fn num_token(&self) -> usize {
         self.0.iter().map(|(x, _)| x).sum()
@@ -20,7 +20,7 @@ impl RunInfo {
         self.0.len()
     }
 
-    pub fn redirect(&self) -> RunRedirect {
+    pub fn redirect(&self) -> InferRedirect {
         let mut headers = vec![];
         let mut inputs = vec![(0, 0); self.num_batch()];
         let mut outputs = vec![(0, 0); self.num_batch()];
@@ -32,7 +32,7 @@ impl RunInfo {
                     inputs[batch] = (p_in, p_in);
                     outputs[batch] = (p_out, p_out);
                 }
-                Some(RunOption::Last) => {
+                Some(InferOption::Last) => {
                     assert_ne!(*len, 0);
                     inputs[batch] = (p_in, p_in + len);
                     outputs[batch] = (p_out, p_out + 1);
@@ -40,7 +40,7 @@ impl RunInfo {
                     p_out += 1;
                     p_in += len;
                 }
-                Some(RunOption::Full) => {
+                Some(InferOption::Full) => {
                     assert_ne!(*len, 0);
                     inputs[batch] = (p_in, p_in + len);
                     outputs[batch] = (p_out, p_out + len);
@@ -50,7 +50,7 @@ impl RunInfo {
                 }
             }
         }
-        RunRedirect {
+        InferRedirect {
             headers,
             inputs,
             outputs,
@@ -59,7 +59,7 @@ impl RunInfo {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct RunRedirect {
+pub struct InferRedirect {
     /// Indices in the *input* tensor that are included in the output.
     pub headers: Vec<usize>,
     /// Maps batches to ranges in the *input* tensor.
@@ -76,11 +76,11 @@ enum BatchState {
 
 /// One batch of the input task.
 #[derive(Debug, Default, Clone)]
-pub struct RunInputBatch {
+pub struct InferInputBatch {
     /// Tokens to infer. If this is empty, inference won't occur for the batch.
     pub tokens: Vec<u16>,
     /// Inference option for outputs.
-    pub option: RunOption,
+    pub option: InferOption,
     /// Load a state before inference.
     pub load: Option<TensorCpu<'static, f32>>,
     /// Enable reading back the state after inference.
@@ -89,7 +89,7 @@ pub struct RunInputBatch {
 
 /// Inference option for outputs.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum RunOption {
+pub enum InferOption {
     /// Only output the prediction for the last token.
     #[default]
     Last,
@@ -98,13 +98,13 @@ pub enum RunOption {
 }
 
 #[derive(Debug, Clone)]
-pub struct RunInput<const N: usize> {
-    pub batches: [RunInputBatch; N],
+pub struct InferInput<const N: usize> {
+    pub batches: [InferInputBatch; N],
     token_chunk_size: usize,
 }
 
-impl<const N: usize> RunInput<N> {
-    pub fn new(batches: [RunInputBatch; N], token_chunk_size: usize) -> Self {
+impl<const N: usize> InferInput<N> {
+    pub fn new(batches: [InferInputBatch; N], token_chunk_size: usize) -> Self {
         let token_chunk_size = token_chunk_size
             .max(MIN_TOKEN_CHUNK_SIZE)
             .next_multiple_of(MIN_TOKEN_CHUNK_SIZE);
@@ -114,12 +114,12 @@ impl<const N: usize> RunInput<N> {
         }
     }
 
-    pub fn iter(&self) -> RunIter {
+    pub fn iter(&self) -> InferIter {
         self.into_iter()
     }
 }
 
-impl<const N: usize> JobInput for RunInput<N> {
+impl<const N: usize> JobInput for InferInput<N> {
     type Chunk = Vec<Vec<u16>>;
 
     fn step(&mut self) {
@@ -143,9 +143,9 @@ impl<const N: usize> JobInput for RunInput<N> {
     }
 }
 
-impl<const N: usize> IntoIterator for &RunInput<N> {
-    type Item = RunInfo;
-    type IntoIter = RunIter;
+impl<const N: usize> IntoIterator for &InferInput<N> {
+    type Item = InferInfo;
+    type IntoIter = InferIter;
 
     fn into_iter(self) -> Self::IntoIter {
         let batches = self
@@ -161,13 +161,13 @@ impl<const N: usize> IntoIterator for &RunInput<N> {
     }
 }
 
-pub struct RunIter {
-    batches: Vec<(BatchState, RunOption)>,
+pub struct InferIter {
+    batches: Vec<(BatchState, InferOption)>,
     token_chunk_size: usize,
 }
 
-impl Iterator for RunIter {
-    type Item = RunInfo;
+impl Iterator for InferIter {
+    type Item = InferInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut batches = self
@@ -220,44 +220,44 @@ impl Iterator for RunIter {
                         &x => BatchState::Read(x),
                     };
                     info.1 = match (batch.1, remain) {
-                        (RunOption::Last, 0) => Some(RunOption::Last),
-                        (RunOption::Last, _) => None,
-                        (RunOption::Full, _) => Some(RunOption::Full),
+                        (InferOption::Last, 0) => Some(InferOption::Last),
+                        (InferOption::Last, _) => None,
+                        (InferOption::Full, _) => Some(InferOption::Full),
                     };
                 }
             },
         );
 
-        Some(RunInfo(info))
+        Some(InferInfo(info))
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct RunOutputBatch<F: Float> {
+pub struct InferOutputBatch<F: Float> {
     pub output: TensorCpu<'static, F>,
     pub state: Option<TensorCpu<'static, f32>>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
-pub struct RunOutput<F: Float>(pub Vec<RunOutputBatch<F>>);
+pub struct RunOutput<F: Float>(pub Vec<InferOutputBatch<F>>);
 
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
 
-    use super::{RunInfo, RunInput, RunOption};
-    use crate::runtime::{run::RunInputBatch, JobInput};
+    use super::{InferInfo, InferInput, InferOption};
+    use crate::runtime::{infer::InferInputBatch, JobInput};
 
     #[test]
     fn test_run_iter() -> Result<()> {
-        let run = RunInput {
+        let run = InferInput {
             batches: [
-                (vec![0; 139], RunOption::Last),
-                (vec![1; 1], RunOption::Last),
-                (vec![2; 0], RunOption::Full),
-                (vec![3; 65], RunOption::Full),
+                (vec![0; 139], InferOption::Last),
+                (vec![1; 1], InferOption::Last),
+                (vec![2; 0], InferOption::Full),
+                (vec![3; 65], InferOption::Full),
             ]
-            .map(|(tokens, option)| RunInputBatch {
+            .map(|(tokens, option)| InferInputBatch {
                 tokens,
                 option,
                 ..Default::default()
@@ -268,47 +268,47 @@ mod tests {
 
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
+            Some(InferInfo(vec![
                 (65, None),
-                (1, Some(RunOption::Last)),
+                (1, Some(InferOption::Last)),
                 (0, None),
-                (62, Some(RunOption::Full))
+                (62, Some(InferOption::Full))
             ]))
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
+            Some(InferInfo(vec![
                 (60, None),
-                (1, Some(RunOption::Last)),
+                (1, Some(InferOption::Last)),
                 (0, None),
-                (3, Some(RunOption::Full))
+                (3, Some(InferOption::Full))
             ]))
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
-                (14, Some(RunOption::Last)),
-                (1, Some(RunOption::Last)),
+            Some(InferInfo(vec![
+                (14, Some(InferOption::Last)),
+                (1, Some(InferOption::Last)),
                 (0, None),
-                (1, Some(RunOption::Full))
+                (1, Some(InferOption::Full))
             ]))
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
-                (1, Some(RunOption::Last)),
-                (1, Some(RunOption::Last)),
+            Some(InferInfo(vec![
+                (1, Some(InferOption::Last)),
+                (1, Some(InferOption::Last)),
                 (0, None),
-                (1, Some(RunOption::Full))
+                (1, Some(InferOption::Full))
             ]))
         );
         assert_eq!(
             iter.next(),
-            Some(RunInfo(vec![
-                (1, Some(RunOption::Last)),
-                (1, Some(RunOption::Last)),
+            Some(InferInfo(vec![
+                (1, Some(InferOption::Last)),
+                (1, Some(InferOption::Last)),
                 (0, None),
-                (1, Some(RunOption::Full))
+                (1, Some(InferOption::Full))
             ]))
         );
 
@@ -317,14 +317,14 @@ mod tests {
 
     #[test]
     fn test_advance() -> Result<()> {
-        let mut run = RunInput {
+        let mut run = InferInput {
             batches: [
-                (vec![0; 139], RunOption::Last),
-                (vec![1; 1], RunOption::Last),
-                (vec![2; 0], RunOption::Full),
-                (vec![3; 65], RunOption::Full),
+                (vec![0; 139], InferOption::Last),
+                (vec![1; 1], InferOption::Last),
+                (vec![2; 0], InferOption::Full),
+                (vec![3; 65], InferOption::Full),
             ]
-            .map(|(tokens, option)| RunInputBatch {
+            .map(|(tokens, option)| InferInputBatch {
                 tokens,
                 option,
                 ..Default::default()
@@ -335,23 +335,23 @@ mod tests {
         run.step();
         assert_eq!(
             run.iter().next(),
-            Some(RunInfo(vec![
+            Some(InferInfo(vec![
                 (61, None),
                 (0, None),
                 (0, None),
-                (3, Some(RunOption::Full))
+                (3, Some(InferOption::Full))
             ]))
         );
 
         // simulate adding one token to batch 1 after advancing.
-        let run = RunInput {
+        let run = InferInput {
             batches: [
-                (vec![0; 61], RunOption::Last),
-                (vec![1; 1], RunOption::Last),
-                (vec![2; 0], RunOption::Full),
-                (vec![3; 3], RunOption::Full),
+                (vec![0; 61], InferOption::Last),
+                (vec![1; 1], InferOption::Last),
+                (vec![2; 0], InferOption::Full),
+                (vec![3; 3], InferOption::Full),
             ]
-            .map(|(tokens, option)| RunInputBatch {
+            .map(|(tokens, option)| InferInputBatch {
                 tokens,
                 option,
                 ..Default::default()
@@ -360,11 +360,11 @@ mod tests {
         };
         assert_eq!(
             run.iter().next(),
-            Some(RunInfo(vec![
+            Some(InferInfo(vec![
                 (60, None),
-                (1, Some(RunOption::Last)),
+                (1, Some(InferOption::Last)),
                 (0, None),
-                (3, Some(RunOption::Full))
+                (3, Some(InferOption::Full))
             ]))
         );
 
@@ -373,14 +373,14 @@ mod tests {
 
     #[test]
     fn test_redirect() -> Result<()> {
-        let run = RunInput {
+        let run = InferInput {
             batches: [
-                (vec![0; 61], RunOption::Last),
-                (vec![1; 0], RunOption::Last),
-                (vec![2; 0], RunOption::Full),
-                (vec![3; 3], RunOption::Full),
+                (vec![0; 61], InferOption::Last),
+                (vec![1; 0], InferOption::Last),
+                (vec![2; 0], InferOption::Full),
+                (vec![3; 3], InferOption::Full),
             ]
-            .map(|(tokens, option)| RunInputBatch {
+            .map(|(tokens, option)| InferInputBatch {
                 tokens,
                 option,
                 ..Default::default()

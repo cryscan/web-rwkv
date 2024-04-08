@@ -17,9 +17,9 @@ use safetensors::SafeTensors;
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     runtime::{
+        infer::{InferInput, InferInputBatch, InferOption},
         loader::Loader,
         model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
-        run::{RunInput, RunInputBatch, RunOption},
         softmax::softmax,
         v4, v5, v6, JobRuntime, Submission,
     },
@@ -163,12 +163,12 @@ async fn main() -> Result<()> {
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
     let prompt_len = tokens.len();
-    let prompt = RunInputBatch {
+    let prompt = InferInputBatch {
         tokens,
-        option: RunOption::Last,
+        option: InferOption::Last,
         ..Default::default()
     };
-    let mut prompt = RunInput::new([prompt], cli.token_chunk_size);
+    let mut prompt = InferInput::new([prompt], cli.token_chunk_size);
 
     let mut read = false;
     let mut instant = Instant::now();

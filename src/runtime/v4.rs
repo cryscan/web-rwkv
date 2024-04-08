@@ -8,9 +8,9 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
+    infer::{InferInfo, InferOutputBatch, InferRedirect, RunOutput, MIN_TOKEN_CHUNK_SIZE},
     loader::{Loader, Reader},
     model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
-    run::{RunInfo, RunOutput, RunOutputBatch, RunRedirect, MIN_TOKEN_CHUNK_SIZE},
     Job, JobBuilder,
 };
 use crate::{
@@ -233,7 +233,7 @@ pub enum Hook {
 
 pub struct RunJob<F: Float> {
     commands: Vec<CommandBuffer>,
-    redirect: RunRedirect,
+    redirect: InferRedirect,
 
     embed_device: EmbedDevice,
     embed: Arc<TensorCpu<'static, f16>>,
@@ -307,7 +307,7 @@ impl<F: Float> Job for RunJob<F> {
             .try_collect()?;
         let batches = batches
             .into_iter()
-            .map(|output| RunOutputBatch {
+            .map(|output| InferOutputBatch {
                 output,
                 state: None,
             })
@@ -331,7 +331,7 @@ fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
 }
 
 impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
-    type Seed = RunInfo;
+    type Seed = InferInfo;
     type Job = RunJob<F>;
 
     async fn build(&self, seed: Self::Seed) -> Result<Self::Job> {
