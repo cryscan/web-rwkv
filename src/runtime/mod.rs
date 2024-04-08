@@ -24,13 +24,12 @@ pub trait Job: Sized + Send + 'static {
     fn back(self) -> impl Future<Output = Result<Self::Output>> + Send;
 }
 
-pub trait JobBuilder: Send + 'static {
+pub trait JobBuilder<J: Job>: Send + 'static {
     type Seed;
-    type Job: Job;
 
     /// Build a [`Job`] from the given seed.
     /// This usually involves creating a list of GPU commands (but not actually execution).
-    fn build(&self, seed: Self::Seed) -> impl Future<Output = Result<Self::Job>> + Send;
+    fn build(&self, seed: Self::Seed) -> impl Future<Output = Result<J>> + Send;
 }
 
 #[derive(Debug)]
@@ -61,7 +60,7 @@ where
     O: Send + 'static,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(builder: impl JobBuilder<Seed = T, Job = J>) -> Self
+    pub async fn new<J>(builder: impl JobBuilder<J, Seed = T>) -> Self
     where
         J: Job<Input = I::Chunk, Output = O>,
     {
@@ -71,7 +70,7 @@ where
     }
 
     async fn run<J>(
-        builder: impl JobBuilder<Seed = T, Job = J>,
+        builder: impl JobBuilder<J, Seed = T>,
         mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
     ) -> Result<()>
     where

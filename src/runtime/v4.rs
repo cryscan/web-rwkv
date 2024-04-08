@@ -330,11 +330,10 @@ fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
     Ok(TensorOp::List(vec![]))
 }
 
-impl<F: Float, const N: usize> JobBuilder for ModelRuntime<F, N> {
+impl<F: Float, const N: usize> JobBuilder<RunJob<F>> for ModelRuntime<F, N> {
     type Seed = InferInfo;
-    type Job = RunJob<F>;
 
-    async fn build(&self, seed: Self::Seed) -> Result<Self::Job> {
+    async fn build(&self, seed: Self::Seed) -> Result<RunJob<F>> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
