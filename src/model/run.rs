@@ -213,7 +213,7 @@ where
         }
 
         let (output, redirect) = self.run_internal(inputs, state, outputs, hooks)?;
-        let output = output.back_async().await;
+        let output = output.back().await;
 
         Ok(redirect
             .into_iter()

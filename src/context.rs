@@ -1,7 +1,5 @@
 use std::{borrow::Cow, sync::Arc};
 
-#[cfg(not(target_arch = "wasm32"))]
-use flume::Sender;
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
@@ -13,13 +11,10 @@ use wgpu::{
     RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
-use crate::{
-    model::ModelInfo,
-    tensor::{
-        cache::ResourceCache,
-        shape::{IntoBytes, Shape},
-        View,
-    },
+use crate::tensor::{
+    cache::ResourceCache,
+    shape::{IntoBytes, Shape},
+    View,
 };
 
 #[derive(Deref)]
@@ -69,7 +64,7 @@ pub struct ContextId;
 pub enum ContextEvent {
     ReadBack {
         buffer: Arc<Buffer>,
-        sender: Sender<Box<[u8]>>,
+        sender: tokio::sync::oneshot::Sender<Box<[u8]>>,
     },
     Drop,
 }
@@ -85,7 +80,7 @@ pub struct ContextInternal {
     view_cache: ResourceCache<View, Buffer>,
 
     #[cfg(not(target_arch = "wasm32"))]
-    event: Sender<ContextEvent>,
+    event: tokio::sync::mpsc::UnboundedSender<ContextEvent>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -101,9 +96,9 @@ impl Drop for Context {
 }
 
 pub struct ContextBuilder {
-    adapter: Adapter,
-    features: Features,
-    limits: Limits,
+    pub adapter: Adapter,
+    pub features: Features,
+    pub limits: Limits,
 }
 
 #[wasm_bindgen]
@@ -144,7 +139,10 @@ impl<'a> ContextBuilder {
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
         #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "no-runtime")]
         let (sender, receiver) = flume::unbounded();
+        #[cfg(feature = "runtime")]
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
 
         let context = Arc::new(ContextInternal {
             id: uid::Id::new(),
@@ -160,11 +158,31 @@ impl<'a> ContextBuilder {
 
         // start a thread for reading back buffers
         #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "no-runtime")]
         {
             let id = context.id;
             let context = Arc::downgrade(&context);
             std::thread::spawn(move || {
                 while let Ok(event) = receiver.recv() {
+                    match (event, context.upgrade()) {
+                        (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
+                            let data = context.read_back_buffer(buffer);
+                            let _ = sender.send(data);
+                        }
+                        _ => break,
+                    }
+                }
+                log::info!("context {} destroyed", id);
+            });
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(feature = "runtime")]
+        {
+            let id = context.id;
+            let context = Arc::downgrade(&context);
+            tokio::task::spawn_blocking(move || {
+                while let Some(event) = receiver.blocking_recv() {
                     match (event, context.upgrade()) {
                         (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
                             let data = context.read_back_buffer(buffer);
@@ -187,18 +205,6 @@ impl<'a> ContextBuilder {
 
     pub fn modify_limits(mut self, f: impl FnOnce(&mut Limits)) -> Self {
         f(&mut self.limits);
-        self
-    }
-
-    /// Compute the limits automatically based on given model build info.
-    pub fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
-        self.limits.max_buffer_size = ModelInfo::BUFFER_SIZE
-            .max(info.max_non_head_buffer_size())
-            .max(info.head_buffer_size()) as u64;
-        self.limits.max_storage_buffer_binding_size = ModelInfo::STORAGE_BUFFER_BINDING_SIZE
-            .max(info.max_non_head_buffer_size())
-            .max(info.head_buffer_size())
-            as u32;
         self
     }
 
@@ -357,11 +363,19 @@ impl ContextInternal {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn event(&self) -> Sender<ContextEvent> {
+    #[cfg(feature = "no-runtime")]
+    pub(crate) fn event(&self) -> flume::Sender<ContextEvent> {
         self.event.clone()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "runtime")]
+    pub(crate) fn event(&self) -> tokio::sync::mpsc::UnboundedSender<ContextEvent> {
+        self.event.clone()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "no-runtime")]
     fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
         assert!(buffer.usage().contains(BufferUsages::MAP_READ));
 
@@ -371,6 +385,26 @@ impl ContextInternal {
 
         self.device.poll(wgpu::MaintainBase::Wait);
         receiver.recv().unwrap().unwrap();
+
+        let data = {
+            let map = slice.get_mapped_range();
+            map.to_vec().into_boxed_slice()
+        };
+        buffer.unmap();
+        data
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(feature = "runtime")]
+    fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
+        assert!(buffer.usage().contains(BufferUsages::MAP_READ));
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+        self.device.poll(wgpu::MaintainBase::Wait);
+        receiver.blocking_recv().unwrap().unwrap();
 
         let data = {
             let map = slice.get_mapped_range();

@@ -19,8 +19,8 @@ use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     model::{
         loader::{Loader, Lora},
-        v4, v5, v6, Build, BuildFuture, Model, ModelBuilder, ModelInfo, ModelInput, ModelOutput,
-        ModelState, ModelVersion, Quant, StateBuilder,
+        v4, v5, v6, Build, BuildFuture, ContextAutoLimits, Model, ModelBuilder, ModelInfo,
+        ModelInput, ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
     tokenizer::Tokenizer,
 };
@@ -208,27 +208,23 @@ where
     }];
 
     let prompt_len = tokens[0].tokens.len();
-    println!("Reading {} tokens.", prompt_len);
 
     let mut read = false;
     let mut count = 0usize;
 
-    let mut instant;
+    let mut instant = Instant::now();
     let mut prefill = Duration::ZERO;
-    let mut duration = Duration::ZERO;
 
     let num_tokens = 500;
     while count < num_tokens {
-        instant = Instant::now();
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
-        duration += instant.elapsed();
 
         if let ModelOutput::Last(probs) = &probs[0] {
             if !read {
                 print!("\n{}", PROMPT);
-                prefill = duration;
-                duration = Duration::ZERO;
+                prefill = instant.elapsed();
+                instant = Instant::now();
                 read = true;
             }
 
@@ -246,15 +242,16 @@ where
         }
     }
 
-    println!();
+    let duration = instant.elapsed();
+
     println!(
-        "Prefill: {} tokens, {} mills, {} tps.",
+        "\n\nPrefill:\t{} tokens,\t{} mills,\t{} tps",
         prompt_len,
         prefill.as_millis(),
         prompt_len as f64 / prefill.as_secs_f64()
     );
     println!(
-        "Generation: {} tokens, {} mills, {} tps.",
+        "Generation:\t{} tokens,\t{} mills,\t{} tps",
         num_tokens,
         duration.as_millis(),
         num_tokens as f64 / duration.as_secs_f64()

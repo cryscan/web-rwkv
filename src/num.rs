@@ -70,7 +70,7 @@ impl One for u32 {
     }
 }
 
-pub trait Scalar: Sized + Clone + Copy + Pod + Zero + One + sealed::Sealed {
+pub trait Scalar: Sized + Clone + Copy + Pod + Zero + One + Send + Sync + sealed::Sealed {
     /// Size of the type in bytes.
     fn size() -> usize {
         std::mem::size_of::<Self>()

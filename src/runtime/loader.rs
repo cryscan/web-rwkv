@@ -7,7 +7,7 @@ use regex::Regex;
 use safetensors::{Dtype, SafeTensorError, SafeTensors};
 use web_rwkv_derive::{Deref, DerefMut};
 
-use super::{ModelError, ModelInfo, ModelVersion, Quant};
+use super::model::{ModelError, ModelInfo, ModelVersion, Quant};
 use crate::{
     context::Context,
     num::Scalar,

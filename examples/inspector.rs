@@ -19,8 +19,8 @@ use web_rwkv::{
         loader::{Loader, Lora},
         run::{HookMap, ModelRun},
         softmax::ModelSoftmax,
-        v5, Build, BuildFuture, Model, ModelBuilder, ModelInfo, ModelInput, ModelOutput,
-        ModelState, ModelVersion, Quant, StateBuilder,
+        v5, Build, BuildFuture, ContextAutoLimits, Model, ModelBuilder, ModelInfo, ModelInput,
+        ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
     tensor::{
         kind::ReadWrite,
@@ -269,7 +269,7 @@ async fn run(cli: Cli) -> Result<()> {
     context.queue.submit(Some(encoder.finish()));
 
     // for each layer, choose the top 5 tokens
-    let backed = buffer.out.back_async().await.to_vec();
+    let backed = buffer.out.back().await.to_vec();
     for layer in 0..info.num_layer {
         let start = layer * info.num_vocab;
         let end = start + info.num_vocab;

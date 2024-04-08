@@ -1,4 +1,4 @@
-use std::{fmt, marker::PhantomData};
+use std::{fmt, marker::PhantomData, sync::Arc};
 
 use serde::{
     de::{DeserializeSeed, Error, SeqAccess, Visitor},
@@ -60,7 +60,7 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     where
         S: serde::Serializer,
     {
-        TensorBlob::from(self.back()).serialize(serializer)
+        TensorBlob::from(self.back_block()).serialize(serializer)
     }
 }
 
@@ -74,11 +74,13 @@ impl<T: Scalar + Serialize, K: Kind> Serialize for TensorGpu<T, K> {
     }
 }
 
-pub fn serialize_context<S: serde::Serializer>(
-    _context: &Context,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    PhantomData::<Context>::serialize(&PhantomData, serializer)
+impl Serialize for Context {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        PhantomData::<Context>::serialize(&PhantomData, serializer)
+    }
 }
 
 pub struct Seed<'a, C, T> {
@@ -111,6 +113,17 @@ impl<'de, 'a, T: Scalar + Deserialize<'de>> DeserializeSeed<'de>
     for Seed<'de, Context, TensorCpu<'a, T>>
 {
     type Value = TensorCpu<'a, T>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Deserialize::deserialize(deserializer)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> DeserializeSeed<'de> for Seed<'de, Context, Arc<T>> {
+    type Value = Arc<T>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where

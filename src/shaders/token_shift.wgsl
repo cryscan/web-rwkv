@@ -10,26 +10,27 @@ struct Cursor {
     len: u32,
 };
 
-@group(0) @binding(0) var<uniform> vt: View;
-@group(0) @binding(1) var<uniform> vx: View;                                // [C, _, B] / [C, 5L, B]
-@group(0) @binding(2) var<storage, read> cursors: array<u32>;               // [A]
+@group(0) @binding(0) var<uniform> vx: View;                                // [C, A, 1] | [C, A, I]
+@group(0) @binding(1) var<uniform> vt: View;                                // [C, 1, I] | [C, A, I]
+@group(0) @binding(2) var<uniform> vs: View;                                // [C, _, B] / [C, 5L, B]
+@group(0) @binding(3) var<storage, read> cursors: array<u32>;               // [A]
 
 #ifdef TIME_MIX_FP16
-@group(0) @binding(3) var<storage, read> time_mix: array<vec2<u32>>;        // (C) | (A, C)
+@group(0) @binding(4) var<storage, read> time_mix: array<vec2<u32>>;        // (I, 1, C) | (I, A, C)
 #else
-@group(0) @binding(3) var<storage, read> time_mix: array<vec4<f32>>;        // (C) | (A, C)
+@group(0) @binding(4) var<storage, read> time_mix: array<vec4<f32>>;        // (I, 1, C) | (I, A, C)
 #endif
 
-@group(0) @binding(4) var<storage, read> sx: array<vec4<f32>>;              // (B, 1, C)
+@group(0) @binding(5) var<storage, read> sx: array<vec4<f32>>;              // (B, 1, C)
 #ifdef IN_FP16
-@group(0) @binding(5) var<storage, read> x: array<vec2<u32>>;               // (1, A, C)
+@group(0) @binding(6) var<storage, read> x: array<vec2<u32>>;               // (1, A, C)
 #else
-@group(0) @binding(5) var<storage, read> x: array<vec4<f32>>;               // (1, A, C)
+@group(0) @binding(6) var<storage, read> x: array<vec4<f32>>;               // (1, A, C)
 #endif
 #ifdef OUT_FP16
-@group(0) @binding(6) var<storage, read_write> output: array<vec2<u32>>;    // (1, A, C)
+@group(0) @binding(7) var<storage, read_write> output: array<vec2<u32>>;    // (I, A, C)
 #else
-@group(0) @binding(6) var<storage, read_write> output: array<vec4<f32>>;    // (1, A, C)
+@group(0) @binding(7) var<storage, read_write> output: array<vec4<f32>>;    // (I, A, C)
 #endif
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
@@ -55,62 +56,62 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-fn load_time_mix(stack: u32, index: u32) -> vec4<f32> {
+fn load_time_mix(item: u32, stack: u32, index: u32) -> vec4<f32> {
 #ifdef TIME_MIX_FP16
     let token = select(stack, 0u, vt.shape.y == 1u);
-    return unpack4x16float(time_mix[compute_index(vt, 0u, token, index)]);
+    return unpack4x16float(time_mix[compute_index(vt, item, token, index)]);
 #else
     let token = select(stack, 0u, vt.shape.y == 1u);
-    return time_mix[compute_index(vt, 0u, token, index)];
+    return time_mix[compute_index(vt, item, token, index)];
 #endif
 }
 
-fn load_input(index: u32) -> vec4<f32> {
+fn load_input(stack: u32, index: u32) -> vec4<f32> {
 #ifdef IN_FP16
-    return unpack4x16float(x[index]);
+    return unpack4x16float(x[compute_index(vx, 0u, stack, index)]);
 #else
-    return x[index];
+    return x[compute_index(vx, 0u, stack, index)];
 #endif
 }
 
-fn store_output(index: u32, value: vec4<f32>) {
+fn store_output(item: u32, stack: u32, index: u32, value: vec4<f32>) {
 #ifdef OUT_FP16
-    output[index] = pack4x16float(value);
+    output[compute_index(vx, item, stack, index)] = pack4x16float(value);
 #else
-    output[index] = value;
+    output[compute_index(vx, item, stack, index)] = value;
 #endif
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
-    let stride = vx.shape.x / 4u;
+    let stride = vec3<u32>(vx.shape.x >> 2u, vx.shape.yz);
     let index = invocation_id.x;
     let stack = invocation_id.y;
+    let item = invocation_id.z;
     let cursor = compute_cursor(cursors[stack]);
     let token = stack - cursor.token;
 
-    if index >= stride {
+    if any(vec3<u32>(index, stack, item) > stride) {
         return;
     }
 
-    let bti = stack * stride + index;
-    let factor = load_time_mix(stack, index);
+    let factor = load_time_mix(item, stack, index);
 
 #ifdef REVERSED
     if token == 0u {
-        let out = mix(load_input(bti), sx[compute_index(vx, cursor.batch, 0u, index)], factor);
-        store_output(bti, out);
+        let out = mix(load_input(stack, index), sx[compute_index(vs, cursor.batch, 0u, index)], factor);
+        store_output(item, stack, index, out);
     } else {
-        let out = mix(load_input(bti), load_input(bti - stride), factor);
-        store_output(bti, out);
+        let out = mix(load_input(stack, index), load_input(stack - 1u, index), factor);
+        store_output(item, stack, index, out);
     }
 #else
     if token == 0u {
-        let out = mix(sx[compute_index(vx, cursor.batch, 0u, index)], load_input(bti), factor);
-        store_output(bti, out);
+        let out = mix(sx[compute_index(vs, cursor.batch, 0u, index)], load_input(stack, index), factor);
+        store_output(item, stack, index, out);
     } else {
-        let out = mix(load_input(bti - stride), load_input(bti), factor);
-        store_output(bti, out);
+        let out = mix(load_input(stack - 1u, index), load_input(stack, index), factor);
+        store_output(item, stack, index, out);
     }
 #endif
 }

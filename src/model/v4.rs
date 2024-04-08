@@ -28,7 +28,6 @@ use crate::{
 
 #[derive(Debug, Serialize, DeserializeSeed)]
 pub struct Model<'a, F: Float> {
-    #[serde(serialize_with = "crate::tensor::serialization::serialize_context")]
     context: Context,
     info: ModelInfo,
 
@@ -290,7 +289,7 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor(self, &map).expect("back entire state");
         context.queue.submit(Some(encoder.finish()));
 
-        let data = map.back_async().await.into();
+        let data = map.back().await.into();
         BackedState { shape, data }
     }
 
@@ -304,7 +303,7 @@ impl super::ModelState for ModelState {
         encoder.copy_tensor_batch(self, &map, batch)?;
         context.queue.submit(Some(encoder.finish()));
 
-        let data = map.back_async().await.into();
+        let data = map.back().await.into();
         Ok(BackedState { shape, data })
     }
 

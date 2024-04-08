@@ -57,6 +57,12 @@ impl Shape {
     }
 }
 
+impl From<[usize; 4]> for Shape {
+    fn from(value: [usize; 4]) -> Self {
+        Self(value)
+    }
+}
+
 impl IntoBytes for Shape {
     fn into_bytes(self) -> Vec<u8> {
         let data = self.0.map(|x| x as u32);
@@ -162,7 +168,7 @@ pub trait TensorAxis: Clone + PartialEq + Eq + Hash {
 
 #[inline]
 fn check_bounds(dim: usize, start: usize, end: usize) -> Result<(usize, usize), TensorError> {
-    if start > end || start >= dim || end > dim {
+    if start > end || end - start > dim || end > dim {
         Err(TensorError::SliceOutOfRange { dim, start, end })
     } else {
         Ok((start, end))
