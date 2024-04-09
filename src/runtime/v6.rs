@@ -290,6 +290,11 @@ impl<F: Float> Job for RunJob<F> {
     type Input = Vec<Vec<u16>>;
     type Output = RunOutput<F>;
 
+    fn check(&self, input: &Self::Input) -> bool {
+        let num_tokens: usize = input.iter().map(|tokens| tokens.len()).sum();
+        num_tokens == self.cursors.shape()[0]
+    }
+
     fn load(self, input: &Self::Input) -> Result<Self> {
         let stack: Vec<TensorCpu<F>> = input
             .iter()

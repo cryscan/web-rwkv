@@ -16,6 +16,8 @@ pub trait Job: Sized + Send + 'static {
     type Input;
     type Output;
 
+    /// Check if the input is compatible.
+    fn check(&self, input: &Self::Input) -> bool;
     /// Load the data from CPU to GPU.
     fn load(self, input: &Self::Input) -> Result<Self>;
     /// Submit the job to GPU and execute it immediately.
@@ -91,14 +93,16 @@ where
             let next = iter.next();
             drop(iter);
 
-            let chunk = input.chunk();
-            fn load<J: Job>(job: J, input: &J::Input) -> Option<J> {
-                job.load(input).ok()
+            fn check<J: Job>(job: J, input: &J::Input) -> Option<J> {
+                job.check(input).then_some(job)
             }
-            let mut job = match predict.take().and_then(|job| load(job, &chunk)) {
+
+            let chunk = input.chunk();
+            let mut job = match predict.take().and_then(|job| check(job, &chunk)) {
                 Some(job) => job,
-                None => builder.build(info).await?.load(&chunk)?,
-            };
+                None => builder.build(info).await?,
+            }
+            .load(&chunk)?;
 
             async fn back<J: Job, I: JobInput>(
                 job: J,
