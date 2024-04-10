@@ -231,7 +231,7 @@ pub enum Hook {
     PostHead,
 }
 
-pub struct RunJob<F: Float> {
+pub struct InferJob<F: Float> {
     commands: Vec<CommandBuffer>,
     redirect: InferRedirect,
 
@@ -244,7 +244,7 @@ pub struct RunJob<F: Float> {
     output: TensorGpu<F, ReadWrite>,
 }
 
-impl<F: Float> Job for RunJob<F> {
+impl<F: Float> Job for InferJob<F> {
     type Input = Vec<Vec<u16>>;
     type Output = RunOutput<F>;
 
@@ -335,10 +335,10 @@ fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
     Ok(TensorOp::List(vec![]))
 }
 
-impl<F: Float, const N: usize> JobBuilder<RunJob<F>> for ModelRuntime<F, N> {
+impl<F: Float, const N: usize> JobBuilder<InferJob<F>> for ModelRuntime<F, N> {
     type Seed = InferInfo;
 
-    async fn build(&self, seed: Self::Seed) -> Result<RunJob<F>> {
+    async fn build(&self, seed: Self::Seed) -> Result<InferJob<F>> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
@@ -463,7 +463,7 @@ impl<F: Float, const N: usize> JobBuilder<RunJob<F>> for ModelRuntime<F, N> {
             .map(|x| x.1)
             .collect_vec();
 
-        Ok(RunJob {
+        Ok(InferJob {
             commands,
             redirect,
             embed_device,

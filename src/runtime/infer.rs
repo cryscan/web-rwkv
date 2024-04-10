@@ -7,12 +7,12 @@ use crate::{num::Float, tensor::TensorCpu};
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InferInfo(pub Vec<(usize, Option<InferOption>)>);
+pub struct InferInfo(pub Vec<(usize, Option<InferOption>, bool)>);
 
 impl InferInfo {
     #[inline]
     pub fn num_token(&self) -> usize {
-        self.0.iter().map(|(x, _)| x).sum()
+        self.0.iter().map(|(x, _, _)| x).sum()
     }
 
     #[inline]
@@ -26,7 +26,7 @@ impl InferInfo {
         let mut outputs = vec![(0, 0); self.num_batch()];
         let mut p_in = 0;
         let mut p_out = 0;
-        for (batch, (len, option)) in self.0.iter().enumerate() {
+        for (batch, (len, option, _)) in self.0.iter().enumerate() {
             match option {
                 None => {
                     inputs[batch] = (p_in, p_in);
@@ -55,6 +55,11 @@ impl InferInfo {
             inputs,
             outputs,
         }
+    }
+
+    #[inline]
+    pub fn back(&self) -> Vec<bool> {
+        self.0.iter().map(|&(_, _, back)| back).collect()
     }
 }
 
@@ -126,7 +131,7 @@ impl<const N: usize> JobInput for InferInput<N> {
         let Some(info) = self.iter().next() else {
             return;
         };
-        for (batch, (len, _)) in self.batches.iter_mut().zip_eq(info.0) {
+        for (batch, (len, ..)) in self.batches.iter_mut().zip_eq(info.0) {
             batch.tokens = batch.tokens.split_off(len);
         }
     }
@@ -138,7 +143,7 @@ impl<const N: usize> JobInput for InferInput<N> {
         self.batches
             .iter()
             .zip_eq(info.0)
-            .map(|(batch, (len, _))| batch.tokens[..len].to_vec())
+            .map(|(batch, (len, ..))| batch.tokens[..len].to_vec())
             .collect()
     }
 }
@@ -151,7 +156,13 @@ impl<const N: usize> IntoIterator for &InferInput<N> {
         let batches = self
             .batches
             .iter()
-            .map(|batch| (BatchState::Read(batch.tokens.len()), batch.option))
+            .map(|batch| {
+                (
+                    BatchState::Read(batch.tokens.len()),
+                    batch.option,
+                    batch.back,
+                )
+            })
             .collect();
         let token_chunk_size = self.token_chunk_size;
         Self::IntoIter {
@@ -162,7 +173,7 @@ impl<const N: usize> IntoIterator for &InferInput<N> {
 }
 
 pub struct InferIter {
-    batches: Vec<(BatchState, InferOption)>,
+    batches: Vec<(BatchState, InferOption, bool)>,
     token_chunk_size: usize,
 }
 
@@ -173,7 +184,7 @@ impl Iterator for InferIter {
         let mut batches = self
             .batches
             .iter()
-            .map(|&(x, _)| match x {
+            .map(|&(x, ..)| match x {
                 BatchState::Gen => 1,
                 BatchState::Read(x) => x,
             })
@@ -191,7 +202,7 @@ impl Iterator for InferIter {
             return None;
         }
 
-        let mut info = vec![(0, Default::default()); num_batch];
+        let mut info = vec![(0, Default::default(), false); num_batch];
         while num_token > 0 {
             let mid = batches
                 .clone()
@@ -224,6 +235,7 @@ impl Iterator for InferIter {
                         (InferOption::Last, _) => None,
                         (InferOption::Full, _) => Some(InferOption::Full),
                     };
+                    info.2 = batch.2;
                 }
             },
         );
@@ -252,14 +264,15 @@ mod tests {
     fn test_run_iter() -> Result<()> {
         let run = InferInput {
             batches: [
-                (vec![0; 139], InferOption::Last),
-                (vec![1; 1], InferOption::Last),
-                (vec![2; 0], InferOption::Full),
-                (vec![3; 65], InferOption::Full),
+                (vec![0; 139], InferOption::Last, false),
+                (vec![1; 1], InferOption::Last, false),
+                (vec![2; 0], InferOption::Full, false),
+                (vec![3; 65], InferOption::Full, true),
             ]
-            .map(|(tokens, option)| InferInputBatch {
+            .map(|(tokens, option, back)| InferInputBatch {
                 tokens,
                 option,
+                back,
                 ..Default::default()
             }),
             token_chunk_size: 128,
@@ -269,46 +282,46 @@ mod tests {
         assert_eq!(
             iter.next(),
             Some(InferInfo(vec![
-                (65, None),
-                (1, Some(InferOption::Last)),
-                (0, None),
-                (62, Some(InferOption::Full))
+                (65, None, false),
+                (1, Some(InferOption::Last), false),
+                (0, None, false),
+                (62, Some(InferOption::Full), true)
             ]))
         );
         assert_eq!(
             iter.next(),
             Some(InferInfo(vec![
-                (60, None),
-                (1, Some(InferOption::Last)),
-                (0, None),
-                (3, Some(InferOption::Full))
+                (60, None, false),
+                (1, Some(InferOption::Last), false),
+                (0, None, false),
+                (3, Some(InferOption::Full), true)
             ]))
         );
         assert_eq!(
             iter.next(),
             Some(InferInfo(vec![
-                (14, Some(InferOption::Last)),
-                (1, Some(InferOption::Last)),
-                (0, None),
-                (1, Some(InferOption::Full))
+                (14, Some(InferOption::Last), false),
+                (1, Some(InferOption::Last), false),
+                (0, None, false),
+                (1, Some(InferOption::Full), true)
             ]))
         );
         assert_eq!(
             iter.next(),
             Some(InferInfo(vec![
-                (1, Some(InferOption::Last)),
-                (1, Some(InferOption::Last)),
-                (0, None),
-                (1, Some(InferOption::Full))
+                (1, Some(InferOption::Last), false),
+                (1, Some(InferOption::Last), false),
+                (0, None, false),
+                (1, Some(InferOption::Full), true)
             ]))
         );
         assert_eq!(
             iter.next(),
             Some(InferInfo(vec![
-                (1, Some(InferOption::Last)),
-                (1, Some(InferOption::Last)),
-                (0, None),
-                (1, Some(InferOption::Full))
+                (1, Some(InferOption::Last), false),
+                (1, Some(InferOption::Last), false),
+                (0, None, false),
+                (1, Some(InferOption::Full), true)
             ]))
         );
 
@@ -336,10 +349,10 @@ mod tests {
         assert_eq!(
             run.iter().next(),
             Some(InferInfo(vec![
-                (61, None),
-                (0, None),
-                (0, None),
-                (3, Some(InferOption::Full))
+                (61, None, false),
+                (0, None, false),
+                (0, None, false),
+                (3, Some(InferOption::Full), false)
             ]))
         );
 
@@ -361,10 +374,10 @@ mod tests {
         assert_eq!(
             run.iter().next(),
             Some(InferInfo(vec![
-                (60, None),
-                (1, Some(InferOption::Last)),
-                (0, None),
-                (3, Some(InferOption::Full))
+                (60, None, false),
+                (1, Some(InferOption::Last), false),
+                (0, None, false),
+                (3, Some(InferOption::Full), false)
             ]))
         );
 
