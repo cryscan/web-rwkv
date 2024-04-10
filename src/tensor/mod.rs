@@ -600,7 +600,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     }
 
     pub fn load_batch(&self, host: &TensorCpu<T>, batch: usize) -> Result<(), TensorError> {
-        host.check_shape(Shape::new(self.shape[0], self.shape[1], 1, 1))?;
+        host.check_shape([self.shape[0], self.shape[1], 1, 1])?;
         if batch >= self.shape[2] {
             return Err(TensorError::BatchOutOfRange {
                 batch,
@@ -675,9 +675,9 @@ impl<T: Scalar> TensorCpu<T> {
             None => return Err(TensorError::Empty),
         };
 
-        batches.iter().try_for_each(|batch| {
-            batch.check_shape(Shape::new(shape[0], shape[1], batch.shape[2], 1))
-        })?;
+        batches
+            .iter()
+            .try_for_each(|batch| batch.check_shape([shape[0], shape[1], batch.shape[2], 1]))?;
 
         let num_batch: usize = batches.iter().map(|batch| batch.shape[2]).sum();
         shape[2] = num_batch;
@@ -701,7 +701,15 @@ impl<T: Scalar> TensorCpu<T> {
             return Err(TensorError::SplitInvalid(axis));
         }
 
-        todo!()
+        (0..self.shape[axis])
+            .map(|index| match axis {
+                0 => self.slice(index, .., .., ..),
+                1 => self.slice(.., index, .., ..),
+                2 => self.slice(.., .., index, ..),
+                3 => self.slice(.., .., .., ..),
+                _ => Err(TensorError::SplitInvalid(axis)),
+            })
+            .try_collect()
     }
 
     pub fn slice(
@@ -882,7 +890,7 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<T>>> for TensorStack<T> {
 
         value
             .iter()
-            .try_for_each(|batch| batch.check_shape(Shape::new(shape[0], batch.shape[1], 1, 1)))?;
+            .try_for_each(|batch| batch.check_shape([shape[0], batch.shape[1], 1, 1]))?;
 
         let cursors = value
             .iter()
@@ -986,17 +994,35 @@ mod tests {
             [5.0, 6.0, 7.0, 8.0, 9.0].repeat(3),
         ]
         .concat();
-        y.check_shape(Shape::new(5, 3, 2, 1))?;
+        y.check_shape([5, 3, 2, 1])?;
         assert_eq!(y.to_vec(), ans);
 
         let y = x.clone().repeat(0, 3);
-        y.check_shape(Shape::new(15, 1, 2, 1))?;
+        y.check_shape([15, 1, 2, 1])?;
         assert_eq!(y.to_vec(), ans);
 
         let y = x.repeat(2, 3);
         let ans = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0].repeat(3);
-        y.check_shape(Shape::new(5, 1, 6, 1))?;
+        y.check_shape([5, 1, 6, 1])?;
         assert_eq!(y.to_vec(), ans);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_split() -> Result<()> {
+        let shape = Shape::new(5, 1, 2, 1);
+        let x: Vec<_> = (0..10).map(|x| x as f32).collect();
+        let x = TensorCpu::from_data(shape, x)?;
+
+        assert!(x.clone().split(0).is_err());
+        assert!(x.clone().split(1).is_err());
+
+        let x = x.split(2)?;
+        x[0].check_shape([5, 1, 1, 1])?;
+        x[1].check_shape([5, 1, 1, 1])?;
+        assert_eq!(x[0].to_vec(), vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(x[1].to_vec(), vec![5.0, 6.0, 7.0, 8.0, 9.0]);
 
         Ok(())
     }

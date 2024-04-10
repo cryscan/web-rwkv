@@ -45,7 +45,7 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
         destination: &TensorGpu<T, K>,
         batch: usize,
     ) -> Result<(), TensorError> {
-        destination.check_shape(Shape::new(source.shape[0], source.shape[1], 1, 1))?;
+        destination.check_shape([source.shape[0], source.shape[1], 1, 1])?;
         if batch >= source.shape[2] {
             return Err(TensorError::BatchOutOfRange {
                 batch,
@@ -1128,9 +1128,9 @@ impl TensorOp {
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
-        time_decay.check_shape(Shape::new(shape[0], 1, 1, 1))?;
-        time_first.check_shape(Shape::new(shape[0], 1, 1, 1))?;
-        state.check_shape(Shape::new(shape[0], 4, state.shape()[2], 1))?;
+        time_decay.check_shape([shape[0], 1, 1, 1])?;
+        time_first.check_shape([shape[0], 1, 1, 1])?;
+        state.check_shape([shape[0], 4, state.shape()[2], 1])?;
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -1213,9 +1213,9 @@ impl TensorOp {
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
-        time_decay.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
-        time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
-        state.check_shape(Shape::new(dim, shape[0] + 1, state.shape()[2], 1))?;
+        time_decay.check_shape([shape[0], shape[1], 1, 1])?;
+        time_first.check_shape([shape[0], shape[1], 1, 1])?;
+        state.check_shape([dim, shape[0] + 1, state.shape()[2], 1])?;
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -1299,8 +1299,8 @@ impl TensorOp {
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         time_decay.check_shape(shape)?;
-        time_first.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
-        state.check_shape(Shape::new(dim, shape[0] + 1, state.shape()[2], 1))?;
+        time_first.check_shape([shape[0], shape[1], 1, 1])?;
+        state.check_shape([dim, shape[0] + 1, state.shape()[2], 1])?;
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -1578,7 +1578,7 @@ impl TensorOp {
         let shape = x.shape();
         v.check_shape(shape)?;
         r.check_shape(shape)?;
-        state.check_shape(Shape::new(shape[0], 1, state.shape()[2], 1))?;
+        state.check_shape([shape[0], 1, state.shape()[2], 1])?;
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -1701,7 +1701,7 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = output.shape();
-        input.check_shape(Shape::new(shape[0], input.shape()[1], input.shape()[2], 1))?;
+        input.check_shape([shape[0], input.shape()[1], input.shape()[2], 1])?;
 
         let context = input.context();
         let pipeline = context.checkout_pipeline(
@@ -1756,7 +1756,7 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = input.shape();
-        output.check_shape(Shape::new(shape[0], shape[2], shape[1], 1))?;
+        output.check_shape([shape[0], shape[2], shape[1], 1])?;
 
         let context = input.context();
         let pipeline = context.checkout_pipeline(
@@ -1810,7 +1810,7 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         let shape = output.shape();
         input.check_shape(shape)?;
-        factor.check_shape(Shape::new(4, 1, 1, 1))?;
+        factor.check_shape([4, 1, 1, 1])?;
 
         let block_size = match shape[1] {
             x if x < 8 => [128, 1],
@@ -1876,9 +1876,9 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 8;
 
         let shape = output.shape();
-        factor.check_shape(Shape::new(4, 1, 1, 1))?;
-        xa.check_shape(Shape::new(xa.shape()[0], shape[0], shape[2], 1))?;
-        xb.check_shape(Shape::new(xb.shape()[0], shape[1], shape[2], 1))?;
+        factor.check_shape([4, 1, 1, 1])?;
+        xa.check_shape([xa.shape()[0], shape[0], shape[2], 1])?;
+        xb.check_shape([xb.shape()[0], shape[1], shape[2], 1])?;
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
