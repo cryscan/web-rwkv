@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::marker::PhantomData;
 
 use anyhow::Result;
 use half::f16;
@@ -89,7 +89,7 @@ pub struct Layer {
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Embed {
     pub layer_norm: LayerNorm,
-    pub w: Arc<TensorCpu<f16>>,
+    pub w: TensorCpu<f16>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
@@ -236,7 +236,7 @@ pub struct InferJob<F: Float> {
     redirect: InferRedirect,
 
     embed_device: EmbedDevice,
-    embed: Arc<TensorCpu<f16>>,
+    embed: TensorCpu<f16>,
 
     cursors: TensorGpu<u32, ReadWrite>,
     tokens: TensorGpu<u32, ReadWrite>,
@@ -732,7 +732,7 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
                 w: loader.load_vector_f16("blocks.0.ln0.weight").await?,
                 b: loader.load_vector_f16("blocks.0.ln0.bias").await?,
             },
-            w: loader.load_embed().await?.into(),
+            w: loader.load_embed().await?,
             u: match embed_device {
                 EmbedDevice::Cpu => None,
                 EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight").await?),
