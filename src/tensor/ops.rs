@@ -2216,7 +2216,6 @@ mod tests {
         (a - b).abs() <= f32::max(eps, f32::max(a.abs(), b.abs()) * eps)
     }
 
-    #[tokio::main]
     async fn create_context() -> Result<Context> {
         let instance = Instance::new();
         let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
@@ -2229,7 +2228,7 @@ mod tests {
 
     #[test]
     fn test_softmax() -> Result<()> {
-        let context = match create_context() {
+        let context = match pollster::block_on(create_context()) {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
@@ -2279,7 +2278,7 @@ mod tests {
 
     #[test]
     fn test_layer_norm() -> Result<()> {
-        let context = match create_context() {
+        let context = match pollster::block_on(create_context()) {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
@@ -2380,7 +2379,7 @@ mod tests {
 
     #[test]
     fn test_matmul() -> Result<()> {
-        let context = match create_context() {
+        let context = match pollster::block_on(create_context()) {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
@@ -2491,7 +2490,7 @@ mod tests {
 
     #[test]
     fn test_matmul_nf4() -> Result<()> {
-        let context = match create_context() {
+        let context = match pollster::block_on(create_context()) {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
@@ -2687,7 +2686,7 @@ mod tests {
 
     #[test]
     fn test_blit() -> Result<()> {
-        let context = match create_context() {
+        let context = match pollster::block_on(create_context()) {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };
@@ -2735,7 +2734,7 @@ mod tests {
 
     #[test]
     fn test_transpose() -> Result<()> {
-        let context = match create_context() {
+        let context = match pollster::block_on(create_context()) {
             Ok(context) => context,
             Err(_) => return Ok(()),
         };

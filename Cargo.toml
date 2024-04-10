@@ -54,6 +54,7 @@ tokio = { version = "1.37", features = ["full"] }
 clap = { version = "4.3", features = ["derive"] }
 crossterm = "0.27"
 dialoguer = "0.11.0"
+pollster = "0.3.0"
 ratatui = { version = "0.26", features = ["all-widgets"] }
 
 [features]
