@@ -27,7 +27,7 @@ use crate::{
 };
 
 #[derive(Debug, Serialize, DeserializeSeed)]
-pub struct Model<'a, F: Float> {
+pub struct Model<F: Float> {
     context: Context,
     info: ModelInfo,
 
@@ -36,13 +36,13 @@ pub struct Model<'a, F: Float> {
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     token_chunk_size: usize,
 
-    tensor: ModelTensor<'a>,
+    tensor: ModelTensor,
     _phantom: PhantomData<F>,
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
-pub struct ModelTensor<'a> {
-    pub embed: Embed<'a>,
+pub struct ModelTensor {
+    pub embed: Embed,
     pub head: Head,
     pub layers: Vec<Layer>,
 }
@@ -98,9 +98,9 @@ pub struct Layer {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
-pub struct Embed<'a> {
+pub struct Embed {
     pub layer_norm: LayerNorm,
-    pub w: TensorCpu<'a, f16>,
+    pub w: TensorCpu<f16>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
@@ -331,7 +331,7 @@ impl super::ModelState for ModelState {
         }
         for (state, (shape, backed)) in self.state.iter().zip(backed.data.iter()) {
             let context = state.context();
-            let host = context.tensor_from_data(*shape, backed)?;
+            let host = context.tensor_from_data(*shape, backed.clone())?;
             state.load(&host)?;
         }
         Ok(())
@@ -346,7 +346,7 @@ impl super::ModelState for ModelState {
             let context = state.context();
             let shape = state.shape();
             let shape = Shape::new(shape[0], shape[1], 1, 1);
-            let host = context.tensor_from_data(shape, backed)?;
+            let host = context.tensor_from_data(shape, backed.clone())?;
             state.load_batch(&host, batch)?;
         }
         Ok(())
@@ -501,7 +501,7 @@ impl super::BackedState for BackedState {
     }
 }
 
-impl<'a, F: Float> Model<'a, F> {
+impl<F: Float> Model<F> {
     const TIME_MIX_ADAPTER_SIZE: usize = 32;
     const TIME_DECAY_ADAPTER_SIZE: usize = 64;
 
@@ -509,10 +509,10 @@ impl<'a, F: Float> Model<'a, F> {
     pub const GN_EPS: f32 = 64.0e-5;
 }
 
-impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
+impl<R: Reader, F: Float> BuildFuture<Model<F>> for ModelBuilder<R> {
     type Error = anyhow::Error;
 
-    async fn build(self) -> Result<Model<'a, F>, Self::Error> {
+    async fn build(self) -> Result<Model<F>, Self::Error> {
         let PreparedModelBuilder {
             context,
             info,
@@ -678,7 +678,7 @@ impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
     }
 }
 
-impl<'a, F: Float> ModelBase for Model<'a, F> {
+impl<F: Float> ModelBase for Model<F> {
     #[inline]
     fn context(&self) -> &Context {
         &self.context
@@ -690,10 +690,10 @@ impl<'a, F: Float> ModelBase for Model<'a, F> {
     }
 }
 
-impl<'a, F: Float> ModelRunInternal for Model<'a, F> {
+impl<F: Float> ModelRunInternal for Model<F> {
     type Hook = Hook;
     type State = ModelState;
-    type Tensor = ModelTensor<'a>;
+    type Tensor = ModelTensor;
     type Runtime = Runtime<F>;
     type Header = Header<F>;
 

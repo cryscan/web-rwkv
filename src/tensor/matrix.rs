@@ -14,9 +14,9 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Nf4Quant<'a>(pub TensorCpu<'a, f32>);
+pub struct Nf4Quant(pub TensorCpu<f32>);
 
-impl Default for Nf4Quant<'_> {
+impl Default for Nf4Quant {
     fn default() -> Self {
         #[allow(clippy::excessive_precision)]
         let quant = vec![

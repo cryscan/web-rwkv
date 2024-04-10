@@ -2302,7 +2302,7 @@ mod tests {
             .to_vec();
 
         let shape = Shape::new(C, T, B, 1);
-        let x_dev = context.tensor_from_data(shape, &x)?;
+        let x_dev = context.tensor_from_data(shape, x.clone())?;
 
         let shape = Shape::new(C, 1, 1, 1);
         let w_dev = context.tensor_from_data(shape, &w[..1000])?;

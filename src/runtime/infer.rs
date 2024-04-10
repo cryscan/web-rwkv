@@ -87,7 +87,7 @@ pub struct InferInputBatch {
     /// Inference option for outputs.
     pub option: InferOption,
     /// Load a state before inference.
-    pub load: Option<TensorCpu<'static, f32>>,
+    pub load: Option<TensorCpu<f32>>,
     /// Enable reading back the state after inference.
     pub back: bool,
 }
@@ -246,8 +246,8 @@ impl Iterator for InferIter {
 
 #[derive(Debug, Clone)]
 pub struct InferOutputBatch<F: Float> {
-    pub output: TensorCpu<'static, F>,
-    pub state: Option<TensorCpu<'static, f32>>,
+    pub output: TensorCpu<F>,
+    pub state: Option<TensorCpu<f32>>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]

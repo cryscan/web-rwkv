@@ -159,7 +159,7 @@ impl std::ops::SubAssign<Shape> for Shape {
 
 pub trait TensorSlice {
     fn shape_bounds(&self, shape: Shape) -> Result<(Shape, Shape), TensorError>;
-    fn contiguous_bounds(&self, shape: Shape) -> Result<(usize, usize), TensorError>;
+    fn bounds(&self, shape: Shape) -> Result<(usize, usize), TensorError>;
 }
 
 pub trait TensorAxis: Clone + PartialEq + Eq + Hash {
@@ -270,7 +270,7 @@ where
         Ok((start, end))
     }
 
-    fn contiguous_bounds(&self, shape: Shape) -> Result<(usize, usize), TensorError> {
+    fn bounds(&self, shape: Shape) -> Result<(usize, usize), TensorError> {
         use SliceFillState::{Full, NotFull};
         use SliceQuantState::{One, Plural, Zero};
 
@@ -296,7 +296,7 @@ where
             },
         );
         if !valid {
-            return Err(TensorError::Contiguous);
+            return Err(TensorError::SliceInvalid);
         }
 
         let len = (end - start).len();
@@ -382,30 +382,24 @@ mod tests {
         };
 
         let x: TensorCpu<f32> = context.tensor_init(Shape::new(1024, 768, 3, 1));
-        assert_eq!(
-            (12..42, 7..8, 1, 0).contiguous_bounds(x.shape)?,
-            (793612, 793642)
-        );
+        assert_eq!((12..42, 7..8, 1, 0).bounds(x.shape)?, (793612, 793642));
         assert_eq!(
             (.., 42..56, 2..=2, ..).shape_bounds(x.shape)?,
             (Shape::new(0, 42, 2, 0), Shape::new(1024, 56, 3, 1))
         );
-        assert!((.., 42..56, 2..3, ..).contiguous_bounds(x.shape).is_ok());
-        assert!((0..1, 0..1, 0..1, ..).contiguous_bounds(x.shape).is_ok());
-        assert!((.., 42..56, 0..2, ..).contiguous_bounds(x.shape).is_err());
-        assert!((0, 0..2, 1..2, ..).contiguous_bounds(x.shape).is_err());
+        assert!((.., 42..56, 2..3, ..).bounds(x.shape).is_ok());
+        assert!((0..1, 0..1, 0..1, ..).bounds(x.shape).is_ok());
+        assert!((.., 42..56, 0..2, ..).bounds(x.shape).is_err());
+        assert!((0, 0..2, 1..2, ..).bounds(x.shape).is_err());
 
         let x: TensorCpu<f32> = context.tensor_init(Shape::new(1, 1024, 6, 1));
-        assert_eq!(
-            (.., 0..256, 3..=3, ..).contiguous_bounds(x.shape)?,
-            (3072, 3328)
-        );
+        assert_eq!((.., 0..256, 3..=3, ..).bounds(x.shape)?, (3072, 3328));
 
         let x: TensorCpu<f32> = context.tensor_init(Shape::new(1024, 768, 1, 1));
-        assert!((.., 0..256, .., ..).contiguous_bounds(x.shape).is_ok());
+        assert!((.., 0..256, .., ..).bounds(x.shape).is_ok());
 
         let x: TensorCpu<f32> = context.tensor_init(Shape::new(1, 768, 1, 1));
-        assert!((.., 256..512, .., ..).contiguous_bounds(x.shape).is_ok());
+        assert!((.., 256..512, .., ..).bounds(x.shape).is_ok());
 
         let shape = Shape::new(4, 2, 3, 1);
         let x = (0..shape.len()).map(|x| x as f32).collect_vec();

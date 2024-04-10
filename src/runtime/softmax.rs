@@ -7,10 +7,10 @@ use crate::{
     },
 };
 
-pub async fn softmax<'a, T: Float>(
+pub async fn softmax<T: Float>(
     context: &Context,
-    input: &TensorCpu<'a, T>,
-) -> Result<TensorCpu<'static, T>, TensorError> {
+    input: &TensorCpu<T>,
+) -> Result<TensorCpu<T>, TensorError> {
     let tensor = TensorGpu::init(context, input.shape());
     tensor.load(input)?;
     let op = TensorOp::softmax(&tensor)?;

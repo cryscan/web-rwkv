@@ -66,11 +66,11 @@ pub(crate) trait ModelRunInternal: ModelBase {
         hooks: &HookMap<Self::Hook, Self::Tensor, Self::State, Self::Runtime, Self::Header>,
     ) -> Result<(TensorGpu<f32, ReadWrite>, Vec<std::ops::Range<usize>>), TensorError>;
 
-    fn create_input<'a, F: Float>(
+    fn create_input<F: Float>(
         &self,
-        embed: &TensorCpu<'a, f16>,
+        embed: &TensorCpu<f16>,
         tokens: &[Vec<u16>],
-    ) -> Result<TensorStack<'a, F>, TensorError> {
+    ) -> Result<TensorStack<F>, TensorError> {
         let info = self.info();
         let context = self.context();
 

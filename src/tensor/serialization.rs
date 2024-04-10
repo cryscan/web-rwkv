@@ -15,15 +15,15 @@ struct TensorBlob {
     data: Vec<u8>,
 }
 
-impl<'a, T: Scalar> From<TensorCpu<'a, T>> for TensorBlob {
-    fn from(value: TensorCpu<'a, T>) -> Self {
+impl<T: Scalar> From<TensorCpu<T>> for TensorBlob {
+    fn from(value: TensorCpu<T>) -> Self {
         let TensorCpu { shape, data, .. } = value;
         let data = bytemuck::cast_slice(&data).to_vec();
         Self { shape, data }
     }
 }
 
-impl<'a, T: Scalar> From<TensorBlob> for TensorCpu<'a, T> {
+impl<T: Scalar> From<TensorBlob> for TensorCpu<T> {
     fn from(value: TensorBlob) -> Self {
         let TensorBlob { shape, data } = value;
         let data: Vec<T> = bytemuck::cast_slice(&data).to_vec();
@@ -36,7 +36,7 @@ impl<'a, T: Scalar> From<TensorBlob> for TensorCpu<'a, T> {
     }
 }
 
-impl<T: Scalar + Serialize> Serialize for TensorCpu<'_, T> {
+impl<T: Scalar + Serialize> Serialize for TensorCpu<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -45,7 +45,7 @@ impl<T: Scalar + Serialize> Serialize for TensorCpu<'_, T> {
     }
 }
 
-impl<'de, T: Scalar + Deserialize<'de>> Deserialize<'de> for TensorCpu<'_, T> {
+impl<'de, T: Scalar + Deserialize<'de>> Deserialize<'de> for TensorCpu<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -109,10 +109,8 @@ impl<'de> DeserializeSeed<'de> for Seed<'de, Context, Context> {
     }
 }
 
-impl<'de, 'a, T: Scalar + Deserialize<'de>> DeserializeSeed<'de>
-    for Seed<'de, Context, TensorCpu<'a, T>>
-{
-    type Value = TensorCpu<'a, T>;
+impl<'de, T: Scalar + Deserialize<'de>> DeserializeSeed<'de> for Seed<'de, Context, TensorCpu<T>> {
+    type Value = TensorCpu<T>;
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where

@@ -27,7 +27,7 @@ use crate::{
 };
 
 #[derive(Debug, Serialize, DeserializeSeed)]
-pub struct Model<'a, F: Float> {
+pub struct Model<F: Float> {
     context: Context,
     info: ModelInfo,
 
@@ -36,13 +36,13 @@ pub struct Model<'a, F: Float> {
     /// To prevent the GPU device from lost, this limits the maximum batch-token it processes one time.
     token_chunk_size: usize,
 
-    tensor: ModelTensor<'a>,
+    tensor: ModelTensor,
     _phantom: PhantomData<F>,
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
-pub struct ModelTensor<'a> {
-    pub embed: Embed<'a>,
+pub struct ModelTensor {
+    pub embed: Embed,
     pub head: Head,
     pub layers: Vec<Layer>,
 }
@@ -87,9 +87,9 @@ pub struct Layer {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
-pub struct Embed<'a> {
+pub struct Embed {
     pub layer_norm: LayerNorm,
-    pub w: TensorCpu<'a, f16>,
+    pub w: TensorCpu<f16>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
@@ -396,15 +396,15 @@ impl super::BackedState for BackedState {
     }
 }
 
-impl<'a, F: Float> Model<'a, F> {
+impl<F: Float> Model<F> {
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
 }
 
-impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
+impl<R: Reader, F: Float> BuildFuture<Model<F>> for ModelBuilder<R> {
     type Error = anyhow::Error;
 
-    async fn build(self) -> Result<Model<'a, F>, Self::Error> {
+    async fn build(self) -> Result<Model<F>, Self::Error> {
         let PreparedModelBuilder {
             context,
             info,
@@ -529,7 +529,7 @@ impl<'a, R: Reader, F: Float> BuildFuture<Model<'a, F>> for ModelBuilder<R> {
     }
 }
 
-impl<'a, F: Float> ModelBase for Model<'a, F> {
+impl<F: Float> ModelBase for Model<F> {
     #[inline]
     fn context(&self) -> &Context {
         &self.context
@@ -541,10 +541,10 @@ impl<'a, F: Float> ModelBase for Model<'a, F> {
     }
 }
 
-impl<'a, F: Float + Hom<f16>> ModelRunInternal for Model<'a, F> {
+impl<F: Float + Hom<f16>> ModelRunInternal for Model<F> {
     type Hook = Hook;
     type State = ModelState;
-    type Tensor = ModelTensor<'a>;
+    type Tensor = ModelTensor;
     type Runtime = Runtime<F>;
     type Header = Header<F>;
 

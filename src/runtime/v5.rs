@@ -93,7 +93,7 @@ pub struct Layer {
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Embed {
     pub layer_norm: LayerNorm,
-    pub w: Arc<TensorCpu<'static, f16>>,
+    pub w: Arc<TensorCpu<f16>>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
@@ -247,7 +247,7 @@ pub struct InferJob<F: Float> {
     redirect: InferRedirect,
 
     embed_device: EmbedDevice,
-    embed: Arc<TensorCpu<'static, f16>>,
+    embed: Arc<TensorCpu<f16>>,
 
     cursors: TensorGpu<u32, ReadWrite>,
     tokens: TensorGpu<u32, ReadWrite>,
@@ -267,7 +267,7 @@ impl<F: Float> Job for InferJob<F> {
     fn load(self, input: &Self::Input) -> Result<Self> {
         let stack: Vec<TensorCpu<F>> = input
             .iter()
-            .map(|tokens| -> Result<TensorCpu<'_, F>, _> {
+            .map(|tokens| -> Result<TensorCpu<F>, _> {
                 let num_emb = self.embed.shape()[0];
                 let num_token = tokens.len();
                 let data = self.embed.data();
