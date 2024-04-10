@@ -225,9 +225,14 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = output.shape();
-        tokens.check_shape(Shape::new(shape[1], shape[2], 1, 1))?;
-        input.check_shape(Shape::new(shape[0], input.shape[1], 1, 1))?;
+        let shape = {
+            let [index, token, batch, _] = *output.shape();
+            let [_, vocab, _, _] = *input.shape();
+            tokens.check_shape([token, batch, 1, 1])?;
+            input.check_shape([index, vocab, 1, 1])?;
+            output.check_shape([index, token, batch, 1])?;
+            output.shape()
+        };
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
@@ -287,12 +292,16 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = x.shape();
-        w.check_shape(Shape::new(shape[0], 1, 1, 1))?;
-        b.check_shape(Shape::new(shape[0], 1, 1, 1))?;
-        if let Some(s) = s {
-            s.check_shape(Shape::new(4, shape[1], shape[2], 1))?;
-        }
+        let shape = {
+            let [index, token, batch, _] = *x.shape();
+            x.check_shape([index, token, batch, 1])?;
+            w.check_shape([index, 1, 1, 1])?;
+            b.check_shape([index, 1, 1, 1])?;
+            if let Some(s) = s {
+                s.check_shape([4, token, batch, 1])?;
+            }
+            x.shape()
+        };
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -357,9 +366,13 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 32;
 
-        let shape = x.shape();
-        w.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
-        b.check_shape(Shape::new(shape[0], shape[1], 1, 1))?;
+        let shape = {
+            let [index, head, token, _] = *x.shape();
+            x.check_shape([index, head, token, 1])?;
+            w.check_shape([index, head, 1, 1])?;
+            b.check_shape([index, head, 1, 1])?;
+            x.shape()
+        };
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -414,9 +427,14 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape()[0], shape[0], shape[2], 1))?;
-        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
+        let shape = {
+            let [m, n, b, _] = *output.shape();
+            let [k, _, _, _] = *input.shape();
+            matrix.check_shape([k, m, b, 1])?;
+            input.check_shape([k, n, b, 1])?;
+            output.check_shape([m, n, b, 1])?;
+            output.shape()
+        };
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
@@ -482,15 +500,15 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape()[0], shape[0], shape[2], 1))?;
-        input.check_shape(Shape::new(matrix.shape[0], shape[1], shape[2], 1))?;
-        minmax.check_shape(Shape::new(
-            (input.shape()[0] << 1) / Self::INT8_BLOCK_SIZE as usize,
-            shape[0],
-            shape[2],
-            1,
-        ))?;
+        let shape = {
+            let [m, n, b, _] = *output.shape();
+            let [k, _, _, _] = *input.shape();
+            minmax.check_shape([(k << 1) / Self::INT8_BLOCK_SIZE as usize, m, b, 1])?;
+            matrix.check_shape([k, m, b, 1])?;
+            input.check_shape([k, n, b, 1])?;
+            output.check_shape([m, n, b, 1])?;
+            output.shape()
+        };
 
         let context = matrix.context();
         let pipeline = context.checkout_pipeline(
@@ -561,15 +579,15 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = output.shape();
-        matrix.check_shape(Shape::new(input.shape()[0] >> 1, shape[0], shape[2], 1))?;
-        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
-        absmax.check_shape(Shape::new(
-            input.shape()[0] / Self::NF4_BLOCK_SIZE as usize,
-            shape[0],
-            shape[2],
-            1,
-        ))?;
+        let shape = {
+            let [m, n, b, _] = *output.shape();
+            let [k, _, _, _] = *input.shape();
+            absmax.check_shape([k / Self::NF4_BLOCK_SIZE as usize, m, b, 1])?;
+            matrix.check_shape([k >> 1, m, b, 1])?;
+            input.check_shape([k, n, b, 1])?;
+            output.check_shape([m, n, b, 1])?;
+            output.shape()
+        };
 
         let context = matrix.context();
         let pipeline = context.checkout_pipeline(
@@ -644,9 +662,14 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
-        let shape = output.shape();
-        matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
-        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
+        let shape = {
+            let [m, n, b, _] = *output.shape();
+            let [k, _, _, _] = *input.shape();
+            matrix.check_shape([k, m, b, 1])?;
+            input.check_shape([k, n, b, 1])?;
+            output.check_shape([m, n, b, 1])?;
+            output.shape()
+        };
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
@@ -718,15 +741,15 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
-        let shape = output.shape();
-        matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
-        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
-        minmax.check_shape(Shape::new(
-            (input.shape()[0] << 1) / Self::INT8_BLOCK_SIZE as usize,
-            shape[0],
-            shape[2],
-            1,
-        ))?;
+        let shape = {
+            let [m, n, b, _] = *output.shape();
+            let [k, _, _, _] = *input.shape();
+            minmax.check_shape([(k << 1) / Self::INT8_BLOCK_SIZE as usize, m, b, 1])?;
+            matrix.check_shape([k, m, b, 1])?;
+            input.check_shape([k, n, b, 1])?;
+            output.check_shape([m, n, b, 1])?;
+            output.shape()
+        };
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
@@ -803,9 +826,15 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
-        let shape = output.shape();
-        matrix.check_shape(Shape::new(matrix.shape()[0], shape[0], shape[2], 1))?;
-        input.check_shape(Shape::new(input.shape()[0], shape[1], shape[2], 1))?;
+        let shape = {
+            let [m, n, b, _] = *output.shape();
+            let [k, _, _, _] = *input.shape();
+            absmax.check_shape([k / Self::NF4_BLOCK_SIZE as usize, m, b, 1])?;
+            matrix.check_shape([k >> 1, m, b, 1])?;
+            input.check_shape([k, n, b, 1])?;
+            output.check_shape([m, n, b, 1])?;
+            output.shape()
+        };
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
@@ -870,16 +899,23 @@ impl TensorOp {
         })
     }
 
+    /// Add `input` to `output`.
+    /// - `input` shape: `[C, 1, B]` or `[C, T, B]`.
+    /// - `output` shape: `[C, T, B]`.
     pub fn add(
         input: TensorGpuView<impl Float>,
         output: TensorGpuView<impl Float>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = output.shape();
-        input
-            .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
-            .or(input.check_shape(shape))?;
+        let shape = {
+            let [index, token, batch, _] = *output.shape();
+            input
+                .check_shape([index, 1, batch, 1])
+                .or(input.check_shape([index, token, batch, 1]))?;
+            output.check_shape([index, token, batch, 1])?;
+            output.shape()
+        };
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
@@ -926,16 +962,23 @@ impl TensorOp {
         })
     }
 
+    /// Multiply `input` to `output`.
+    /// - `input` shape: `[C, 1, B]` or `[C, T, B]`.
+    /// - `output` shape: `[C, T, B]`.
     pub fn mul(
         input: TensorGpuView<impl Float>,
         output: TensorGpuView<impl Float>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = output.shape();
-        input
-            .check_shape(Shape::new(shape[0], 1, shape[2], shape[3]))
-            .or(input.check_shape(shape))?;
+        let shape = {
+            let [index, token, batch, _] = *output.shape();
+            input
+                .check_shape([index, 1, batch, 1])
+                .or(input.check_shape([index, token, batch, 1]))?;
+            output.check_shape([index, token, batch, 1])?;
+            output.shape()
+        };
 
         let context = output.context();
         let pipeline = context.checkout_pipeline(
@@ -985,7 +1028,7 @@ impl TensorOp {
     pub fn token_shift(
         cursors: &TensorGpu<u32, ReadWrite>,
         time_mix: TensorGpuView<impl Float>,
-        sx: TensorGpuView<f32>,
+        state: TensorGpuView<f32>,
         input: &TensorGpu<impl Float, ReadWrite>,
         output: &TensorGpu<impl Float, ReadWrite>,
         reversed: bool,
@@ -993,15 +1036,15 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [index, token, item, _] = *output.shape();
-            let [_, head, batch, _] = *sx.shape();
+            let [index, token, count, _] = *output.shape();
+            let [_, head, batch, _] = *state.shape();
             input
                 .check_shape([index, token, 1, 1])
-                .or(input.check_shape([index, token, item, 1]))?;
+                .or(input.check_shape([index, token, count, 1]))?;
             time_mix
                 .check_shape([index, 1, 1, 1])
-                .or(time_mix.check_shape([index, token, item, 1]))?;
-            sx.check_shape([index, head, batch, 1])?;
+                .or(time_mix.check_shape([index, token, count, 1]))?;
+            state.check_shape([index, head, batch, 1])?;
             output.shape()
         };
 
@@ -1032,7 +1075,7 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: sx.meta_binding(),
+                    resource: state.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
@@ -1044,7 +1087,7 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: sx.binding(),
+                    resource: state.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
@@ -2445,214 +2488,6 @@ mod tests {
 
         Ok(())
     }
-
-    // #[test]
-    // fn test_matmul_int8() -> Result<()> {
-    //     let context = match create_context() {
-    //         Ok(context) => context,
-    //         Err(_) => return Ok(()),
-    //     };
-    //     fastrand::seed(42);
-
-    //     const C: usize = 14336;
-    //     const R: usize = 4096;
-    //     const T: usize = 32;
-
-    //     // let matrix_shape = Shape::new(C, R, 1, 1);
-    //     let input_shape = Shape::new(C, T, 1, 1);
-    //     let output_shape = Shape::new(R, T, 2, 1);
-
-    //     let matrix_f16 = vec![(); R * C]
-    //         .into_iter()
-    //         .map(|_| 10.0 * (fastrand::f32() - 0.5))
-    //         .map(f16::from_f32)
-    //         .collect_vec();
-
-    //     let mut matrix_u8 = matrix_f16
-    //         .clone()
-    //         .into_iter()
-    //         .map(f16::to_f32)
-    //         .collect_vec();
-
-    //     let mut mx = vec![f32::MAX; C];
-    //     let mut my = vec![f32::MAX; R];
-    //     let mut rx = vec![f32::MIN; C];
-    //     let mut ry = vec![f32::MIN; R];
-
-    //     if R > C {
-    //         for i in 0..R {
-    //             (0..C).for_each(|j| my[i] = my[i].min(matrix_u8[C * i + j]));
-    //             (0..C).for_each(|j| matrix_u8[C * i + j] -= my[i]);
-    //         }
-    //         for j in 0..C {
-    //             (0..R).for_each(|i| mx[j] = mx[j].min(matrix_u8[C * i + j]));
-    //             (0..R).for_each(|i| matrix_u8[C * i + j] -= mx[j]);
-    //         }
-    //     } else {
-    //         for j in 0..C {
-    //             (0..R).for_each(|i| mx[j] = mx[j].min(matrix_u8[C * i + j]));
-    //             (0..R).for_each(|i| matrix_u8[C * i + j] -= mx[j]);
-    //         }
-    //         for i in 0..R {
-    //             (0..C).for_each(|j| my[i] = my[i].min(matrix_u8[C * i + j]));
-    //             (0..C).for_each(|j| matrix_u8[C * i + j] -= my[i]);
-    //         }
-    //     }
-    //     for j in 0..C {
-    //         (0..R).for_each(|i| rx[j] = rx[j].max(matrix_u8[C * i + j]));
-    //         (0..R).for_each(|i| matrix_u8[C * i + j] /= rx[j]);
-    //     }
-    //     for i in 0..R {
-    //         (0..C).for_each(|j| ry[i] = ry[i].max(matrix_u8[C * i + j]));
-    //         (0..C).for_each(|j| matrix_u8[C * i + j] /= ry[i]);
-    //     }
-
-    //     let matrix_f16_dev = context.tensor_from_data(Shape::new(C, R, 1, 1), &matrix_f16)?;
-    //     let matrix_quant = Matrix::quant_u8(&matrix_f16_dev)?;
-    //     let (matrix_u8_dev, mx_dev, my_dev, rx_dev, ry_dev) = match matrix_quant {
-    //         Matrix::Int8 { w, mx, rx, my, ry } => (w, mx, my, rx, ry),
-    //         _ => unreachable!(),
-    //     };
-
-    //     let matrix_u8_map = context.tensor_init(Shape::new(C, R, 1, 1));
-    //     let mx_map = context.tensor_init(Shape::new(C, 1, 1, 1));
-    //     let my_map = context.tensor_init(Shape::new(R, 1, 1, 1));
-    //     let rx_map = context.tensor_init(Shape::new(C, 1, 1, 1));
-    //     let ry_map = context.tensor_init(Shape::new(R, 1, 1, 1));
-
-    //     let mut encoder = context.device.create_command_encoder(&Default::default());
-
-    //     encoder.copy_tensor(&matrix_u8_dev, &matrix_u8_map)?;
-    //     encoder.copy_tensor(&mx_dev, &mx_map)?;
-    //     encoder.copy_tensor(&my_dev, &my_map)?;
-    //     encoder.copy_tensor(&rx_dev, &rx_map)?;
-    //     encoder.copy_tensor(&ry_dev, &ry_map)?;
-
-    //     context.queue.submit(Some(encoder.finish()));
-
-    //     let matrix_u8_host = matrix_u8_map.back().to_vec();
-    //     let mx_host = mx_map.back().to_vec();
-    //     let my_host = my_map.back().to_vec();
-    //     let rx_host = rx_map.back().to_vec();
-    //     let ry_host = ry_map.back().to_vec();
-
-    //     let matrix_u8_host = matrix_u8_host
-    //         .into_iter()
-    //         .map(|x| (x as f32) / 255.0)
-    //         .collect_vec();
-
-    //     let output = [
-    //         matrix_u8_host.clone(),
-    //         mx_host.clone(),
-    //         my_host.clone(),
-    //         rx_host.clone(),
-    //         ry_host.clone(),
-    //     ]
-    //     .concat();
-    //     let ans = [matrix_u8, mx, my, rx, ry].concat();
-
-    //     itertools::zip_eq(output.into_iter(), ans.into_iter())
-    //         .enumerate()
-    //         .for_each(|(index, (a, b))| {
-    //             assert!(
-    //                 is_approx_eps(a, b, 0.005),
-    //                 "Failed at index {index}, computed: {a} vs. answer: {b}"
-    //             );
-    //         });
-
-    //     let input_f32 = vec![(); C * T]
-    //         .into_iter()
-    //         .map(|_| 10.0 * (fastrand::f32() - 0.5))
-    //         .collect_vec();
-    //     let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
-
-    //     let input_f32_dev = TensorGpu::from_data(&context, input_shape, input_f32.clone())?;
-    //     let input_f16_dev: TensorGpu<f16, _> = context.tensor_init(input_shape);
-    //     let output_dev = TensorGpu::init(&context, output_shape);
-    //     let output_map = TensorGpu::init(&context, output_shape);
-
-    //     let ops = TensorOp::List(vec![
-    //         TensorOp::blit(
-    //             input_f32_dev.view(.., .., .., ..)?,
-    //             input_f16_dev.view(.., .., .., ..)?,
-    //         )?,
-    //         TensorOp::matmul_vec_int8(
-    //             &matrix_u8_dev,
-    //             &mx_dev,
-    //             &rx_dev,
-    //             &my_dev,
-    //             &ry_dev,
-    //             input_f32_dev.view(.., .., .., ..)?,
-    //             output_dev.view(.., .., 0..1, ..)?,
-    //             Activation::None,
-    //         )?,
-    //         TensorOp::matmul_mat_int8(
-    //             matrix_u8_dev.view(.., .., .., ..)?,
-    //             &mx_dev,
-    //             &rx_dev,
-    //             &my_dev,
-    //             &ry_dev,
-    //             input_f16_dev.view(.., .., .., ..)?,
-    //             output_dev.view(.., .., 1.., ..)?,
-    //             Activation::None,
-    //         )?,
-    //     ]);
-
-    //     let mut encoder = context.device.create_command_encoder(&Default::default());
-
-    //     let mut pass = encoder.begin_compute_pass(&Default::default());
-    //     pass.execute_tensor_op(&ops);
-    //     drop(pass);
-
-    //     encoder.copy_tensor(&output_dev, &output_map)?;
-    //     context.queue.submit(Some(encoder.finish()));
-
-    //     let output_host = output_map.back();
-    //     let output_host = Vec::from(output_host);
-
-    //     context.device.poll(wgpu::MaintainBase::Wait);
-
-    //     let mut ans = vec![0.0; output_host.len()];
-    //     for token in 0..T {
-    //         for line in 0..R {
-    //             let matrix = &matrix_u8_host[(line * C)..(line + 1) * C];
-    //             let input = &input_f32[token * C..(token + 1) * C];
-    //             let product = itertools::multizip((matrix, &mx_host, &rx_host, input)).fold(
-    //                 0.0f32,
-    //                 |acc, (m, mx, rx, x)| {
-    //                     let my = my_host[line];
-    //                     let ry = ry_host[line];
-    //                     let m = m * rx * ry + mx + my;
-    //                     acc + m * x
-    //                 },
-    //             );
-    //             ans[token * R + line] = product;
-
-    //             let input = &input_f16[token * C..(token + 1) * C];
-    //             let product = itertools::multizip((matrix, &mx_host, &rx_host, input)).fold(
-    //                 0.0f32,
-    //                 |acc, (m, mx, rx, x)| {
-    //                     let my = my_host[line];
-    //                     let ry = ry_host[line];
-    //                     let m = m * rx * ry + mx + my;
-    //                     acc + m * x.to_f32()
-    //                 },
-    //             );
-    //             ans[(T + token) * R + line] = product;
-    //         }
-    //     }
-
-    //     itertools::zip_eq(output_host.into_iter(), ans.into_iter())
-    //         .enumerate()
-    //         .for_each(|(index, (a, b))| {
-    //             assert!(
-    //                 is_approx_eps(a, b, 0.01),
-    //                 "Failed at index {index}, computed: {a} vs. answer: {b}"
-    //             );
-    //         });
-
-    //     Ok(())
-    // }
 
     #[test]
     fn test_matmul_nf4() -> Result<()> {
