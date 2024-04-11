@@ -331,7 +331,7 @@ impl<R: Reader> Loader<R> {
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
@@ -365,7 +365,7 @@ impl<R: Reader> Loader<R> {
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
@@ -406,7 +406,7 @@ impl<R: Reader> Loader<R> {
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_vectors(name).await? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
@@ -452,7 +452,7 @@ impl<R: Reader> Loader<R> {
             let mut encoder = context.device.create_command_encoder(&Default::default());
             for lora in lora {
                 let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
-                let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+                let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
 
                 let shape = lora.tensor.shape();
                 let tensor = tensor_f32.reshape(
@@ -492,7 +492,7 @@ impl<R: Reader> Loader<R> {
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_matrices(name.as_ref()).await? {
             let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend_lora(
                 &factor,
                 lora.x.view(.., .., .., ..)?,
@@ -504,7 +504,7 @@ impl<R: Reader> Loader<R> {
         }
         for lora in self.lora_vectors(name.as_ref()).await? {
             let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
@@ -528,7 +528,7 @@ impl<R: Reader> Loader<R> {
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_matrices(name.as_ref()).await? {
             let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend_lora(
                 &factor,
                 lora.x.view(.., .., .., ..)?,
@@ -540,7 +540,7 @@ impl<R: Reader> Loader<R> {
         }
         for lora in self.lora_vectors(name.as_ref()).await? {
             let factor = vec![discount * lora.alpha, 1.0, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
@@ -563,7 +563,7 @@ impl<R: Reader> Loader<R> {
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_matrices(name.as_ref()).await? {
             let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend_lora(
                 &factor,
                 lora.x.view(.., .., .., ..)?,
@@ -575,7 +575,7 @@ impl<R: Reader> Loader<R> {
         }
         for lora in self.lora_vectors(name.as_ref()).await? {
             let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, matrix)?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
@@ -603,7 +603,7 @@ impl<R: Reader> Loader<R> {
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for lora in self.lora_matrices(name.as_ref()).await? {
             let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend_lora(
                 &factor,
                 lora.x.view(.., .., .., ..)?,
@@ -615,7 +615,7 @@ impl<R: Reader> Loader<R> {
         }
         for lora in self.lora_vectors(name.as_ref()).await? {
             let factor = vec![discount * lora.alpha, 1.0, 0.0, 0.0];
-            let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+            let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, matrix)?;
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.execute_tensor_op(&op);
@@ -640,7 +640,7 @@ impl<R: Reader> Loader<R> {
             let mut encoder = context.device.create_command_encoder(&Default::default());
             for lora in lora {
                 let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
-                let factor = context.tensor_from_data(Shape::new(4, 1, 1, 1), factor)?;
+                let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
                 let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
@@ -666,10 +666,7 @@ impl<R: Reader> Loader<R> {
                 let real_chunk_size = ((chunk + 1) * chunk_size).min(shape[1]) - chunk * chunk_size;
                 let start = (chunk * chunk_size) * shape[0];
                 let end = start + real_chunk_size * shape[0];
-                context.tensor_from_data(
-                    Shape::new(shape[0], real_chunk_size, 1, 1),
-                    &data[start..end],
-                )
+                context.tensor_from_data([shape[0], real_chunk_size, 1, 1], &data[start..end])
             })
             .try_collect()?;
         Ok(head)

@@ -110,6 +110,7 @@ pub struct Head {
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct State<const N: usize> {
+    pub context: Context,
     pub info: ModelInfo,
     pub data: Vec<TensorGpu<f32, ReadWrite>>,
 }
@@ -916,7 +917,7 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             let time_first = loader.load_vector_f32(format!("{att}.time_first")).await?;
             let time_mix_x = loader.load_vector_f16(format!("{att}.time_mix_x")).await?;
             let time_mix = {
-                let time_mix: TensorGpu<_, _> = context.zeros(Shape::new(info.num_emb, 1, 5, 1));
+                let time_mix: TensorGpu<_, _> = context.zeros([info.num_emb, 1, 5, 1]);
                 let time_mix_w = loader.load_vector_f16(format!("{att}.time_mix_w")).await?;
                 let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k")).await?;
                 let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v")).await?;
@@ -1058,7 +1059,11 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             let head_size = info.num_emb / info.num_head;
             let shape = Shape::new(info.num_emb, head_size + 2, N, 1);
             let data = (0..info.num_layer).map(|_| context.zeros(shape)).collect();
-            State { info, data }
+            State {
+                context,
+                info,
+                data,
+            }
         };
 
         Ok(ModelRuntime {

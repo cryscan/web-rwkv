@@ -2693,19 +2693,19 @@ mod tests {
         fastrand::seed(42);
 
         let output = vec![0.0; 24];
-        let output: TensorGpu<_, _> = context.tensor_from_data(Shape::new(4, 3, 2, 1), output)?;
+        let output: TensorGpu<_, _> = context.tensor_from_data([4, 3, 2, 1], output)?;
 
         let mut ops = vec![];
 
         let input = (0..8).map(|x| x as f32).collect_vec();
-        let input: TensorGpu<_, _> = context.tensor_from_data(Shape::new(4, 1, 2, 1), input)?;
+        let input: TensorGpu<_, _> = context.tensor_from_data([4, 1, 2, 1], input)?;
         ops.push(TensorOp::blit(
             input.view(.., .., .., ..)?,
             output.view(.., 1, .., ..)?,
         )?);
 
         let input = (8..12).map(|x| x as f32).collect_vec();
-        let input: TensorGpu<_, _> = context.tensor_from_data(Shape::new(4, 1, 1, 1), input)?;
+        let input: TensorGpu<_, _> = context.tensor_from_data([4, 1, 1, 1], input)?;
         let input = input.view(.., .., .., ..)?;
         ops.push(TensorOp::blit(input, output.view(.., 2.., 1..2, ..)?)?);
 
@@ -2741,10 +2741,10 @@ mod tests {
         fastrand::seed(42);
 
         let output = vec![0.0; 36];
-        let output: TensorGpu<_, _> = context.tensor_from_data(Shape::new(4, 3, 3, 1), output)?;
+        let output: TensorGpu<_, _> = context.tensor_from_data([4, 3, 3, 1], output)?;
 
         let input = (0..24).map(|x| x as f32).collect_vec();
-        let input: TensorGpu<_, _> = context.tensor_from_data(Shape::new(4, 3, 2, 1), input)?;
+        let input: TensorGpu<_, _> = context.tensor_from_data([4, 3, 2, 1], input)?;
 
         let ops = TensorOp::transpose(input.view(.., .., .., ..)?, output.view(.., ..2, .., ..)?)?;
 

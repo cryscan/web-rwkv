@@ -189,18 +189,18 @@ pub trait TensorInitContext<T: Scalar>: Sized {
     /// Init the tensor with given shape and contents.
     fn from_data(
         context: &Context,
-        shape: Shape,
+        shape: impl Into<Shape>,
         data: impl Into<Arc<[T]>>,
     ) -> Result<Self, TensorError>;
     /// Init the tensor with given shape.
-    fn init(context: &Context, shape: Shape) -> Self;
+    fn init(context: &Context, shape: impl Into<Shape>) -> Self;
 }
 
 pub trait TensorInit<T: Scalar>: Sized {
     /// Init the tensor with given shape and contents.
-    fn from_data(shape: Shape, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError>;
+    fn from_data(shape: impl Into<Shape>, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError>;
     /// Init the tensor with given shape.
-    fn init(shape: Shape) -> Self;
+    fn init(shape: impl Into<Shape>) -> Self;
 }
 
 pub trait TensorInto<Into> {
@@ -299,7 +299,8 @@ impl<D: Device, F: Float> Tensor<D, F> {
 }
 
 impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
-    fn from_data(shape: Shape, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError> {
+    fn from_data(shape: impl Into<Shape>, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError> {
+        let shape = shape.into();
         let data = data.into();
         if shape.len() != data.len() {
             return Err(TensorError::Size(shape.len(), data.len()));
@@ -312,7 +313,8 @@ impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
     }
 
     #[inline]
-    fn init(shape: Shape) -> Self {
+    fn init(shape: impl Into<Shape>) -> Self {
+        let shape = shape.into();
         let data = vec![T::zero(); shape.len()].into();
         Self {
             shape,
@@ -325,13 +327,13 @@ impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
 impl<T: Scalar> TensorInitContext<T> for TensorCpu<T> {
     fn from_data(
         _context: &Context,
-        shape: Shape,
+        shape: impl Into<Shape>,
         data: impl Into<Arc<[T]>>,
     ) -> Result<Self, TensorError> {
         TensorInit::from_data(shape, data)
     }
 
-    fn init(_context: &Context, shape: Shape) -> Self {
+    fn init(_context: &Context, shape: impl Into<Shape>) -> Self {
         TensorInit::init(shape)
     }
 }
@@ -375,15 +377,16 @@ impl<T: Scalar> TensorReshape for TensorCpu<T> {
 impl<T: Scalar, K: Kind> TensorInitContext<T> for TensorGpu<T, K> {
     fn from_data(
         context: &Context,
-        shape: Shape,
+        shape: impl Into<Shape>,
         data: impl Into<Arc<[T]>>,
     ) -> Result<Self, TensorError> {
         let tensor: TensorCpu<T> = TensorInit::from_data(shape, data)?;
         Ok(tensor.transfer_into(context))
     }
 
-    fn init(context: &Context, shape: Shape) -> Self {
+    fn init(context: &Context, shape: impl Into<Shape>) -> Self {
         let context = context.clone();
+        let shape = shape.into();
         let meta = context.checkout_shape_uniform(shape);
 
         let size = shape.len() * std::mem::size_of::<T>();
@@ -929,7 +932,7 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<T>>> for TensorStack<T> {
 
 impl Context {
     #[inline]
-    pub fn zeros<T: Scalar, Tensor>(&self, shape: Shape) -> Tensor
+    pub fn zeros<T: Scalar, Tensor>(&self, shape: impl Into<Shape>) -> Tensor
     where
         TensorCpu<T>: TensorInto<Tensor>,
     {
@@ -938,10 +941,11 @@ impl Context {
     }
 
     #[inline]
-    pub fn ones<T: Scalar, Tensor>(&self, shape: Shape) -> Tensor
+    pub fn ones<T: Scalar, Tensor>(&self, shape: impl Into<Shape>) -> Tensor
     where
         TensorCpu<T>: TensorInto<Tensor>,
     {
+        let shape = shape.into();
         let data = vec![T::one(); shape.len()];
         let tensor: TensorCpu<T> = TensorInit::from_data(shape, data).unwrap();
         tensor.transfer_into(self)
@@ -950,14 +954,17 @@ impl Context {
     #[inline]
     pub fn tensor_from_data<T: Scalar, Tensor: TensorInitContext<T>>(
         &self,
-        shape: Shape,
+        shape: impl Into<Shape>,
         data: impl Into<Arc<[T]>>,
     ) -> Result<Tensor, TensorError> {
         TensorInitContext::from_data(self, shape, data)
     }
 
     #[inline]
-    pub fn tensor_init<T: Scalar, Tensor: TensorInitContext<T>>(&self, shape: Shape) -> Tensor {
+    pub fn tensor_init<T: Scalar, Tensor: TensorInitContext<T>>(
+        &self,
+        shape: impl Into<Shape>,
+    ) -> Tensor {
         TensorInitContext::init(self, shape)
     }
 }

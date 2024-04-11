@@ -300,7 +300,7 @@ impl Build<ModelState> for StateBuilder {
                     .concat();
                 context
                     .tensor_from_data(
-                        Shape::new(info.num_emb, chunk_size * (head_size + 2), num_batch, 1),
+                        [info.num_emb, chunk_size * (head_size + 2), num_batch, 1],
                         data,
                     )
                     .expect("state creation")
