@@ -347,7 +347,7 @@ impl super::ModelState for ModelState {
             let map = context.tensor_init(shape);
 
             let mut encoder = context.device.create_command_encoder(&Default::default());
-            encoder.copy_tensor_batch(state, &map, batch)?;
+            encoder.copy_tensor_batch(state, &map, batch, 0)?;
             context.queue.submit(Some(encoder.finish()));
 
             let host = map.back().await;

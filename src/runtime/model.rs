@@ -91,6 +91,7 @@ pub struct ModelBuilder<R: Reader> {
     pub lora: Vec<Lora<R>>,
     pub quant: HashMap<usize, Quant>,
     pub embed_device: EmbedDevice,
+    pub num_batch: usize,
 }
 
 impl<R: Reader> ModelBuilder<R> {
@@ -101,6 +102,7 @@ impl<R: Reader> ModelBuilder<R> {
             lora: vec![],
             quant: Default::default(),
             embed_device: Default::default(),
+            num_batch: 1,
         }
     }
 

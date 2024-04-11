@@ -103,13 +103,13 @@ pub enum InferOption {
 }
 
 #[derive(Debug, Clone)]
-pub struct InferInput<const N: usize> {
-    pub batches: [InferInputBatch; N],
+pub struct InferInput {
+    pub batches: Vec<InferInputBatch>,
     token_chunk_size: usize,
 }
 
-impl<const N: usize> InferInput<N> {
-    pub fn new(batches: [InferInputBatch; N], token_chunk_size: usize) -> Self {
+impl InferInput {
+    pub fn new(batches: Vec<InferInputBatch>, token_chunk_size: usize) -> Self {
         let token_chunk_size = token_chunk_size
             .max(MIN_TOKEN_CHUNK_SIZE)
             .next_multiple_of(MIN_TOKEN_CHUNK_SIZE);
@@ -124,7 +124,7 @@ impl<const N: usize> InferInput<N> {
     }
 }
 
-impl<const N: usize> JobInput for InferInput<N> {
+impl JobInput for InferInput {
     type Chunk = Vec<Vec<u16>>;
 
     fn step(&mut self) {
@@ -148,7 +148,7 @@ impl<const N: usize> JobInput for InferInput<N> {
     }
 }
 
-impl<const N: usize> IntoIterator for &InferInput<N> {
+impl IntoIterator for &InferInput {
     type Item = InferInfo;
     type IntoIter = InferIter;
 
@@ -204,12 +204,7 @@ impl Iterator for InferIter {
 
         let mut info = vec![(0, Default::default(), false); num_batch];
         while num_token > 0 {
-            let mid = batches
-                .clone()
-                .into_iter()
-                .filter(|&x| x > 0)
-                .min()
-                .unwrap_or_default();
+            let mid = *batches.iter().filter(|&&x| x > 0).min().unwrap_or(&0);
             for (info, batch) in info.iter_mut().zip_eq(batches.iter_mut()) {
                 if *batch == 0 {
                     continue;
@@ -240,7 +235,7 @@ impl Iterator for InferIter {
             },
         );
 
-        Some(InferInfo(info))
+        Some(InferInfo(info.try_into().unwrap()))
     }
 }
 
@@ -274,7 +269,8 @@ mod tests {
                 option,
                 back,
                 ..Default::default()
-            }),
+            })
+            .to_vec(),
             token_chunk_size: 128,
         };
         let mut iter = run.iter();
@@ -341,7 +337,8 @@ mod tests {
                 tokens,
                 option,
                 ..Default::default()
-            }),
+            })
+            .to_vec(),
             token_chunk_size: 128,
         };
 
@@ -368,7 +365,8 @@ mod tests {
                 tokens,
                 option,
                 ..Default::default()
-            }),
+            })
+            .to_vec(),
             token_chunk_size: 128,
         };
         assert_eq!(
@@ -397,7 +395,8 @@ mod tests {
                 tokens,
                 option,
                 ..Default::default()
-            }),
+            })
+            .to_vec(),
             token_chunk_size: 128,
         };
         let redirect = run.iter().next().unwrap().redirect();

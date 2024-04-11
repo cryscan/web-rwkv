@@ -23,7 +23,8 @@ pub trait TensorCommand<T: Scalar, K: Kind> {
         &mut self,
         source: &TensorGpu<T, K>,
         destination: &TensorGpu<T, K>,
-        batch: usize,
+        from: usize,
+        to: usize,
     ) -> Result<(), TensorError>;
 }
 
@@ -43,18 +44,30 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
         &mut self,
         source: &TensorGpu<T, K>,
         destination: &TensorGpu<T, K>,
-        batch: usize,
+        from: usize,
+        to: usize,
     ) -> Result<(), TensorError> {
-        destination.check_shape([source.shape[0], source.shape[1], 1, 1])?;
-        if batch >= source.shape[2] {
+        source.check_shape([source.shape[0], source.shape[1], source.shape[2], 1])?;
+        destination.check_shape([source.shape[0], source.shape[1], destination.shape[2], 1])?;
+        if from >= source.shape[2] {
             return Err(TensorError::BatchOutOfRange {
-                batch,
+                batch: from,
                 max: source.shape[2],
             });
         }
-        let size = destination.size() as u64;
-        let offset = (T::size() * source.shape[0] * source.shape[1] * batch) as u64;
-        self.copy_buffer_to_buffer(&source.buffer, offset, &destination.buffer, 0, size);
+        if to > destination.shape[2] {
+            return Err(TensorError::BatchOutOfRange {
+                batch: to,
+                max: destination.shape[2],
+            });
+        }
+        self.copy_buffer_to_buffer(
+            &source.buffer,
+            (T::size() * source.shape[0] * source.shape[1] * from) as u64,
+            &destination.buffer,
+            (T::size() * destination.shape[0] * destination.shape[1] * to) as u64,
+            (T::size() * source.shape[0] * source.shape[1]) as u64,
+        );
         Ok(())
     }
 }

@@ -22,7 +22,7 @@ use crate::{
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
-        TensorReshape, TensorShape, TensorStack,
+        TensorInto, TensorReshape, TensorShape, TensorStack,
     },
 };
 
@@ -109,13 +109,13 @@ pub struct Head {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
-pub struct State<const N: usize> {
+pub struct State {
     pub context: Context,
     pub info: ModelInfo,
     pub data: Vec<TensorGpu<f32, ReadWrite>>,
 }
 
-impl<const N: usize> State<N> {
+impl State {
     fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         let end = head_size + 1;
@@ -127,9 +127,43 @@ impl<const N: usize> State<N> {
         let start = head_size + 1;
         self.data[layer].view(.., start, .., ..)
     }
+
+    fn _load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
+        let context = &self.context;
+        let batches = tensor.split(2)?;
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for (layer, source) in self.data.iter().zip_eq(batches.into_iter()) {
+            let source: TensorGpu<f32, ReadWrite> = source.transfer_into(context);
+            encoder.copy_tensor_batch(&source, layer, 0, batch)?;
+        }
+        context.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    async fn back(&self, batch: usize) -> Result<TensorCpu<f32>, TensorError> {
+        let context = &self.context;
+        let head_size = self.info.num_emb / self.info.num_head;
+        let shape = Shape::new(self.info.num_emb, head_size + 1, 1, 1);
+        let tensors: Vec<TensorGpu<f32, ReadWrite>> = (0..self.info.num_layer)
+            .map(|_| context.tensor_init(shape))
+            .collect();
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for (layer, destination) in self.data.iter().zip_eq(tensors.iter()) {
+            encoder.copy_tensor_batch(layer, destination, batch, 0)?;
+        }
+        context.queue.submit(Some(encoder.finish()));
+
+        let mut backed = vec![];
+        for tensor in tensors.into_iter() {
+            backed.push(tensor.back().await);
+        }
+        TensorCpu::stack(backed)
+    }
 }
 
-impl<const N: usize> DeepClone for State<N> {
+impl DeepClone for State {
     fn deep_clone(&self) -> Self {
         let data = self.data.iter().map(|tensor| tensor.deep_clone()).collect();
         Self {
@@ -277,7 +311,8 @@ pub enum Hook {
 pub struct InferJob<F: Float> {
     commands: Vec<CommandBuffer>,
     redirect: InferRedirect,
-    _back: Vec<bool>,
+    back: Vec<bool>,
+    state: State,
 
     embed_device: EmbedDevice,
     embed: TensorCpu<f16>,
@@ -354,20 +389,27 @@ impl<F: Float> Job for InferJob<F> {
             .into_iter()
             .map(|(start, end)| output.slice(.., start..end, .., ..))
             .try_collect()?;
+
+        let mut states = vec![];
+        for (batch, back) in self.back.into_iter().enumerate() {
+            match back {
+                true => states.push(Some(self.state.back(batch).await?)),
+                false => states.push(None),
+            }
+        }
+
         let batches = batches
             .into_iter()
-            .map(|output| InferOutputBatch {
-                output,
-                state: None,
-            })
+            .zip_eq(states.into_iter())
+            .map(|(output, state)| InferOutputBatch { output, state })
             .collect();
         Ok(RunOutput(batches))
     }
 }
 
-pub struct ModelRuntime<F: Float, const N: usize> {
+pub struct ModelRuntime<F: Float> {
     model: Model,
-    state: State<N>,
+    state: State,
     phantom: PhantomData<F>,
 }
 
@@ -379,7 +421,7 @@ fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
     Ok(TensorOp::List(vec![]))
 }
 
-impl<F: Float, const N: usize> JobBuilder<InferJob<F>> for ModelRuntime<F, N> {
+impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
     type Seed = InferInfo;
 
     async fn build(&self, seed: Self::Seed) -> Result<InferJob<F>> {
@@ -389,7 +431,7 @@ impl<F: Float, const N: usize> JobBuilder<InferJob<F>> for ModelRuntime<F, N> {
         let info = &model.info;
         let tensor = &model.tensor;
 
-        let _back = seed.back();
+        let back = seed.back();
 
         let num_token = seed.num_token();
         let head_size = info.num_emb / info.num_head;
@@ -513,7 +555,8 @@ impl<F: Float, const N: usize> JobBuilder<InferJob<F>> for ModelRuntime<F, N> {
         Ok(InferJob {
             commands,
             redirect,
-            _back,
+            back,
+            state: self.state.clone(),
             embed_device,
             embed: model.tensor.embed.w.clone(),
             tokens: buffer.tokens,
@@ -524,12 +567,12 @@ impl<F: Float, const N: usize> JobBuilder<InferJob<F>> for ModelRuntime<F, N> {
     }
 }
 
-impl<F: Float, const N: usize> ModelRuntime<F, N> {
+impl<F: Float> ModelRuntime<F> {
     #[allow(clippy::too_many_arguments)]
     fn build_layer(
         context: Context,
         layer: Layer,
-        state: State<N>,
+        state: State,
         buffer: Runtime<F>,
         index: usize,
         num_token: usize,
@@ -853,14 +896,15 @@ impl<F: Float, const N: usize> ModelRuntime<F, N> {
     }
 }
 
-impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBuilder<R> {
-    async fn build(self) -> Result<ModelRuntime<F, N>> {
+impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
+    async fn build(self) -> Result<ModelRuntime<F>> {
         let ModelBuilder {
             context,
             model,
             lora,
             quant,
             embed_device,
+            num_batch,
         } = self;
 
         let info = Loader::info(&model)?;
@@ -1057,7 +1101,7 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
 
         let state = {
             let head_size = info.num_emb / info.num_head;
-            let shape = Shape::new(info.num_emb, head_size + 2, N, 1);
+            let shape = Shape::new(info.num_emb, head_size + 2, num_batch, 1);
             let data = (0..info.num_layer).map(|_| context.zeros(shape)).collect();
             State {
                 context,

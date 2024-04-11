@@ -147,15 +147,15 @@ async fn main() -> Result<()> {
 
     let runtime = match info.version {
         ModelVersion::V4 => {
-            let runtime = Build::<v4::ModelRuntime<f16, 1>>::build(builder).await?;
+            let runtime = Build::<v4::ModelRuntime<f16>>::build(builder).await?;
             JobRuntime::new(runtime).await
         }
         ModelVersion::V5 => {
-            let runtime = Build::<v5::ModelRuntime<f16, 1>>::build(builder).await?;
+            let runtime = Build::<v5::ModelRuntime<f16>>::build(builder).await?;
             JobRuntime::new(runtime).await
         }
         ModelVersion::V6 => {
-            let runtime = Build::<v6::ModelRuntime<f16, 1>>::build(builder).await?;
+            let runtime = Build::<v6::ModelRuntime<f16>>::build(builder).await?;
             JobRuntime::new(runtime).await
         }
     };
@@ -168,7 +168,7 @@ async fn main() -> Result<()> {
         option: InferOption::Last,
         ..Default::default()
     };
-    let mut prompt = InferInput::new([prompt], cli.token_chunk_size);
+    let mut prompt = InferInput::new(vec![prompt], cli.token_chunk_size);
 
     let mut read = false;
     let mut instant = Instant::now();
