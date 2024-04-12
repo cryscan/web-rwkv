@@ -120,6 +120,12 @@ impl<R: Reader> ModelBuilder<R> {
         self.embed_device = value;
         self
     }
+
+    pub fn with_num_batch(mut self, value: usize) -> Self {
+        assert_ne!(value, 0, "`num_batch` must not be 0");
+        self.num_batch = value;
+        self
+    }
 }
 
 pub trait ContextAutoLimits {
