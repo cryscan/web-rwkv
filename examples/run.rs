@@ -137,7 +137,7 @@ async fn main() -> Result<()> {
             let file = File::open(path).await?;
             let mut reader = BufReader::new(file);
             let mut data = vec![];
-            reader.read_buf(&mut data).await?;
+            reader.read_to_end(&mut data).await?;
             Some(data)
         }
         None => None,
