@@ -128,7 +128,7 @@ impl State {
         self.data[layer].view(.., start, .., ..)
     }
 
-    fn _load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
+    fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
         let context = &self.context;
         let batches = tensor.split(2)?;
 
@@ -311,6 +311,7 @@ pub enum Hook {
 pub struct InferJob<F: Float> {
     commands: Vec<CommandBuffer>,
     redirect: InferRedirect,
+
     back: Vec<bool>,
     state: State,
 
@@ -324,18 +325,18 @@ pub struct InferJob<F: Float> {
 }
 
 impl<F: Float> Job for InferJob<F> {
-    type Input = Vec<Vec<u16>>;
+    type Input = Vec<(Vec<u16>, Option<TensorCpu<f32>>)>;
     type Output = RunOutput<F>;
 
     fn check(&self, input: &Self::Input) -> bool {
-        let num_tokens: usize = input.iter().map(|tokens| tokens.len()).sum();
+        let num_tokens: usize = input.iter().map(|(tokens, _)| tokens.len()).sum();
         num_tokens == self.cursors.shape()[0]
     }
 
     fn load(self, input: &Self::Input) -> Result<Self> {
         let stack: Vec<TensorCpu<F>> = input
             .iter()
-            .map(|tokens| -> Result<TensorCpu<F>, _> {
+            .map(|(tokens, _)| -> Result<TensorCpu<F>, _> {
                 let num_emb = self.embed.shape()[0];
                 let num_token = tokens.len();
                 let data = self.embed.data();
@@ -358,12 +359,18 @@ impl<F: Float> Job for InferJob<F> {
         let cursors = TensorCpu::from_data(self.cursors.shape(), cursors)?;
         self.cursors.load(&cursors)?;
 
+        for (batch, (_, tensor)) in input.iter().enumerate() {
+            if let Some(tensor) = tensor {
+                self.state.load(batch, tensor.clone())?;
+            }
+        }
+
         match self.embed_device {
             EmbedDevice::Cpu => self.input.load(&stack.tensor)?,
             EmbedDevice::Gpu => {
                 let tokens = input
-                    .clone()
-                    .into_iter()
+                    .iter()
+                    .map(|(tokens, _)| tokens.clone())
                     .concat()
                     .into_iter()
                     .map(|token| token as u32)

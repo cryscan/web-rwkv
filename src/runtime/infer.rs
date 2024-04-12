@@ -125,7 +125,7 @@ impl InferInput {
 }
 
 impl JobInput for InferInput {
-    type Chunk = Vec<Vec<u16>>;
+    type Chunk = Vec<(Vec<u16>, Option<TensorCpu<f32>>)>;
 
     fn step(&mut self) {
         let Some(info) = self.iter().next() else {
@@ -138,12 +138,12 @@ impl JobInput for InferInput {
 
     fn chunk(&self) -> Self::Chunk {
         let Some(info) = self.iter().next() else {
-            return vec![vec![]; self.batches.len()];
+            return vec![(vec![], None); self.batches.len()];
         };
         self.batches
             .iter()
             .zip_eq(info.0)
-            .map(|(batch, (len, ..))| batch.tokens[..len].to_vec())
+            .map(|(batch, (len, ..))| (batch.tokens[..len].to_vec(), batch.load.clone()))
             .collect()
     }
 }
@@ -235,7 +235,7 @@ impl Iterator for InferIter {
             },
         );
 
-        Some(InferInfo(info.try_into().unwrap()))
+        Some(InferInfo(info))
     }
 }
 
