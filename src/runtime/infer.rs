@@ -102,6 +102,12 @@ pub enum InferOption {
     Full,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct InferChunkBatch {
+    pub tokens: Vec<u16>,
+    pub load: Option<TensorCpu<f32>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct InferInput {
     pub batches: Vec<InferInputBatch>,
@@ -125,7 +131,7 @@ impl InferInput {
 }
 
 impl JobInput for InferInput {
-    type Chunk = Vec<(Vec<u16>, Option<TensorCpu<f32>>)>;
+    type Chunk = Vec<InferChunkBatch>;
 
     fn step(&mut self) {
         let Some(info) = self.iter().next() else {
@@ -138,12 +144,15 @@ impl JobInput for InferInput {
 
     fn chunk(&self) -> Self::Chunk {
         let Some(info) = self.iter().next() else {
-            return vec![(vec![], None); self.batches.len()];
+            return vec![Default::default(); self.batches.len()];
         };
         self.batches
             .iter()
             .zip_eq(info.0)
-            .map(|(batch, (len, ..))| (batch.tokens[..len].to_vec(), batch.load.clone()))
+            .map(|(batch, (len, ..))| InferChunkBatch {
+                tokens: batch.tokens[..len].to_vec(),
+                load: batch.load.clone(),
+            })
             .collect()
     }
 }

@@ -8,7 +8,10 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{InferInfo, InferOutputBatch, InferRedirect, RunOutput, MIN_TOKEN_CHUNK_SIZE},
+    infer::{
+        InferChunkBatch, InferInfo, InferOutputBatch, InferRedirect, RunOutput,
+        MIN_TOKEN_CHUNK_SIZE,
+    },
     loader::{Loader, Reader},
     model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
     Job, JobBuilder,
@@ -130,12 +133,10 @@ impl State {
 
     fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
         let context = &self.context;
-        let batches = tensor.split(2)?;
-
         let mut encoder = context.device.create_command_encoder(&Default::default());
-        for (layer, source) in self.data.iter().zip_eq(batches.into_iter()) {
+        for (data, source) in self.data.iter().zip_eq(tensor.split(2)?.into_iter()) {
             let source: TensorGpu<f32, ReadWrite> = source.transfer_into(context);
-            encoder.copy_tensor_batch(&source, layer, 0, batch)?;
+            encoder.copy_tensor_batch(&source, data, 0, batch)?;
         }
         context.queue.submit(Some(encoder.finish()));
         Ok(())
@@ -150,8 +151,8 @@ impl State {
             .collect();
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
-        for (layer, destination) in self.data.iter().zip_eq(tensors.iter()) {
-            encoder.copy_tensor_batch(layer, destination, batch, 0)?;
+        for (data, destination) in self.data.iter().zip_eq(tensors.iter()) {
+            encoder.copy_tensor_batch(data, destination, batch, 0)?;
         }
         context.queue.submit(Some(encoder.finish()));
 
@@ -325,22 +326,23 @@ pub struct InferJob<F: Float> {
 }
 
 impl<F: Float> Job for InferJob<F> {
-    type Input = Vec<(Vec<u16>, Option<TensorCpu<f32>>)>;
+    type Input = Vec<InferChunkBatch>;
     type Output = RunOutput<F>;
 
     fn check(&self, input: &Self::Input) -> bool {
-        let num_tokens: usize = input.iter().map(|(tokens, _)| tokens.len()).sum();
+        let num_tokens: usize = input.iter().map(|chunk| chunk.tokens.len()).sum();
         num_tokens == self.cursors.shape()[0]
     }
 
     fn load(self, input: &Self::Input) -> Result<Self> {
         let stack: Vec<TensorCpu<F>> = input
             .iter()
-            .map(|(tokens, _)| -> Result<TensorCpu<F>, _> {
+            .map(|chunk| -> Result<TensorCpu<F>, _> {
                 let num_emb = self.embed.shape()[0];
-                let num_token = tokens.len();
+                let num_token = chunk.tokens.len();
                 let data = self.embed.data();
-                let data = tokens
+                let data = chunk
+                    .tokens
                     .iter()
                     .map(|&token| {
                         let start = num_emb * token as usize;
@@ -359,10 +361,12 @@ impl<F: Float> Job for InferJob<F> {
         let cursors = TensorCpu::from_data(self.cursors.shape(), cursors)?;
         self.cursors.load(&cursors)?;
 
-        for (batch, (_, tensor)) in input.iter().enumerate() {
-            if let Some(tensor) = tensor {
-                self.state.load(batch, tensor.clone())?;
-            }
+        for (batch, tensor) in input
+            .iter()
+            .enumerate()
+            .filter_map(|(batch, chunk)| chunk.load.clone().map(|tensor| (batch, tensor)))
+        {
+            self.state.load(batch, tensor)?;
         }
 
         match self.embed_device {
@@ -370,7 +374,7 @@ impl<F: Float> Job for InferJob<F> {
             EmbedDevice::Gpu => {
                 let tokens = input
                     .iter()
-                    .map(|(tokens, _)| tokens.clone())
+                    .map(|chunk| chunk.tokens.clone())
                     .concat()
                     .into_iter()
                     .map(|token| token as u32)

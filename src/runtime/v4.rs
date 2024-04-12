@@ -8,7 +8,10 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{InferInfo, InferOutputBatch, InferRedirect, RunOutput, MIN_TOKEN_CHUNK_SIZE},
+    infer::{
+        InferChunkBatch, InferInfo, InferOutputBatch, InferRedirect, RunOutput,
+        MIN_TOKEN_CHUNK_SIZE,
+    },
     loader::{Loader, Reader},
     model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
     Job, JobBuilder,
@@ -101,6 +104,7 @@ pub struct Head {
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct State {
+    pub context: Context,
     pub info: ModelInfo,
     pub data: TensorGpu<f32, ReadWrite>,
 }
@@ -115,6 +119,23 @@ impl State {
     fn ffn(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let start = 5 * layer + 4;
         self.data.view(.., start..=start, .., ..)
+    }
+
+    fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
+        self.data.load_batch(&tensor, batch)?;
+        Ok(())
+    }
+
+    async fn back(&self, batch: usize) -> Result<TensorCpu<f32>, TensorError> {
+        let context = &self.context;
+        let shape = Shape::new(self.info.num_emb, self.info.num_layer, 1, 1);
+
+        let tensor: TensorGpu<f32, ReadWrite> = context.tensor_init(shape);
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        encoder.copy_tensor_batch(&self.data, &tensor, batch, 0)?;
+        context.queue.submit(Some(encoder.finish()));
+
+        Ok(tensor.back().await)
     }
 }
 
@@ -235,6 +256,9 @@ pub struct InferJob<F: Float> {
     commands: Vec<CommandBuffer>,
     redirect: InferRedirect,
 
+    back: Vec<bool>,
+    state: State,
+
     embed_device: EmbedDevice,
     embed: TensorCpu<f16>,
 
@@ -245,22 +269,23 @@ pub struct InferJob<F: Float> {
 }
 
 impl<F: Float> Job for InferJob<F> {
-    type Input = Vec<Vec<u16>>;
+    type Input = Vec<InferChunkBatch>;
     type Output = RunOutput<F>;
 
     fn check(&self, input: &Self::Input) -> bool {
-        let num_tokens: usize = input.iter().map(|tokens| tokens.len()).sum();
+        let num_tokens: usize = input.iter().map(|chunk| chunk.tokens.len()).sum();
         num_tokens == self.cursors.shape()[0]
     }
 
     fn load(self, input: &Self::Input) -> Result<Self> {
         let stack: Vec<TensorCpu<F>> = input
             .iter()
-            .map(|tokens| -> Result<TensorCpu<F>, _> {
+            .map(|chunk| -> Result<TensorCpu<F>, _> {
                 let num_emb = self.embed.shape()[0];
-                let num_token = tokens.len();
+                let num_token = chunk.tokens.len();
                 let data = self.embed.data();
-                let data = tokens
+                let data = chunk
+                    .tokens
                     .iter()
                     .map(|&token| {
                         let start = num_emb * token as usize;
@@ -279,12 +304,20 @@ impl<F: Float> Job for InferJob<F> {
         let cursors = TensorCpu::from_data(self.cursors.shape(), cursors)?;
         self.cursors.load(&cursors)?;
 
+        for (batch, tensor) in input
+            .iter()
+            .enumerate()
+            .filter_map(|(batch, chunk)| chunk.load.clone().map(|tensor| (batch, tensor)))
+        {
+            self.state.load(batch, tensor)?;
+        }
+
         match self.embed_device {
             EmbedDevice::Cpu => self.input.load(&stack.tensor)?,
             EmbedDevice::Gpu => {
                 let tokens = input
-                    .clone()
-                    .into_iter()
+                    .iter()
+                    .map(|chunk| chunk.tokens.clone())
                     .concat()
                     .into_iter()
                     .map(|token| token as u32)
@@ -310,12 +343,19 @@ impl<F: Float> Job for InferJob<F> {
             .into_iter()
             .map(|(start, end)| output.slice(.., start..end, .., ..))
             .try_collect()?;
+
+        let mut states = vec![];
+        for (batch, back) in self.back.into_iter().enumerate() {
+            match back {
+                true => states.push(Some(self.state.back(batch).await?)),
+                false => states.push(None),
+            }
+        }
+
         let batches = batches
             .into_iter()
-            .map(|output| InferOutputBatch {
-                output,
-                state: None,
-            })
+            .zip_eq(states.into_iter())
+            .map(|(output, state)| InferOutputBatch { output, state })
             .collect();
         Ok(RunOutput(batches))
     }
@@ -344,6 +384,8 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
         let context = &model.context;
         let info = &model.info;
         let tensor = &model.tensor;
+
+        let back = seed.back();
 
         let num_token = seed.num_token();
 
@@ -466,6 +508,8 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
         Ok(InferJob {
             commands,
             redirect,
+            back,
+            state: self.state.clone(),
             embed_device,
             embed: model.tensor.embed.w.clone(),
             tokens: buffer.tokens,
@@ -863,7 +907,11 @@ impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
                 .concat();
             let shape = Shape::new(info.num_emb, 5 * info.num_layer, num_batch, 1);
             let data = context.tensor_from_data(shape, data)?;
-            State { info, data }
+            State {
+                context,
+                info,
+                data,
+            }
         };
 
         Ok(ModelRuntime {
