@@ -255,7 +255,7 @@ pub struct InferOutputBatch<F: Float> {
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
-pub struct RunOutput<F: Float>(pub Vec<InferOutputBatch<F>>);
+pub struct InferOutput<F: Float>(pub Vec<InferOutputBatch<F>>);
 
 #[cfg(test)]
 mod tests {

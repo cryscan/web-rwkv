@@ -9,7 +9,7 @@ use wgpu::CommandBuffer;
 
 use super::{
     infer::{
-        InferChunkBatch, InferInfo, InferOutputBatch, InferRedirect, RunOutput,
+        InferChunkBatch, InferInfo, InferOutput, InferOutputBatch, InferRedirect,
         MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
@@ -327,7 +327,7 @@ pub struct InferJob<F: Float> {
 
 impl<F: Float> Job for InferJob<F> {
     type Input = Vec<InferChunkBatch>;
-    type Output = RunOutput<F>;
+    type Output = InferOutput<F>;
 
     fn check(&self, input: &Self::Input) -> bool {
         let num_tokens: usize = input.iter().map(|chunk| chunk.tokens.len()).sum();
@@ -414,7 +414,7 @@ impl<F: Float> Job for InferJob<F> {
             .zip_eq(states.into_iter())
             .map(|(output, state)| InferOutputBatch { output, state })
             .collect();
-        Ok(RunOutput(batches))
+        Ok(InferOutput(batches))
     }
 }
 
