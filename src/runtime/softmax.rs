@@ -19,6 +19,7 @@ pub async fn softmax<T: Float>(
     let mut pass = encoder.begin_compute_pass(&Default::default());
     pass.execute_tensor_op(&op);
     drop(pass);
+    context.queue.submit(Some(encoder.finish()));
 
     let output = tensor.back().await;
     Ok(output)
