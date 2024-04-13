@@ -323,7 +323,7 @@ mod tests {
                 [
                     (65, None, false),
                     (1, Some(InferOption::Last), false),
-                    (0, None, false),
+                    (0, Some(InferOption::Full), false),
                     (62, Some(InferOption::Full), true)
                 ]
                 .map(Into::into)
@@ -336,7 +336,7 @@ mod tests {
                 [
                     (60, None, false),
                     (1, Some(InferOption::Last), false),
-                    (0, None, false),
+                    (0, Some(InferOption::Full), false),
                     (3, Some(InferOption::Full), true)
                 ]
                 .map(Into::into)
@@ -349,7 +349,7 @@ mod tests {
                 [
                     (14, Some(InferOption::Last), false),
                     (1, Some(InferOption::Last), false),
-                    (0, None, false),
+                    (0, Some(InferOption::Full), false),
                     (1, Some(InferOption::Full), true)
                 ]
                 .map(Into::into)
@@ -362,7 +362,7 @@ mod tests {
                 [
                     (1, Some(InferOption::Last), false),
                     (1, Some(InferOption::Last), false),
-                    (0, None, false),
+                    (0, Some(InferOption::Full), false),
                     (1, Some(InferOption::Full), true)
                 ]
                 .map(Into::into)
@@ -375,7 +375,7 @@ mod tests {
                 [
                     (1, Some(InferOption::Last), false),
                     (1, Some(InferOption::Last), false),
-                    (0, None, false),
+                    (0, Some(InferOption::Full), false),
                     (1, Some(InferOption::Full), true)
                 ]
                 .map(Into::into)
@@ -410,8 +410,8 @@ mod tests {
             Some(InferInfo(
                 [
                     (61, None, false),
-                    (0, None, false),
-                    (0, None, false),
+                    (0, Some(InferOption::Last), false),
+                    (0, Some(InferOption::Full), false),
                     (3, Some(InferOption::Full), false)
                 ]
                 .map(Into::into)
@@ -441,7 +441,7 @@ mod tests {
                 [
                     (60, None, false),
                     (1, Some(InferOption::Last), false),
-                    (0, None, false),
+                    (0, Some(InferOption::Full), false),
                     (3, Some(InferOption::Full), false)
                 ]
                 .map(Into::into)
