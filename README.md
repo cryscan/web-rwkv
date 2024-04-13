@@ -10,6 +10,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - No dependencies on CUDA/Python.
 - Support Nvidia/AMD/Intel GPUs, including integrated GPUs.
 - Vulkan/Dx12/OpenGL backends.
+- WASM support (can run in browser).
 - Batched inference.
 - Int8 and NF4 quantization.
 - Very fast.
@@ -29,6 +30,7 @@ Note that `web-rwkv` is only an inference engine. It only provides the following
 - State creation and updating.
 - Model implements `run` function that takes in prompt tokens and returns logits, and a `softmax` function that turns logits into predicted next token probabilities. Both of them are executed on GPU.
 - Model quantization and (de)serialization.
+- WASM bindings.
 
 It *does not* provide the following:
 - OpenAI API or APIs of any kind.
@@ -36,8 +38,7 @@ It *does not* provide the following:
   - You could also check the [`web-rwkv-axum`](https://github.com/Prunoideae/web-rwkv-axum) project if you want some fancy inference pipelines, including Classifier-Free Guidance (CFG), Backus–Naur Form (BNF) guidance, and more.
 - Samplers, though in the examples a basic nucleus sampler is implemented, this is *not* included in the library itself.
 - State caching or management system.
-- Python (or any other languages) binding.
-- Runtime. Without a runtime makes it easy to be integrated into any applications from servers, front-end apps (yes, `web-rwkv` can run in browser) to game engines.
+- Python bindings.
 
 ## Compile
 1. [Install Rust](https://rustup.rs/).
@@ -98,6 +99,13 @@ All versions of models implements `serde::ser::Serialize` and `serde::de::Deseri
 ## Use in Your Project
 To use in your own rust project, simply add `web-rwkv = "0.6"` as a dependency in your `Cargo.toml`.
 Check examples on how to create the environment, the tokenizer and how to run the model.
+
+### Inference Runtime
+Since v0.7 there is a `runtime` feature for the crate. When enabled, applications can use infrastructures of the asynchronous `runtime` API.
+
+In general, a `runtime` is an asynchronous task that is driven by `tokio`. It allows CPU and GPU to work in parallel, maximizing the utilization of GPU computing resource.
+
+Check examples starting with `rt` for more information, and compare the generation speed with their non-`rt` counterparts.
 
 ### Explanation of Batched Inference
 Since version v0.2.4, the engine supports batched inference, i.e., inference of a batch of prompts (with different length) in parallel.
