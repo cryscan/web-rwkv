@@ -278,7 +278,7 @@ where
                 .collect_vec();
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(&constraints)
+                .constraints(constraints)
                 .split(size);
 
             let create_block = |title| {

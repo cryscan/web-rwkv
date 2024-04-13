@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write, path::PathBuf};
+use std::{io::Write, path::PathBuf};
 
 use anyhow::Result;
 use clap::{Args, Parser, ValueEnum};
@@ -164,12 +164,6 @@ struct Sampler {
     top_p: f32,
     #[arg(long, default_value_t = 1.0)]
     temp: f32,
-    #[arg(long, default_value_t = 0.3)]
-    presence_penalty: f32,
-    #[arg(long, default_value_t = 0.3)]
-    frequency_penalty: f32,
-    #[arg(long, default_value_t = 0.996)]
-    penalty_decay: f32,
 }
 
 impl Sampler {
@@ -332,7 +326,6 @@ async fn main() -> Result<()> {
     loop {
         let mut model_text = String::new();
         let mut user_text = String::new();
-        let mut occurrences: HashMap<usize, f32> = HashMap::new();
 
         print!("{}: ", prompt.user);
         std::io::stdout().flush()?;
@@ -387,13 +380,6 @@ async fn main() -> Result<()> {
             let output = output.map(|x| x.to_f32()).to_vec();
             assert_eq!(output.len(), info.num_vocab);
 
-            // output[0] = f32::NEG_INFINITY;
-            // for (&token, penalty) in occurrences.iter_mut() {
-            //     output[token] -= *penalty + cli.sampler.presence_penalty;
-            //     *penalty += cli.sampler.frequency_penalty;
-            //     *penalty *= cli.sampler.penalty_decay;
-            // }
-
             let output = TensorCpu::from_data(shape, output)?;
             let output = softmax(&context, &output).await?;
 
@@ -411,7 +397,6 @@ async fn main() -> Result<()> {
                 load: None,
                 back: false,
             };
-            occurrences.insert(token.into(), 0.0);
 
             if model_text.contains("\n\n") {
                 break;
