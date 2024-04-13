@@ -37,8 +37,6 @@ pub struct Model {
 
 impl Model {
     pub const RESCALE_LAYER: usize = 6;
-    pub const TIME_MIX_ADAPTER_SIZE: usize = 32;
-    pub const TIME_DECAY_ADAPTER_SIZE: usize = 64;
 
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
@@ -213,9 +211,9 @@ impl<F: Float> Runtime<F> {
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
         let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
-        let time_mix_x_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, 5, num_token, 1);
-        let time_mix_t_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, num_token, 5, 1);
-        let time_decay_shape = Shape::new(Model::TIME_DECAY_ADAPTER_SIZE, num_token, 1, 1);
+        let time_mix_x_shape = Shape::new(info.time_mix_adapter_size, 5, num_token, 1);
+        let time_mix_t_shape = Shape::new(info.time_mix_adapter_size, num_token, 5, 1);
+        let time_decay_shape = Shape::new(info.time_decay_adapter_size, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),

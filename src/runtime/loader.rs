@@ -235,6 +235,15 @@ impl<R: Reader> Loader<R> {
         let num_vocab = embed[0];
         let num_head = time_first[0];
 
+        let time_mix_adapter_size = model
+            .shape("blocks.0.att.time_mix_w1")
+            .map(|shape| shape[0] / 5)
+            .unwrap_or_default();
+        let time_decay_adapter_size = model
+            .shape("blocks.0.att.time_decay_w1")
+            .map(|shape| shape[0])
+            .unwrap_or_default();
+
         Ok(ModelInfo {
             version,
             num_layer,
@@ -242,6 +251,8 @@ impl<R: Reader> Loader<R> {
             num_hidden,
             num_vocab,
             num_head,
+            time_mix_adapter_size,
+            time_decay_adapter_size,
         })
     }
 
