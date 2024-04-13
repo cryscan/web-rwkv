@@ -25,7 +25,6 @@ use web_rwkv::{
     tensor::{
         kind::ReadWrite,
         ops::{TensorOp, TensorPass},
-        shape::Shape,
         TensorError, TensorGpu, TensorShape,
     },
     tokenizer::Tokenizer,
@@ -40,8 +39,8 @@ struct Buffer {
 impl Buffer {
     fn new(context: &Context, info: &ModelInfo) -> Self {
         Self {
-            ffn_x: context.tensor_init(Shape::new(info.num_emb, info.num_layer, 1, 1)),
-            out: context.tensor_init(Shape::new(info.num_vocab, info.num_layer, 1, 1)),
+            ffn_x: context.tensor_init([info.num_emb, info.num_layer, 1, 1]),
+            out: context.tensor_init([info.num_vocab, info.num_layer, 1, 1]),
         }
     }
 }

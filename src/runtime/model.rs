@@ -37,6 +37,8 @@ pub struct ModelInfo {
     pub num_hidden: usize,
     pub num_vocab: usize,
     pub num_head: usize,
+    pub time_mix_adapter_size: usize,
+    pub time_decay_adapter_size: usize,
 }
 
 impl ModelInfo {
@@ -91,6 +93,7 @@ pub struct ModelBuilder<R: Reader> {
     pub lora: Vec<Lora<R>>,
     pub quant: HashMap<usize, Quant>,
     pub embed_device: EmbedDevice,
+    pub num_batch: usize,
 }
 
 impl<R: Reader> ModelBuilder<R> {
@@ -101,6 +104,7 @@ impl<R: Reader> ModelBuilder<R> {
             lora: vec![],
             quant: Default::default(),
             embed_device: Default::default(),
+            num_batch: 1,
         }
     }
 
@@ -109,13 +113,19 @@ impl<R: Reader> ModelBuilder<R> {
         self
     }
 
-    pub fn add_lora(mut self, value: Lora<R>) -> Self {
-        self.lora.push(value);
+    pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
+        self.embed_device = value;
         self
     }
 
-    pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
-        self.embed_device = value;
+    pub fn with_num_batch(mut self, value: usize) -> Self {
+        assert_ne!(value, 0, "`num_batch` must not be 0");
+        self.num_batch = value;
+        self
+    }
+
+    pub fn add_lora(mut self, value: Lora<R>) -> Self {
+        self.lora.push(value);
         self
     }
 }

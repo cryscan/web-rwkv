@@ -158,30 +158,10 @@ impl<'a> ContextBuilder {
 
         // start a thread for reading back buffers
         #[cfg(not(target_arch = "wasm32"))]
-        #[cfg(feature = "no-runtime")]
         {
             let id = context.id;
             let context = Arc::downgrade(&context);
             std::thread::spawn(move || {
-                while let Ok(event) = receiver.recv() {
-                    match (event, context.upgrade()) {
-                        (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
-                            let data = context.read_back_buffer(buffer);
-                            let _ = sender.send(data);
-                        }
-                        _ => break,
-                    }
-                }
-                log::info!("context {} destroyed", id);
-            });
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        #[cfg(feature = "runtime")]
-        {
-            let id = context.id;
-            let context = Arc::downgrade(&context);
-            tokio::task::spawn_blocking(move || {
                 while let Some(event) = receiver.blocking_recv() {
                     match (event, context.upgrade()) {
                         (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
@@ -228,7 +208,7 @@ impl Macros {
     //     Self(vec![("BLOCK_SIZE".into(), format!("{}u", block_size))])
     // }
     pub fn new() -> Self {
-        Self(Vec::new())
+        Self(vec![])
     }
 }
 

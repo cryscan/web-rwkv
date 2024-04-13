@@ -56,13 +56,13 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-fn load_time_mix(item: u32, stack: u32, index: u32) -> vec4<f32> {
+fn load_time_mix(count: u32, stack: u32, index: u32) -> vec4<f32> {
 #ifdef TIME_MIX_FP16
     let token = select(stack, 0u, vt.shape.y == 1u);
-    return unpack4x16float(time_mix[compute_index(vt, item, token, index)]);
+    return unpack4x16float(time_mix[compute_index(vt, count, token, index)]);
 #else
     let token = select(stack, 0u, vt.shape.y == 1u);
-    return time_mix[compute_index(vt, item, token, index)];
+    return time_mix[compute_index(vt, count, token, index)];
 #endif
 }
 
@@ -74,11 +74,11 @@ fn load_input(stack: u32, index: u32) -> vec4<f32> {
 #endif
 }
 
-fn store_output(item: u32, stack: u32, index: u32, value: vec4<f32>) {
+fn store_output(count: u32, stack: u32, index: u32, value: vec4<f32>) {
 #ifdef OUT_FP16
-    output[compute_index(vx, item, stack, index)] = pack4x16float(value);
+    output[compute_index(vx, count, stack, index)] = pack4x16float(value);
 #else
-    output[compute_index(vx, item, stack, index)] = value;
+    output[compute_index(vx, count, stack, index)] = value;
 #endif
 }
 
@@ -87,31 +87,31 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     let stride = vec3<u32>(vx.shape.x >> 2u, vx.shape.yz);
     let index = invocation_id.x;
     let stack = invocation_id.y;
-    let item = invocation_id.z;
+    let count = invocation_id.z;
     let cursor = compute_cursor(cursors[stack]);
     let token = stack - cursor.token;
 
-    if any(vec3<u32>(index, stack, item) > stride) {
+    if any(vec3<u32>(index, stack, count) > stride) {
         return;
     }
 
-    let factor = load_time_mix(item, stack, index);
+    let factor = load_time_mix(count, stack, index);
 
 #ifdef REVERSED
     if token == 0u {
         let out = mix(load_input(stack, index), sx[compute_index(vs, cursor.batch, 0u, index)], factor);
-        store_output(item, stack, index, out);
+        store_output(count, stack, index, out);
     } else {
         let out = mix(load_input(stack, index), load_input(stack - 1u, index), factor);
-        store_output(item, stack, index, out);
+        store_output(count, stack, index, out);
     }
 #else
     if token == 0u {
         let out = mix(sx[compute_index(vs, cursor.batch, 0u, index)], load_input(stack, index), factor);
-        store_output(item, stack, index, out);
+        store_output(count, stack, index, out);
     } else {
         let out = mix(load_input(stack - 1u, index), load_input(stack, index), factor);
-        store_output(item, stack, index, out);
+        store_output(count, stack, index, out);
     }
 #endif
 }

@@ -54,6 +54,8 @@ pub struct ModelInfo {
     pub num_hidden: usize,
     pub num_vocab: usize,
     pub num_head: usize,
+    pub time_mix_adapter_size: usize,
+    pub time_decay_adapter_size: usize,
 }
 
 impl ModelInfo {

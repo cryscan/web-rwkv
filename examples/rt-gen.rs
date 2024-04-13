@@ -1,8 +1,4 @@
-use std::{
-    fs::File,
-    io::{BufReader, Read, Write},
-    path::PathBuf,
-};
+use std::{io::Write, path::PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
@@ -14,13 +10,17 @@ use instant::{Duration, Instant};
 use itertools::Itertools;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, BufReader},
+};
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     runtime::{
         infer::{InferInput, InferInputBatch, InferOption},
-        loader::Loader,
+        loader::{Loader, Lora},
         model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
-        softmax::softmax,
+        softmax::softmax_one,
         v4, v5, v6, JobRuntime, Submission,
     },
     tokenizer::Tokenizer,
@@ -64,15 +64,14 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
         .with_auto_limits(info)
         .build()
         .await?;
-    println!("{:#?}", context.adapter.get_info());
     Ok(context)
 }
 
-fn load_tokenizer() -> Result<Tokenizer> {
-    let file = File::open("assets/rwkv_vocab_v20230424.json")?;
+async fn load_tokenizer() -> Result<Tokenizer> {
+    let file = File::open("assets/rwkv_vocab_v20230424.json").await?;
     let mut reader = BufReader::new(file);
     let mut contents = String::new();
-    reader.read_to_string(&mut contents)?;
+    reader.read_to_string(&mut contents).await?;
     Ok(Tokenizer::new(&contents)?)
 }
 
@@ -96,7 +95,7 @@ impl From<EmbedDevice> for web_rwkv::runtime::model::EmbedDevice {
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[arg(short, long, value_name = "FILE")]
-    model: Option<PathBuf>,
+    model: PathBuf,
     #[arg(short, long, value_name = "FILE")]
     lora: Option<PathBuf>,
     #[arg(short, long, value_name = "LAYERS", default_value_t = 0)]
@@ -115,51 +114,71 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Warn)
+        .with_module_level("web_rwkv", log::LevelFilter::Info)
+        .with_module_level("rt_gen", log::LevelFilter::Info)
+        .init()
+        .unwrap();
     let cli = Cli::parse();
 
-    let tokenizer = load_tokenizer()?;
-    let model = cli.model.unwrap_or_else(|| {
-        std::fs::read_dir("assets/models")
-            .unwrap()
-            .filter_map(|x| x.ok())
-            .find(|x| x.path().extension().is_some_and(|x| x == "st"))
-            .unwrap()
-            .path()
-    });
+    let tokenizer = load_tokenizer().await?;
 
-    let file = File::open(model)?;
+    let file = File::open(cli.model).await?;
     let data = unsafe { Mmap::map(&file)? };
 
     let model = SafeTensors::deserialize(&data)?;
     let info = Loader::info(&model)?;
-    println!("{:#?}", info);
+    log::info!("{:#?}", info);
 
     let context = create_context(&info, cli.adapter).await?;
+    log::info!("{:#?}", context.adapter.get_info());
+
     let quant = (0..cli.quant)
         .map(|layer| (layer, Quant::Int8))
         .chain((0..cli.quant_nf4).map(|layer| (layer, Quant::NF4)))
         .collect();
-    let embed_device = cli.embed_device.unwrap_or_default().into();
+    let embed_device = cli.embed_device.unwrap_or(EmbedDevice::Cpu).into();
+    let lora = match cli.lora {
+        Some(path) => {
+            let file = File::open(path).await?;
+            let mut reader = BufReader::new(file);
+            let mut data = vec![];
+            reader.read_to_end(&mut data).await?;
+            Some(data)
+        }
+        None => None,
+    };
 
     let builder = ModelBuilder::new(&context, model)
         .with_embed_device(embed_device)
         .with_quant(quant);
+    let builder = match &lora {
+        Some(data) => {
+            let data = SafeTensors::deserialize(data)?;
+            let blend = Default::default();
+            let lora = Lora { data, blend };
+            builder.add_lora(lora)
+        }
+        None => builder,
+    };
 
     let runtime = match info.version {
         ModelVersion::V4 => {
-            let runtime = Build::<v4::ModelRuntime<f16, 1>>::build(builder).await?;
+            let runtime = Build::<v4::ModelRuntime<f16>>::build(builder).await?;
             JobRuntime::new(runtime).await
         }
         ModelVersion::V5 => {
-            let runtime = Build::<v5::ModelRuntime<f16, 1>>::build(builder).await?;
+            let runtime = Build::<v5::ModelRuntime<f16>>::build(builder).await?;
             JobRuntime::new(runtime).await
         }
         ModelVersion::V6 => {
-            let runtime = Build::<v6::ModelRuntime<f16, 1>>::build(builder).await?;
+            let runtime = Build::<v6::ModelRuntime<f16>>::build(builder).await?;
             JobRuntime::new(runtime).await
         }
     };
 
+    // const PROMPT: &str = "User: Hi!\n\nAssistant: Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\nUser: Hi!\n\nAssistant:";
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
     let prompt_len = tokens.len();
@@ -168,7 +187,7 @@ async fn main() -> Result<()> {
         option: InferOption::Last,
         ..Default::default()
     };
-    let mut prompt = InferInput::new([prompt], cli.token_chunk_size);
+    let mut prompt = InferInput::new(vec![prompt], cli.token_chunk_size);
 
     let mut read = false;
     let mut instant = Instant::now();
@@ -186,7 +205,7 @@ async fn main() -> Result<()> {
         };
         prompt = input;
 
-        let output = &output[0].output;
+        let output = output[0].output.clone();
         if output.size() > 0 {
             if !read {
                 print!("\n{}", PROMPT);
@@ -195,7 +214,7 @@ async fn main() -> Result<()> {
                 read = true;
             }
 
-            let output = softmax(&context, output).await?;
+            let output = softmax_one(&context, output).await?;
             let probs = output.map(|x| x.to_f32()).to_vec();
             let token = sample(&probs, 0.0);
             prompt.batches[0].tokens.push(token);
@@ -209,22 +228,21 @@ async fn main() -> Result<()> {
             std::io::stdout().flush().unwrap();
         }
     }
+    print!("\n\n");
 
     let duration = instant.elapsed();
-
-    println!(
-        "\n\nPrefill:\t{} tokens,\t{} mills,\t{} tps",
+    log::info!(
+        "Prefill:\t{} tokens,\t{} mills,\t{} tps",
         prompt_len,
         prefill.as_millis(),
         prompt_len as f64 / prefill.as_secs_f64()
     );
-    println!(
+    log::info!(
         "Generation:\t{} tokens,\t{} mills,\t{} tps",
         num_token,
         duration.as_millis(),
         num_token as f64 / duration.as_secs_f64()
     );
-    std::io::stdout().flush()?;
 
     Ok(())
 }

@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::marker::PhantomData;
 
 use anyhow::Result;
 use half::f16;
@@ -8,7 +8,9 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{InferInfo, InferOutputBatch, InferRedirect, RunOutput, MIN_TOKEN_CHUNK_SIZE},
+    infer::{
+        InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
+    },
     loader::{Loader, Reader},
     model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
     Job, JobBuilder,
@@ -22,7 +24,7 @@ use crate::{
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
-        TensorReshape, TensorShape, TensorStack,
+        TensorInto, TensorReshape, TensorShape, TensorStack,
     },
 };
 
@@ -35,8 +37,6 @@ pub struct Model {
 
 impl Model {
     pub const RESCALE_LAYER: usize = 6;
-    pub const TIME_MIX_ADAPTER_SIZE: usize = 32;
-    pub const TIME_DECAY_ADAPTER_SIZE: usize = 64;
 
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
@@ -98,7 +98,7 @@ pub struct Layer {
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 pub struct Embed {
     pub layer_norm: LayerNorm,
-    pub w: Arc<TensorCpu<'static, f16>>,
+    pub w: TensorCpu<f16>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
@@ -109,12 +109,13 @@ pub struct Head {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
-pub struct State<const N: usize> {
+pub struct State {
+    pub context: Context,
     pub info: ModelInfo,
     pub data: Vec<TensorGpu<f32, ReadWrite>>,
 }
 
-impl<const N: usize> State<N> {
+impl State {
     fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         let end = head_size + 1;
@@ -126,9 +127,38 @@ impl<const N: usize> State<N> {
         let start = head_size + 1;
         self.data[layer].view(.., start, .., ..)
     }
+
+    fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
+        let context = &self.context;
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for (data, source) in self.data.iter().zip_eq(tensor.split(2)?.into_iter()) {
+            let source: TensorGpu<f32, ReadWrite> = source.transfer_into(context);
+            encoder.copy_tensor_batch(&source, data, 0, batch)?;
+        }
+        context.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    async fn back(&self, batch: usize) -> Result<TensorCpu<f32>, TensorError> {
+        let context = &self.context;
+        let mut tensors = Vec::with_capacity(self.info.num_layer);
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for data in self.data.iter() {
+            let destination = context.tensor_init(data.shape());
+            encoder.copy_tensor_batch(data, &destination, batch, 0)?;
+            tensors.push(destination);
+        }
+        context.queue.submit(Some(encoder.finish()));
+
+        let mut backed = Vec::with_capacity(tensors.len());
+        for tensor in tensors.into_iter() {
+            backed.push(tensor.back().await);
+        }
+        TensorCpu::stack(backed)
+    }
 }
 
-impl<const N: usize> DeepClone for State<N> {
+impl DeepClone for State {
     fn deep_clone(&self) -> Self {
         let data = self.data.iter().map(|tensor| tensor.deep_clone()).collect();
         Self {
@@ -181,9 +211,9 @@ impl<F: Float> Runtime<F> {
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
         let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
-        let time_mix_x_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, 5, num_token, 1);
-        let time_mix_t_shape = Shape::new(Model::TIME_MIX_ADAPTER_SIZE, num_token, 5, 1);
-        let time_decay_shape = Shape::new(Model::TIME_DECAY_ADAPTER_SIZE, num_token, 1, 1);
+        let time_mix_x_shape = Shape::new(info.time_mix_adapter_size, 5, num_token, 1);
+        let time_mix_t_shape = Shape::new(info.time_mix_adapter_size, num_token, 5, 1);
+        let time_decay_shape = Shape::new(info.time_decay_adapter_size, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
@@ -273,12 +303,15 @@ pub enum Hook {
     PostHead,
 }
 
-pub struct RunJob<F: Float> {
+pub struct InferJob<F: Float> {
     commands: Vec<CommandBuffer>,
     redirect: InferRedirect,
 
+    back: Vec<bool>,
+    state: State,
+
     embed_device: EmbedDevice,
-    embed: Arc<TensorCpu<'static, f16>>,
+    embed: TensorCpu<f16>,
 
     cursors: TensorGpu<u32, ReadWrite>,
     tokens: TensorGpu<u32, ReadWrite>,
@@ -286,23 +319,33 @@ pub struct RunJob<F: Float> {
     output: TensorGpu<F, ReadWrite>,
 }
 
-impl<F: Float> Job for RunJob<F> {
-    type Input = Vec<Vec<u16>>;
-    type Output = RunOutput<F>;
+impl<F: Float> Job for InferJob<F> {
+    type Input = InferChunk;
+    type Output = InferOutput<F>;
 
     fn check(&self, input: &Self::Input) -> bool {
-        let num_tokens: usize = input.iter().map(|tokens| tokens.len()).sum();
-        num_tokens == self.cursors.shape()[0]
+        input.num_token() == self.cursors.shape()[0]
     }
 
     fn load(self, input: &Self::Input) -> Result<Self> {
+        input
+            .iter()
+            .enumerate()
+            .filter_map(|(batch, chunk)| chunk.load.clone().map(|tensor| (batch, tensor)))
+            .try_for_each(|(batch, tensor)| self.state.load(batch, tensor))?;
+
+        if input.num_token() == 0 {
+            return Ok(self);
+        }
+
         let stack: Vec<TensorCpu<F>> = input
             .iter()
-            .map(|tokens| -> Result<TensorCpu<'_, F>, _> {
+            .map(|chunk| -> Result<TensorCpu<F>, _> {
                 let num_emb = self.embed.shape()[0];
-                let num_token = tokens.len();
+                let num_token = chunk.tokens.len();
                 let data = self.embed.data();
-                let data = tokens
+                let data = chunk
+                    .tokens
                     .iter()
                     .map(|&token| {
                         let start = num_emb * token as usize;
@@ -325,8 +368,8 @@ impl<F: Float> Job for RunJob<F> {
             EmbedDevice::Cpu => self.input.load(&stack.tensor)?,
             EmbedDevice::Gpu => {
                 let tokens = input
-                    .clone()
-                    .into_iter()
+                    .iter()
+                    .map(|chunk| chunk.tokens.clone())
                     .concat()
                     .into_iter()
                     .map(|token| token as u32)
@@ -352,20 +395,27 @@ impl<F: Float> Job for RunJob<F> {
             .into_iter()
             .map(|(start, end)| output.slice(.., start..end, .., ..))
             .try_collect()?;
+
+        let mut states = vec![];
+        for (batch, back) in self.back.into_iter().enumerate() {
+            match back {
+                true => states.push(Some(self.state.back(batch).await?)),
+                false => states.push(None),
+            }
+        }
+
         let batches = batches
             .into_iter()
-            .map(|output| InferOutputBatch {
-                output,
-                state: None,
-            })
+            .zip_eq(states.into_iter())
+            .map(|(output, state)| InferOutputBatch { output, state })
             .collect();
-        Ok(RunOutput(batches))
+        Ok(InferOutput(batches))
     }
 }
 
-pub struct ModelRuntime<F: Float, const N: usize> {
+pub struct ModelRuntime<F: Float> {
     model: Model,
-    state: State<N>,
+    state: State,
     phantom: PhantomData<F>,
 }
 
@@ -377,15 +427,17 @@ fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
     Ok(TensorOp::List(vec![]))
 }
 
-impl<F: Float, const N: usize> JobBuilder<RunJob<F>> for ModelRuntime<F, N> {
+impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
     type Seed = InferInfo;
 
-    async fn build(&self, seed: Self::Seed) -> Result<RunJob<F>> {
+    async fn build(&self, seed: Self::Seed) -> Result<InferJob<F>> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
         let info = &model.info;
         let tensor = &model.tensor;
+
+        let back = seed.back();
 
         let num_token = seed.num_token();
         let head_size = info.num_emb / info.num_head;
@@ -396,10 +448,29 @@ impl<F: Float, const N: usize> JobBuilder<RunJob<F>> for ModelRuntime<F, N> {
         let buffer = Runtime::<F>::new(context, info, num_token);
         let header = Header::<F>::new(context, info, num_header);
 
+        if num_token == 0 {
+            let embed_device = match &tensor.embed.u {
+                Some(_) => EmbedDevice::Gpu,
+                None => EmbedDevice::Cpu,
+            };
+            return Ok(InferJob {
+                commands: vec![],
+                redirect,
+                back,
+                state: self.state.clone(),
+                embed_device,
+                embed: model.tensor.embed.w.clone(),
+                tokens: buffer.tokens,
+                cursors: buffer.cursors,
+                input: buffer.input,
+                output: header.head_o,
+            });
+        }
+
         #[cfg(feature = "async-build")]
         let mut tasks = tokio::task::JoinSet::new();
         #[cfg(not(feature = "async-build"))]
-        let mut commands = Vec::new();
+        let mut commands = vec![];
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
             (vec![], buffer.ffn_x.clone())
@@ -506,9 +577,11 @@ impl<F: Float, const N: usize> JobBuilder<RunJob<F>> for ModelRuntime<F, N> {
             .map(|x| x.1)
             .collect_vec();
 
-        Ok(RunJob {
+        Ok(InferJob {
             commands,
             redirect,
+            back,
+            state: self.state.clone(),
             embed_device,
             embed: model.tensor.embed.w.clone(),
             tokens: buffer.tokens,
@@ -519,12 +592,12 @@ impl<F: Float, const N: usize> JobBuilder<RunJob<F>> for ModelRuntime<F, N> {
     }
 }
 
-impl<F: Float, const N: usize> ModelRuntime<F, N> {
+impl<F: Float> ModelRuntime<F> {
     #[allow(clippy::too_many_arguments)]
     fn build_layer(
         context: Context,
         layer: Layer,
-        state: State<N>,
+        state: State,
         buffer: Runtime<F>,
         index: usize,
         num_token: usize,
@@ -848,14 +921,15 @@ impl<F: Float, const N: usize> ModelRuntime<F, N> {
     }
 }
 
-impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBuilder<R> {
-    async fn build(self) -> Result<ModelRuntime<F, N>> {
+impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
+    async fn build(self) -> Result<ModelRuntime<F>> {
         let ModelBuilder {
             context,
             model,
             lora,
             quant,
             embed_device,
+            num_batch,
         } = self;
 
         let info = Loader::info(&model)?;
@@ -870,7 +944,7 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
                 w: loader.load_vector_f16("blocks.0.ln0.weight").await?,
                 b: loader.load_vector_f16("blocks.0.ln0.bias").await?,
             },
-            w: loader.load_embed().await?.into(),
+            w: loader.load_embed().await?,
             u: match embed_device {
                 EmbedDevice::Cpu => None,
                 EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight").await?),
@@ -912,7 +986,7 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
             let time_first = loader.load_vector_f32(format!("{att}.time_first")).await?;
             let time_mix_x = loader.load_vector_f16(format!("{att}.time_mix_x")).await?;
             let time_mix = {
-                let time_mix: TensorGpu<_, _> = context.zeros(Shape::new(info.num_emb, 1, 5, 1));
+                let time_mix: TensorGpu<_, _> = context.zeros([info.num_emb, 1, 5, 1]);
                 let time_mix_w = loader.load_vector_f16(format!("{att}.time_mix_w")).await?;
                 let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k")).await?;
                 let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v")).await?;
@@ -1052,9 +1126,13 @@ impl<F: Float, R: Reader, const N: usize> Build<ModelRuntime<F, N>> for ModelBui
 
         let state = {
             let head_size = info.num_emb / info.num_head;
-            let shape = Shape::new(info.num_emb, head_size + 2, N, 1);
+            let shape = Shape::new(info.num_emb, head_size + 2, num_batch, 1);
             let data = (0..info.num_layer).map(|_| context.zeros(shape)).collect();
-            State { info, data }
+            State {
+                context,
+                info,
+                data,
+            }
         };
 
         Ok(ModelRuntime {
