@@ -19,7 +19,7 @@ use web_rwkv::{
         infer::{InferInput, InferInputBatch, InferOption},
         loader::{Loader, Lora},
         model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
-        softmax::softmax,
+        softmax::softmax_one,
         v4, v5, v6, JobRuntime, Submission,
     },
     tensor::{TensorCpu, TensorInit, TensorShape},
@@ -381,7 +381,7 @@ async fn main() -> Result<()> {
             assert_eq!(output.len(), info.num_vocab);
 
             let output = TensorCpu::from_data(shape, output)?;
-            let output = softmax(&context, &output).await?;
+            let output = softmax_one(&context, output).await?;
 
             let token = cli.sampler.sample(&output);
             let decoded = tokenizer.decode(&[token])?;

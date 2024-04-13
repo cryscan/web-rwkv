@@ -1,14 +1,24 @@
-use std::{io::Write, path::PathBuf};
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+#[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
-use instant::{Duration, Instant};
-#[cfg(not(debug_assertions))]
 use itertools::Itertools;
 use memmap2::Mmap;
+#[cfg(not(debug_assertions))]
+use ratatui::{
+    prelude::{Constraint, CrosstermBackend, Direction, Layout},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Span, Text},
+    widgets::{Block, Borders, Paragraph, Wrap},
+    Terminal,
+};
 use safetensors::SafeTensors;
 use tokio::{
     fs::File,
@@ -17,10 +27,10 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, Instance},
     runtime::{
-        infer::{InferInput, InferInputBatch, InferOption},
+        infer::{InferInput, InferInputBatch},
         loader::{Loader, Lora},
         model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
-        softmax::softmax_one,
+        softmax::softmax,
         v4, v5, v6, JobRuntime, Submission,
     },
     tokenizer::Tokenizer,
@@ -75,6 +85,21 @@ async fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
+#[cfg(not(debug_assertions))]
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
+    let mut stdout = std::io::stdout();
+    enable_raw_mode()?;
+    crossterm::execute!(stdout, EnterAlternateScreen)?;
+    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
+}
+
+#[cfg(not(debug_assertions))]
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    crossterm::execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
+    Ok(terminal.show_cursor()?)
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum EmbedDevice {
     #[default]
@@ -108,6 +133,8 @@ struct Cli {
     embed_device: Option<EmbedDevice>,
     #[arg(long, default_value_t = 32)]
     token_chunk_size: usize,
+    #[arg(short, long, default_value_t = 4)]
+    batch: usize,
     #[arg(short, long, action)]
     adapter: bool,
 }
@@ -121,6 +148,7 @@ async fn main() -> Result<()> {
         .init()
         .unwrap();
     let cli = Cli::parse();
+    let batch = cli.batch;
 
     let tokenizer = load_tokenizer().await?;
 
@@ -152,7 +180,8 @@ async fn main() -> Result<()> {
 
     let builder = ModelBuilder::new(&context, model)
         .with_embed_device(embed_device)
-        .with_quant(quant);
+        .with_quant(quant)
+        .with_num_batch(batch);
     let builder = match &lora {
         Some(data) => {
             let data = SafeTensors::deserialize(data)?;
@@ -178,71 +207,122 @@ async fn main() -> Result<()> {
         }
     };
 
-    // const PROMPT: &str = "User: Hi!\n\nAssistant: Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\nUser: Hi!\n\nAssistant:";
-    const PROMPT: &str = include_str!("prompt.md");
-    let tokens = tokenizer.encode(PROMPT.as_bytes())?;
-    let prompt_len = tokens.len();
-    let prompt = InferInputBatch {
-        tokens,
-        option: InferOption::Last,
-        ..Default::default()
-    };
-    let mut prompt = InferInput::new(vec![prompt], cli.token_chunk_size);
+    #[cfg(not(debug_assertions))]
+    let mut terminal = setup_terminal()?;
 
-    let mut read = false;
-    let mut instant = Instant::now();
-    let mut prefill = Duration::ZERO;
+    let prompts = [
+        "The Eiffel Tower is located in the city of",
+        "The name of the capital of Italy is",
+        "The Space Needle is located in downtown",
+        "人们发现",
+    ];
+    let mut prompts = prompts
+        .to_vec()
+        .repeat((batch + prompts.len() - 1) / prompts.len())[..batch]
+        .iter()
+        .map(|str| String::from_str(str).unwrap())
+        .collect_vec();
+    let tokens = prompts
+        .clone()
+        .iter()
+        .map(|prompt| tokenizer.encode(prompt.as_bytes()).unwrap())
+        .collect_vec();
 
-    let num_token = 500;
-    for _ in 0..num_token {
+    let mut inference = InferInput::new(
+        tokens
+            .into_iter()
+            .map(|tokens| InferInputBatch {
+                tokens,
+                ..Default::default()
+            })
+            .collect(),
+        cli.token_chunk_size,
+    );
+
+    let mut num_tokens =
+        [100usize, 400, 200, 300].to_vec().repeat((batch + 3) / 4)[..batch].to_vec();
+
+    loop {
+        #[cfg(not(debug_assertions))]
+        terminal.draw(|frame| {
+            let size = frame.size();
+
+            let block = Block::default().black();
+            frame.render_widget(block, size);
+
+            let constraints = (0..batch)
+                .map(|_| Constraint::Percentage(100 / batch as u16))
+                .collect_vec();
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints(constraints)
+                .split(size);
+
+            let create_block = |title| {
+                Block::default()
+                    .borders(Borders::ALL)
+                    .style(Style::default().fg(Color::Gray))
+                    .title(Span::styled(
+                        title,
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ))
+            };
+
+            for (index, (text, chunk)) in prompts.iter().zip(chunks.iter()).enumerate() {
+                let text = Text::from(text.as_str());
+                let text_height_estimation: usize = text
+                    .lines
+                    .iter()
+                    .map(|line| (line.width() / 1.max(chunk.width as usize - 2)).max(1))
+                    .sum();
+                let scroll =
+                    (text_height_estimation as isize - chunk.height as isize + 2).max(0) as u16;
+                let paragraph = Paragraph::new(text)
+                    .style(Style::default().fg(Color::Gray))
+                    .block(create_block(format!("Batch {index}")))
+                    .wrap(Wrap { trim: true })
+                    .scroll((scroll, 0));
+                frame.render_widget(paragraph, *chunk);
+            }
+        })?;
+
+        #[cfg(debug_assertions)]
+        for (index, prompt) in prompts.iter().enumerate() {
+            println!("{index}: {prompt}");
+        }
+
+        let input = inference.clone();
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let input = prompt.clone();
         let submission = Submission { input, sender };
 
         let _ = runtime.send(submission).await;
-        let Ok((input, output)) = receiver.await else {
-            break;
-        };
-        prompt = input;
+        let (input, output) = receiver.await.unwrap();
+        inference = input;
 
-        let output = output[0].output.clone();
-        if output.size() > 0 {
-            if !read {
-                print!("\n{}", PROMPT);
-                prefill = instant.elapsed();
-                instant = Instant::now();
-                read = true;
+        let output = output.iter().map(|x| x.output.clone()).collect_vec();
+        let output = softmax(&context, output).await?;
+        for (index, batch) in output.iter().enumerate() {
+            if batch.size() == 0 {
+                continue;
             }
+            if num_tokens[index] > 0 {
+                let batch = batch.clone().map(|x| x.to_f32()).to_vec();
+                let token = sample(&batch, 0.5);
+                let decoded = tokenizer.decode(&[token])?;
+                let word = String::from_utf8_lossy(&decoded);
+                inference.batches[index].tokens = vec![token];
+                prompts[index].push_str(&word);
+                num_tokens[index] -= 1;
+            }
+        }
 
-            let output = softmax_one(&context, output).await?;
-            let probs = output.map(|x| x.to_f32()).to_vec();
-            let token = sample(&probs, 0.0);
-            prompt.batches[0].tokens.push(token);
-
-            let decoded = tokenizer.decode(&[token])?;
-            let word = String::from_utf8_lossy(&decoded);
-            print!("{}", word);
-            std::io::stdout().flush().unwrap();
-        } else {
-            print!(".");
-            std::io::stdout().flush().unwrap();
+        if num_tokens.iter().all(|x| *x == 0) {
+            break;
         }
     }
-    print!("\n\n");
 
-    let duration = instant.elapsed();
-    log::info!(
-        "Prefill:\t{} tokens,\t{} mills,\t{} tps",
-        prompt_len,
-        prefill.as_millis(),
-        prompt_len as f64 / prefill.as_secs_f64()
-    );
-    log::info!(
-        "Generation:\t{} tokens,\t{} mills,\t{} tps",
-        num_token,
-        duration.as_millis(),
-        num_token as f64 / duration.as_secs_f64()
-    );
+    #[cfg(not(debug_assertions))]
+    restore_terminal(&mut terminal)?;
 
     Ok(())
 }
