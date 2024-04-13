@@ -208,7 +208,7 @@ impl Macros {
     //     Self(vec![("BLOCK_SIZE".into(), format!("{}u", block_size))])
     // }
     pub fn new() -> Self {
-        Self(Vec::new())
+        Self(vec![])
     }
 }
 

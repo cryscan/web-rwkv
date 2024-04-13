@@ -2551,12 +2551,9 @@ mod tests {
             1.0,
         ];
         let (matrix_u8, matrix_u4, absmax) = {
-            let mut matrix_u8: Vec<u8> = vec![];
-            let mut matrix_u4: Vec<u8> = vec![];
-            let mut absmax = vec![];
-            matrix_u8.resize(matrix.len(), 0);
-            matrix_u4.resize(matrix.len() / 2, 0);
-            absmax.resize(matrix.len() / NF4_BLOCK_SIZE, f16::ZERO);
+            let mut matrix_u8: Vec<u8> = vec![0; matrix.len()];
+            let mut matrix_u4: Vec<u8> = vec![0; matrix.len() / 2];
+            let mut absmax = vec![f16::ZERO; matrix.len() / NF4_BLOCK_SIZE];
 
             for (i, absmax) in absmax.iter_mut().enumerate() {
                 let start = i * NF4_BLOCK_SIZE;

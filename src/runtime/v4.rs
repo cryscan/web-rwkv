@@ -9,8 +9,7 @@ use wgpu::CommandBuffer;
 
 use super::{
     infer::{
-        InferChunkBatch, InferInfo, InferOutput, InferOutputBatch, InferRedirect,
-        MIN_TOKEN_CHUNK_SIZE,
+        InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
     model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
@@ -128,9 +127,8 @@ impl State {
 
     async fn back(&self, batch: usize) -> Result<TensorCpu<f32>, TensorError> {
         let context = &self.context;
-        let shape = Shape::new(self.info.num_emb, self.info.num_layer, 1, 1);
 
-        let tensor: TensorGpu<f32, ReadWrite> = context.tensor_init(shape);
+        let tensor: TensorGpu<f32, ReadWrite> = context.tensor_init(self.data.shape());
         let mut encoder = context.device.create_command_encoder(&Default::default());
         encoder.copy_tensor_batch(&self.data, &tensor, batch, 0)?;
         context.queue.submit(Some(encoder.finish()));
@@ -269,15 +267,24 @@ pub struct InferJob<F: Float> {
 }
 
 impl<F: Float> Job for InferJob<F> {
-    type Input = Vec<InferChunkBatch>;
+    type Input = InferChunk;
     type Output = InferOutput<F>;
 
     fn check(&self, input: &Self::Input) -> bool {
-        let num_tokens: usize = input.iter().map(|chunk| chunk.tokens.len()).sum();
-        num_tokens == self.cursors.shape()[0]
+        input.num_token() == self.cursors.shape()[0]
     }
 
     fn load(self, input: &Self::Input) -> Result<Self> {
+        input
+            .iter()
+            .enumerate()
+            .filter_map(|(batch, chunk)| chunk.load.clone().map(|tensor| (batch, tensor)))
+            .try_for_each(|(batch, tensor)| self.state.load(batch, tensor))?;
+
+        if input.num_token() == 0 {
+            return Ok(self);
+        }
+
         let stack: Vec<TensorCpu<F>> = input
             .iter()
             .map(|chunk| -> Result<TensorCpu<F>, _> {
@@ -303,14 +310,6 @@ impl<F: Float> Job for InferJob<F> {
         let cursors = stack.cursors.clone().into_cursors();
         let cursors = TensorCpu::from_data(self.cursors.shape(), cursors)?;
         self.cursors.load(&cursors)?;
-
-        for (batch, tensor) in input
-            .iter()
-            .enumerate()
-            .filter_map(|(batch, chunk)| chunk.load.clone().map(|tensor| (batch, tensor)))
-        {
-            self.state.load(batch, tensor)?;
-        }
 
         match self.embed_device {
             EmbedDevice::Cpu => self.input.load(&stack.tensor)?,
@@ -395,10 +394,29 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
         let buffer = Runtime::<F>::new(context, info, num_token);
         let header = Header::<F>::new(context, info, num_header);
 
+        if num_token == 0 {
+            let embed_device = match &tensor.embed.u {
+                Some(_) => EmbedDevice::Gpu,
+                None => EmbedDevice::Cpu,
+            };
+            return Ok(InferJob {
+                commands: vec![],
+                redirect,
+                back,
+                state: self.state.clone(),
+                embed_device,
+                embed: model.tensor.embed.w.clone(),
+                tokens: buffer.tokens,
+                cursors: buffer.cursors,
+                input: buffer.input,
+                output: header.head_o,
+            });
+        }
+
         #[cfg(feature = "async-build")]
         let mut tasks = tokio::task::JoinSet::new();
         #[cfg(not(feature = "async-build"))]
-        let mut commands = Vec::new();
+        let mut commands = vec![];
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
             (vec![], buffer.ffn_x.clone())

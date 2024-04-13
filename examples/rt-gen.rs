@@ -64,7 +64,6 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
         .with_auto_limits(info)
         .build()
         .await?;
-    println!("{:#?}", context.adapter.get_info());
     Ok(context)
 }
 
@@ -115,6 +114,12 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Warn)
+        .with_module_level("web_rwkv", log::LevelFilter::Info)
+        .with_module_level("rt_gen", log::LevelFilter::Info)
+        .init()
+        .unwrap();
     let cli = Cli::parse();
 
     let tokenizer = load_tokenizer().await?;
@@ -124,9 +129,11 @@ async fn main() -> Result<()> {
 
     let model = SafeTensors::deserialize(&data)?;
     let info = Loader::info(&model)?;
-    println!("{:#?}", info);
+    log::info!("{:#?}", info);
 
     let context = create_context(&info, cli.adapter).await?;
+    log::info!("{:#?}", context.adapter.get_info());
+
     let quant = (0..cli.quant)
         .map(|layer| (layer, Quant::Int8))
         .chain((0..cli.quant_nf4).map(|layer| (layer, Quant::NF4)))
@@ -171,6 +178,7 @@ async fn main() -> Result<()> {
         }
     };
 
+    // const PROMPT: &str = "User: Hi!\n\nAssistant: Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\nUser: Hi!\n\nAssistant:";
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
     let prompt_len = tokens.len();
@@ -220,22 +228,21 @@ async fn main() -> Result<()> {
             std::io::stdout().flush().unwrap();
         }
     }
+    print!("\n\n");
 
     let duration = instant.elapsed();
-
-    println!(
-        "\n\nPrefill:\t{} tokens,\t{} mills,\t{} tps",
+    log::info!(
+        "Prefill:\t{} tokens,\t{} mills,\t{} tps",
         prompt_len,
         prefill.as_millis(),
         prompt_len as f64 / prefill.as_secs_f64()
     );
-    println!(
+    log::info!(
         "Generation:\t{} tokens,\t{} mills,\t{} tps",
         num_token,
         duration.as_millis(),
         num_token as f64 / duration.as_secs_f64()
     );
-    std::io::stdout().flush()?;
 
     Ok(())
 }

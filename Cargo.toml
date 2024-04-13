@@ -56,6 +56,7 @@ crossterm = "0.27"
 dialoguer = "0.11.0"
 pollster = "0.3.0"
 ratatui = { version = "0.26", features = ["all-widgets"] }
+simple_logger = { version = "4.2", features = ["stderr"] }
 
 [features]
 default = ["runtime"]
@@ -64,5 +65,9 @@ async-build = []
 runtime = ["tokio/rt-multi-thread"]
 
 [[example]]
-name = "run"
+name = "rt-gen"
+required-features = ["runtime"]
+
+[[example]]
+name = "rt-chat"
 required-features = ["runtime"]
