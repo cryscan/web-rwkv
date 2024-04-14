@@ -525,18 +525,12 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
         context.queue.submit(Some(encoder.finish()));
 
-        #[cfg(feature = "no-runtime")]
-        let (sender, receiver) = flume::unbounded();
-        #[cfg(feature = "runtime")]
         let (sender, receiver) = tokio::sync::oneshot::channel();
 
         let _ = context.event().send(ContextEvent::ReadBack {
             buffer: map,
             sender,
         });
-        #[cfg(feature = "no-runtime")]
-        let data = receiver.recv_async().await.unwrap();
-        #[cfg(feature = "runtime")]
         let data = receiver.await.unwrap();
         let data = unsafe {
             let data = Box::leak(data);
@@ -554,7 +548,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn back<'a>(self) -> TensorCpu<'a, T> {
+    pub async fn back(self) -> TensorCpu<T> {
         let context = &self.context;
         let size = self.buffer.size();
         let buffer = context.checkout_buffer(
@@ -576,13 +570,13 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
         let data = {
             let map = slice.get_mapped_range();
-            Vec::from(bytemuck::cast_slice(&map))
+            Vec::from(bytemuck::cast_slice(&map)).into()
         };
         buffer.unmap();
 
         TensorCpu {
             shape: self.shape,
-            data: Cow::from(data),
+            data,
             phantom: PhantomData,
         }
     }

@@ -139,9 +139,6 @@ impl<'a> ContextBuilder {
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
         #[cfg(not(target_arch = "wasm32"))]
-        #[cfg(feature = "no-runtime")]
-        let (sender, receiver) = flume::unbounded();
-        #[cfg(feature = "runtime")]
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
 
         let context = Arc::new(ContextInternal {
@@ -343,39 +340,11 @@ impl ContextInternal {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "no-runtime")]
-    pub(crate) fn event(&self) -> flume::Sender<ContextEvent> {
-        self.event.clone()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "runtime")]
     pub(crate) fn event(&self) -> tokio::sync::mpsc::UnboundedSender<ContextEvent> {
         self.event.clone()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "no-runtime")]
-    fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
-        assert!(buffer.usage().contains(BufferUsages::MAP_READ));
-
-        let (sender, receiver) = flume::unbounded();
-        let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-
-        self.device.poll(wgpu::MaintainBase::Wait);
-        receiver.recv().unwrap().unwrap();
-
-        let data = {
-            let map = slice.get_mapped_range();
-            map.to_vec().into_boxed_slice()
-        };
-        buffer.unmap();
-        data
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "runtime")]
     fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
         assert!(buffer.usage().contains(BufferUsages::MAP_READ));
 
