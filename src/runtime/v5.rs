@@ -12,7 +12,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
+    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, ModelState, Quant},
     Job, JobBuilder,
 };
 use crate::{
@@ -112,7 +112,14 @@ pub struct State {
     pub data: Vec<TensorGpu<f32, ReadWrite>>,
 }
 
-impl State {
+impl ModelState for State {
+    fn init(info: &ModelInfo) -> TensorCpu<f32> {
+        let head_size = info.num_emb / info.num_head;
+        let shape = Shape::new(info.num_emb, head_size + 2, info.num_layer, 1);
+        let data = vec![0.0; shape.len()];
+        TensorCpu::from_data(shape, data).unwrap()
+    }
+
     fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         let end = head_size + 1;
@@ -384,6 +391,7 @@ impl<F: Float> Job for InferJob<F> {
     }
 }
 
+#[derive(Debug, Serialize, DeserializeSeed)]
 pub struct ModelRuntime<F: Float> {
     model: Model,
     state: State,

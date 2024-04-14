@@ -11,6 +11,7 @@ use crate::{
     context::{Context, ContextBuilder},
     impl_deserialize_seed,
     num::Scalar,
+    tensor::{TensorCpu, TensorError, TensorGpuView},
 };
 
 #[wasm_bindgen]
@@ -59,6 +60,22 @@ impl ModelInfo {
     pub fn head_buffer_size(&self) -> usize {
         self.num_emb * self.num_vocab * f16::size()
     }
+}
+
+pub trait ModelState {
+    /// Initialize a one-batch state on CPU.
+    fn init(info: &ModelInfo) -> TensorCpu<f32>;
+    /// The part of the state that is used in an `att` layer.
+    fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError>;
+    /// The part of the state that is used in an `ffn` layer.
+    fn ffn(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError>;
+    /// Load a batch of the state from CPU to GPU.
+    fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError>;
+    /// Read back a batch of the state from GPU to CPU.
+    fn back(
+        &self,
+        batch: usize,
+    ) -> impl Future<Output = Result<TensorCpu<f32>, TensorError>> + Send;
 }
 
 /// Quantization of a layer.

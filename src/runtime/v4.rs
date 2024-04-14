@@ -12,7 +12,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, Quant},
+    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, ModelState, Quant},
     Job, JobBuilder,
 };
 use crate::{
@@ -24,7 +24,7 @@ use crate::{
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::Shape,
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
-        TensorShape, TensorStack,
+        TensorInto, TensorShape, TensorStack,
     },
 };
 
@@ -108,7 +108,25 @@ pub struct State {
     pub data: TensorGpu<f32, ReadWrite>,
 }
 
-impl State {
+impl ModelState for State {
+    fn init(info: &ModelInfo) -> TensorCpu<f32> {
+        let data = (0..info.num_layer)
+            .map(|_| {
+                [
+                    vec![0.0; info.num_emb],
+                    vec![0.0; info.num_emb],
+                    vec![0.0; info.num_emb],
+                    vec![f32::MIN; info.num_emb],
+                    vec![0.0; info.num_emb],
+                ]
+                .concat()
+            })
+            .collect_vec()
+            .concat();
+        let shape = Shape::new(info.num_emb, 5 * info.num_layer, 1, 1);
+        TensorCpu::from_data(shape, data).unwrap()
+    }
+
     fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
         let start = 5 * layer;
         let end = start + 4;
@@ -360,6 +378,7 @@ impl<F: Float> Job for InferJob<F> {
     }
 }
 
+#[derive(Debug, Serialize, DeserializeSeed)]
 pub struct ModelRuntime<F: Float> {
     model: Model,
     state: State,
@@ -905,26 +924,9 @@ impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
         };
 
         let state = {
-            let data = (0..num_batch)
-                .map(|_| {
-                    (0..info.num_layer)
-                        .map(|_| {
-                            [
-                                vec![0.0; info.num_emb],
-                                vec![0.0; info.num_emb],
-                                vec![0.0; info.num_emb],
-                                vec![f32::MIN; info.num_emb],
-                                vec![0.0; info.num_emb],
-                            ]
-                            .concat()
-                        })
-                        .collect_vec()
-                        .concat()
-                })
-                .collect_vec()
-                .concat();
-            let shape = Shape::new(info.num_emb, 5 * info.num_layer, num_batch, 1);
-            let data = context.tensor_from_data(shape, data)?;
+            let data = State::init(&info)
+                .repeat(2, num_batch)
+                .transfer_into(&context);
             State {
                 context,
                 info,
