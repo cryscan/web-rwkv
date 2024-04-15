@@ -280,9 +280,6 @@ pub struct InferJob<F: Float> {
     commands: Vec<CommandBuffer>,
     redirect: InferRedirect,
 
-    back: Vec<bool>,
-    state: State,
-
     embed_device: EmbedDevice,
     embed: TensorCpu<f16>,
 
@@ -301,12 +298,6 @@ impl<F: Float> Job for InferJob<F> {
     }
 
     fn load(self, input: &Self::Input) -> Result<Self> {
-        input
-            .iter()
-            .enumerate()
-            .filter_map(|(batch, chunk)| chunk.load.clone().map(|tensor| (batch, tensor)))
-            .try_for_each(|(batch, tensor)| self.state.load(batch, tensor))?;
-
         if input.num_token() == 0 {
             return Ok(self);
         }
@@ -315,10 +306,9 @@ impl<F: Float> Job for InferJob<F> {
             .iter()
             .map(|chunk| -> Result<TensorCpu<F>, _> {
                 let num_emb = self.embed.shape()[0];
-                let num_token = chunk.tokens.len();
+                let num_token = chunk.len();
                 let data = self.embed.data();
                 let data = chunk
-                    .tokens
                     .iter()
                     .map(|&token| {
                         let start = num_emb * token as usize;
@@ -342,7 +332,7 @@ impl<F: Float> Job for InferJob<F> {
             EmbedDevice::Gpu => {
                 let tokens = input
                     .iter()
-                    .map(|chunk| chunk.tokens.clone())
+                    .map(|chunk| chunk.0.clone())
                     .concat()
                     .into_iter()
                     .map(|token| token as u32)
@@ -368,20 +358,7 @@ impl<F: Float> Job for InferJob<F> {
             .into_iter()
             .map(|(start, end)| output.slice(.., start..end, .., ..))
             .try_collect()?;
-
-        let mut states = vec![];
-        for (batch, back) in self.back.into_iter().enumerate() {
-            match back {
-                true => states.push(Some(self.state.back(batch).await?)),
-                false => states.push(None),
-            }
-        }
-
-        let batches = batches
-            .into_iter()
-            .zip_eq(states.into_iter())
-            .map(|(output, state)| InferOutputBatch { output, state })
-            .collect();
+        let batches = batches.into_iter().map(InferOutputBatch).collect();
         Ok(InferOutput(batches))
     }
 }
@@ -417,8 +394,6 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
         let info = &model.info;
         let tensor = &model.tensor;
 
-        let back = seed.back();
-
         let num_token = seed.num_token();
 
         let redirect = seed.redirect();
@@ -435,8 +410,6 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
             return Ok(InferJob {
                 commands: vec![],
                 redirect,
-                back,
-                state: self.state.clone(),
                 embed_device,
                 embed: model.tensor.embed.w.clone(),
                 tokens: buffer.tokens,
@@ -559,8 +532,6 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
         Ok(InferJob {
             commands,
             redirect,
-            back,
-            state: self.state.clone(),
             embed_device,
             embed: model.tensor.embed.w.clone(),
             tokens: buffer.tokens,

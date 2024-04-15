@@ -299,7 +299,7 @@ async fn main() -> Result<()> {
         let (input, output) = receiver.await.unwrap();
         inference = input;
 
-        let output = output.iter().map(|x| x.output.clone()).collect_vec();
+        let output = output.iter().map(|batch| batch.0.clone()).collect_vec();
         let output = softmax(&context, output).await?;
         for (index, batch) in output.iter().enumerate() {
             if batch.size() == 0 {

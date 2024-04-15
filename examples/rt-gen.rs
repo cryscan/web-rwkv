@@ -185,7 +185,6 @@ async fn main() -> Result<()> {
     let prompt = InferInputBatch {
         tokens,
         option: InferOption::Last,
-        ..Default::default()
     };
     let mut prompt = InferInput::new(vec![prompt], cli.token_chunk_size);
 
@@ -205,7 +204,7 @@ async fn main() -> Result<()> {
         };
         prompt = input;
 
-        let output = output[0].output.clone();
+        let output = output[0].0.clone();
         if output.size() > 0 {
             if !read {
                 print!("\n{}", PROMPT);

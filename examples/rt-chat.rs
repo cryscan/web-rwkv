@@ -18,7 +18,9 @@ use web_rwkv::{
     runtime::{
         infer::{InferInput, InferInputBatch, InferOption},
         loader::{Loader, Lora},
-        model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
+        model::{
+            Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelRuntime, ModelVersion, Quant,
+        },
         softmax::softmax_one,
         v4, v5, v6, JobRuntime, Submission,
     },
@@ -255,18 +257,21 @@ async fn main() -> Result<()> {
         None => builder,
     };
 
-    let runtime = match info.version {
+    let (runtime, state) = match info.version {
         ModelVersion::V4 => {
             let builder = Build::<v4::ModelJobBuilder<f16>>::build(builder).await?;
-            JobRuntime::new(builder).await
+            let state = builder.state();
+            (JobRuntime::new(builder).await, state)
         }
         ModelVersion::V5 => {
             let builder = Build::<v5::ModelJobBuilder<f16>>::build(builder).await?;
-            JobRuntime::new(builder).await
+            let state = builder.state();
+            (JobRuntime::new(builder).await, state)
         }
         ModelVersion::V6 => {
             let builder = Build::<v6::ModelJobBuilder<f16>>::build(builder).await?;
-            JobRuntime::new(builder).await
+            let state = builder.state();
+            (JobRuntime::new(builder).await, state)
         }
     };
 
@@ -276,8 +281,6 @@ async fn main() -> Result<()> {
         vec![InferInputBatch {
             tokens: tokenizer.encode(prompt.build().as_bytes())?,
             option: InferOption::Last,
-            load: None,
-            back: false,
         }],
         cli.token_chunk_size,
     );
@@ -293,7 +296,7 @@ async fn main() -> Result<()> {
         let (input, output) = receiver.await.unwrap();
         inference = input;
 
-        if output[0].output.shape()[1] > 0 {
+        if output[0].size() > 0 {
             assert_eq!(inference.batches[0].tokens.len(), 0);
             break;
         }
@@ -302,24 +305,8 @@ async fn main() -> Result<()> {
     print!("{}", prompt.build());
     std::io::stdout().flush()?;
 
-    let back_state = || async {
-        let input = InferInput::new(
-            vec![InferInputBatch {
-                back: true,
-                ..Default::default()
-            }],
-            cli.token_chunk_size,
-        );
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let submission = Submission { input, sender };
-
-        let _ = runtime.send(submission).await;
-        let (_, output) = receiver.await.unwrap();
-        output[0].state.clone().expect("read back state")
-    };
-
     // read back initial state
-    let mut state = back_state().await;
+    let mut backed = state.back(0).await?;
     let mut last_user_text = String::from("Hi!");
     let mut last_tokens = vec![];
 
@@ -342,14 +329,13 @@ async fn main() -> Result<()> {
                 inference.batches[0] = InferInputBatch {
                     tokens: last_tokens.clone(),
                     option: InferOption::Last,
-                    load: Some(state.clone()),
-                    back: false,
                 };
+                state.load(0, backed.clone())?;
             }
             _ => {
                 last_user_text = user_text.clone();
                 last_tokens = inference.batches[0].tokens.clone();
-                state = back_state().await;
+                backed = state.back(0).await?;
             }
         }
 
@@ -370,9 +356,9 @@ async fn main() -> Result<()> {
             let (input, output) = receiver.await.unwrap();
             inference = input;
 
-            let output = output[0].output.clone();
+            let output = output[0].0.clone();
             let shape = output.shape();
-            if shape[1] == 0 {
+            if output.size() == 0 {
                 // we are not finishing reading the prompt
                 continue;
             }
@@ -394,8 +380,6 @@ async fn main() -> Result<()> {
             inference.batches[0] = InferInputBatch {
                 tokens: vec![token],
                 option: InferOption::Last,
-                load: None,
-                back: false,
             };
 
             if model_text.contains("\n\n") {
