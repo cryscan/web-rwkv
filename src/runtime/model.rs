@@ -64,6 +64,8 @@ impl ModelInfo {
 }
 
 pub trait ModelState {
+    /// Batch number of this state.
+    fn num_batch(&self) -> usize;
     /// Initialize a one-batch state on CPU.
     fn init(&self) -> TensorCpu<f32>;
     /// The part of the state that is used in an `att` layer.
@@ -74,10 +76,13 @@ pub trait ModelState {
     fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError>;
     /// Read back a batch of the state from GPU to CPU.
     fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>>;
+    /// Get an embed vector from a backed state.
+    fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError>;
 }
 
 pub trait ModelRuntime {
-    fn state(&self) -> Box<dyn ModelState>;
+    fn info(&self) -> ModelInfo;
+    fn state(&self) -> Box<dyn ModelState + Send + Sync>;
 }
 
 /// Quantization of a layer.

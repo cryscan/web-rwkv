@@ -134,6 +134,11 @@ impl State {
 }
 
 impl ModelState for State {
+    #[inline]
+    fn num_batch(&self) -> usize {
+        self.data[0].shape()[2]
+    }
+
     fn init(&self) -> TensorCpu<f32> {
         let info = &self.info;
         let head_size = info.num_emb / info.num_head;
@@ -167,6 +172,10 @@ impl ModelState for State {
 
     fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>> {
         Box::pin(self.back(batch))
+    }
+
+    fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError> {
+        backed.slice(.., 0, layer, ..)
     }
 }
 
@@ -384,7 +393,13 @@ pub struct ModelJobBuilder<F: Float> {
 }
 
 impl<F: Float> ModelRuntime for ModelJobBuilder<F> {
-    fn state(&self) -> Box<dyn ModelState> {
+    #[inline]
+    fn info(&self) -> ModelInfo {
+        self.model.info.clone()
+    }
+
+    #[inline]
+    fn state(&self) -> Box<dyn ModelState + Send + Sync> {
         Box::new(self.state.clone())
     }
 }
