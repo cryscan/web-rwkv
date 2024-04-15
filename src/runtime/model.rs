@@ -1,6 +1,7 @@
 use std::{collections::HashMap, future::Future};
 
 use anyhow::Result;
+use futures::future::BoxFuture;
 use half::f16;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -72,10 +73,11 @@ pub trait ModelState {
     /// Load a batch of the state from CPU to GPU.
     fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError>;
     /// Read back a batch of the state from GPU to CPU.
-    fn back(
-        &self,
-        batch: usize,
-    ) -> impl Future<Output = Result<TensorCpu<f32>, TensorError>> + Send;
+    fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>>;
+}
+
+pub trait ModelRuntime {
+    fn state(&self) -> Box<dyn ModelState>;
 }
 
 /// Quantization of a layer.

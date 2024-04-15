@@ -257,16 +257,16 @@ async fn main() -> Result<()> {
 
     let runtime = match info.version {
         ModelVersion::V4 => {
-            let runtime = Build::<v4::ModelRuntime<f16>>::build(builder).await?;
-            JobRuntime::new(runtime).await
+            let builder = Build::<v4::ModelJobBuilder<f16>>::build(builder).await?;
+            JobRuntime::new(builder).await
         }
         ModelVersion::V5 => {
-            let runtime = Build::<v5::ModelRuntime<f16>>::build(builder).await?;
-            JobRuntime::new(runtime).await
+            let builder = Build::<v5::ModelJobBuilder<f16>>::build(builder).await?;
+            JobRuntime::new(builder).await
         }
         ModelVersion::V6 => {
-            let runtime = Build::<v6::ModelRuntime<f16>>::build(builder).await?;
-            JobRuntime::new(runtime).await
+            let builder = Build::<v6::ModelJobBuilder<f16>>::build(builder).await?;
+            JobRuntime::new(builder).await
         }
     };
 

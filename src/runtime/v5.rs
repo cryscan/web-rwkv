@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use anyhow::Result;
+use futures::future::BoxFuture;
 use half::f16;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, ModelState, Quant},
+    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, ModelRuntime, ModelState, Quant},
     Job, JobBuilder,
 };
 use crate::{
@@ -112,6 +113,26 @@ pub struct State {
     pub data: Vec<TensorGpu<f32, ReadWrite>>,
 }
 
+impl State {
+    async fn back(&self, batch: usize) -> Result<TensorCpu<f32>, TensorError> {
+        let context = &self.context;
+        let mut tensors = Vec::with_capacity(self.info.num_layer);
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        for data in self.data.iter() {
+            let destination = context.tensor_init(data.shape());
+            encoder.copy_tensor_batch(data, &destination, batch, 0)?;
+            tensors.push(destination);
+        }
+        context.queue.submit(Some(encoder.finish()));
+
+        let mut backed = Vec::with_capacity(tensors.len());
+        for tensor in tensors.into_iter() {
+            backed.push(tensor.back().await);
+        }
+        TensorCpu::stack(backed)
+    }
+}
+
 impl ModelState for State {
     fn init(&self) -> TensorCpu<f32> {
         let info = &self.info;
@@ -144,22 +165,8 @@ impl ModelState for State {
         Ok(())
     }
 
-    async fn back(&self, batch: usize) -> Result<TensorCpu<f32>, TensorError> {
-        let context = &self.context;
-        let mut tensors = Vec::with_capacity(self.info.num_layer);
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        for data in self.data.iter() {
-            let destination = context.tensor_init(data.shape());
-            encoder.copy_tensor_batch(data, &destination, batch, 0)?;
-            tensors.push(destination);
-        }
-        context.queue.submit(Some(encoder.finish()));
-
-        let mut backed = Vec::with_capacity(tensors.len());
-        for tensor in tensors.into_iter() {
-            backed.push(tensor.back().await);
-        }
-        TensorCpu::stack(backed)
+    fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>> {
+        Box::pin(self.back(batch))
     }
 }
 
@@ -393,10 +400,16 @@ impl<F: Float> Job for InferJob<F> {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
-pub struct ModelRuntime<F: Float> {
+pub struct ModelJobBuilder<F: Float> {
     model: Model,
     state: State,
     phantom: PhantomData<F>,
+}
+
+impl<F: Float> ModelRuntime for ModelJobBuilder<F> {
+    fn state(&self) -> Box<dyn ModelState> {
+        Box::new(self.state.clone())
+    }
 }
 
 fn turbo(num_token: usize) -> bool {
@@ -407,7 +420,7 @@ fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
     Ok(TensorOp::List(vec![]))
 }
 
-impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
+impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
     type Seed = InferInfo;
 
     async fn build(&self, seed: Self::Seed) -> Result<InferJob<F>> {
@@ -572,7 +585,7 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
     }
 }
 
-impl<F: Float> ModelRuntime<F> {
+impl<F: Float> ModelJobBuilder<F> {
     #[allow(clippy::too_many_arguments)]
     fn build_layer(
         context: Context,
@@ -865,8 +878,8 @@ impl<F: Float> ModelRuntime<F> {
     }
 }
 
-impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
-    async fn build(self) -> Result<ModelRuntime<F>> {
+impl<F: Float, R: Reader> Build<ModelJobBuilder<F>> for ModelBuilder<R> {
+    async fn build(self) -> Result<ModelJobBuilder<F>> {
         let ModelBuilder {
             context,
             model,
@@ -1033,7 +1046,7 @@ impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
             }
         };
 
-        Ok(ModelRuntime {
+        Ok(ModelJobBuilder {
             model,
             state,
             phantom: PhantomData,
