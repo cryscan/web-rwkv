@@ -113,7 +113,8 @@ pub struct State {
 }
 
 impl ModelState for State {
-    fn init(info: &ModelInfo) -> TensorCpu<f32> {
+    fn init(&self) -> TensorCpu<f32> {
+        let info = &self.info;
         let head_size = info.num_emb / info.num_head;
         let shape = Shape::new(info.num_emb, head_size + 2, info.num_layer, 1);
         let data = vec![0.0; shape.len()];

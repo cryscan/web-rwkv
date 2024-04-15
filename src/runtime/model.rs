@@ -64,7 +64,7 @@ impl ModelInfo {
 
 pub trait ModelState {
     /// Initialize a one-batch state on CPU.
-    fn init(info: &ModelInfo) -> TensorCpu<f32>;
+    fn init(&self) -> TensorCpu<f32>;
     /// The part of the state that is used in an `att` layer.
     fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError>;
     /// The part of the state that is used in an `ffn` layer.

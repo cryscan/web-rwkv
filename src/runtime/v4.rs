@@ -24,7 +24,7 @@ use crate::{
         ops::{Activation, TensorCommand, TensorOp, TensorPass},
         shape::Shape,
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
-        TensorInto, TensorShape, TensorStack,
+        TensorShape, TensorStack,
     },
 };
 
@@ -109,7 +109,8 @@ pub struct State {
 }
 
 impl ModelState for State {
-    fn init(info: &ModelInfo) -> TensorCpu<f32> {
+    fn init(&self) -> TensorCpu<f32> {
+        let info = &self.info;
         let data = (0..info.num_layer)
             .map(|_| {
                 [
@@ -924,9 +925,21 @@ impl<F: Float, R: Reader> Build<ModelRuntime<F>> for ModelBuilder<R> {
         };
 
         let state = {
-            let data = State::init(&info)
-                .repeat(2, num_batch)
-                .transfer_into(&context);
+            let shape = Shape::new(info.num_emb, 5 * info.num_layer, num_batch, 1);
+            let data = (0..info.num_layer * num_batch)
+                .map(|_| {
+                    [
+                        vec![0.0; info.num_emb],
+                        vec![0.0; info.num_emb],
+                        vec![0.0; info.num_emb],
+                        vec![f32::MIN; info.num_emb],
+                        vec![0.0; info.num_emb],
+                    ]
+                    .concat()
+                })
+                .collect_vec()
+                .concat();
+            let data = context.tensor_from_data(shape, data)?;
             State {
                 context,
                 info,
