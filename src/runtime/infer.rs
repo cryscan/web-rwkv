@@ -36,8 +36,9 @@ impl InferInfo {
             let len = info.len;
             match &info.option {
                 None => {
-                    inputs[batch] = (p_in, p_in);
+                    inputs[batch] = (p_in, p_in + len);
                     outputs[batch] = (p_out, p_out);
+                    p_in += len;
                 }
                 Some(InferOption::Last) => {
                     inputs[batch] = (p_in, p_in + len);
@@ -450,6 +451,55 @@ mod tests {
         assert_eq!(redirect.headers, vec![60, 61, 62, 63]);
         assert_eq!(redirect.inputs, vec![(0, 61), (61, 61), (61, 61), (61, 64)]);
         assert_eq!(redirect.outputs, vec![(0, 1), (1, 1), (1, 1), (1, 4)]);
+
+        let run = InferInput {
+            batches: [
+                (vec![0; 11], InferOption::Last),
+                (vec![1; 8], InferOption::Last),
+                (vec![2; 9], InferOption::Last),
+                (vec![3; 4], InferOption::Last),
+                (vec![0; 11], InferOption::Last),
+                (vec![1; 8], InferOption::Last),
+                (vec![2; 9], InferOption::Last),
+                (vec![3; 4], InferOption::Last),
+            ]
+            .map(|(tokens, option)| InferInputBatch {
+                tokens,
+                option,
+                ..Default::default()
+            })
+            .to_vec(),
+            token_chunk_size: 32,
+        };
+        let redirect = run.iter().next().unwrap().redirect();
+
+        assert_eq!(redirect.headers, vec![15, 31]);
+        assert_eq!(
+            redirect.inputs,
+            vec![
+                (0, 4),
+                (4, 8),
+                (8, 12),
+                (12, 16),
+                (16, 20),
+                (20, 24),
+                (24, 28),
+                (28, 32)
+            ]
+        );
+        assert_eq!(
+            redirect.outputs,
+            vec![
+                (0, 0),
+                (0, 0),
+                (0, 0),
+                (0, 1),
+                (1, 1),
+                (1, 1),
+                (1, 1),
+                (1, 2)
+            ]
+        );
 
         Ok(())
     }

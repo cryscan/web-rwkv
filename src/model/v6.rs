@@ -152,10 +152,10 @@ pub struct Runtime<F: Float> {
 }
 
 impl<F: Float> Runtime<F> {
-    pub fn new(context: &Context, info: &ModelInfo, num_token: usize, max_token: usize) -> Self {
+    pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
-        let cursors_shape = Shape::new(max_token, 1, 1, 1);
+        let cursors_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
         let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
         let time_mix_x_shape = Shape::new(info.time_mix_adapter_size, 5, num_token, 1);
@@ -701,7 +701,7 @@ impl<F: Float> ModelRunInternal for Model<F> {
 
     #[inline]
     fn checkout_runtime(&self, num_token: usize) -> Self::Runtime {
-        Runtime::new(&self.context, &self.info, num_token, self.token_chunk_size)
+        Runtime::new(&self.context, &self.info, num_token)
     }
 
     #[inline]
@@ -797,8 +797,8 @@ impl<F: Float> ModelRunInternal for Model<F> {
 
         let mut ops = vec![];
 
-        let mut cursors = input.cursors.into_cursors();
-        cursors.resize(self.token_chunk_size, 0);
+        let cursors = input.cursors.into_cursors();
+        // cursors.resize(self.token_chunk_size, 0);
 
         let cursors = context.tensor_from_data(buffer.cursors.shape(), cursors)?;
         buffer.cursors.load(&cursors)?;
