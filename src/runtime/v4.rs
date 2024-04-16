@@ -13,7 +13,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, ModelRuntime, ModelState, Quant},
+    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, ModelRuntime, Quant, State as _},
     Job, JobBuilder,
 };
 use crate::{
@@ -123,7 +123,7 @@ impl State {
     }
 }
 
-impl ModelState for State {
+impl super::model::State for State {
     #[inline]
     fn num_batch(&self) -> usize {
         self.data.shape()[2]
@@ -388,8 +388,47 @@ impl<F: Float> ModelRuntime for ModelJobBuilder<F> {
     }
 
     #[inline]
-    fn state(&self) -> Box<dyn ModelState + Send + Sync> {
-        Box::new(self.state.clone())
+    fn state(&self) -> impl super::model::State + Send + Sync + 'static {
+        self.state.clone()
+    }
+
+    #[inline]
+    fn model(&self) -> impl Serialize + 'static {
+        self.model.clone()
+    }
+}
+
+impl<F: Float> ModelJobBuilder<F> {
+    pub fn new(model: Model, num_batch: usize) -> Self {
+        let context = model.context.clone();
+        let info = model.info.clone();
+        let state = {
+            let shape = Shape::new(info.num_emb, 5 * info.num_layer, num_batch, 1);
+            let data = (0..info.num_layer * num_batch)
+                .map(|_| {
+                    [
+                        vec![0.0; info.num_emb],
+                        vec![0.0; info.num_emb],
+                        vec![0.0; info.num_emb],
+                        vec![f32::MIN; info.num_emb],
+                        vec![0.0; info.num_emb],
+                    ]
+                    .concat()
+                })
+                .collect_vec()
+                .concat();
+            let data = context.tensor_from_data(shape, data).unwrap();
+            State {
+                context,
+                info,
+                data,
+            }
+        };
+        Self {
+            model,
+            state,
+            phantom: PhantomData,
+        }
     }
 }
 
@@ -914,7 +953,6 @@ impl<F: Float, R: Reader> Build<ModelJobBuilder<F>> for ModelBuilder<R> {
             head,
             layers,
         };
-
         let model = {
             let context = context.clone();
             let info = info.clone();
@@ -924,34 +962,6 @@ impl<F: Float, R: Reader> Build<ModelJobBuilder<F>> for ModelBuilder<R> {
                 tensor,
             }
         };
-
-        let state = {
-            let shape = Shape::new(info.num_emb, 5 * info.num_layer, num_batch, 1);
-            let data = (0..info.num_layer * num_batch)
-                .map(|_| {
-                    [
-                        vec![0.0; info.num_emb],
-                        vec![0.0; info.num_emb],
-                        vec![0.0; info.num_emb],
-                        vec![f32::MIN; info.num_emb],
-                        vec![0.0; info.num_emb],
-                    ]
-                    .concat()
-                })
-                .collect_vec()
-                .concat();
-            let data = context.tensor_from_data(shape, data)?;
-            State {
-                context,
-                info,
-                data,
-            }
-        };
-
-        Ok(ModelJobBuilder {
-            model,
-            state,
-            phantom: PhantomData,
-        })
+        Ok(ModelJobBuilder::new(model, num_batch))
     }
 }

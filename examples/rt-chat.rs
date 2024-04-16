@@ -20,6 +20,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{
             Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelRuntime, ModelVersion, Quant,
+            State,
         },
         softmax::softmax_one,
         v4, v5, v6, JobRuntime, Submission,
@@ -257,21 +258,21 @@ async fn main() -> Result<()> {
         None => builder,
     };
 
-    let (runtime, state) = match info.version {
+    let (runtime, state): (_, Box<dyn State>) = match info.version {
         ModelVersion::V4 => {
             let builder = Build::<v4::ModelJobBuilder<f16>>::build(builder).await?;
             let state = builder.state();
-            (JobRuntime::new(builder).await, state)
+            (JobRuntime::new(builder).await, Box::new(state))
         }
         ModelVersion::V5 => {
             let builder = Build::<v5::ModelJobBuilder<f16>>::build(builder).await?;
             let state = builder.state();
-            (JobRuntime::new(builder).await, state)
+            (JobRuntime::new(builder).await, Box::new(state))
         }
         ModelVersion::V6 => {
             let builder = Build::<v6::ModelJobBuilder<f16>>::build(builder).await?;
             let state = builder.state();
-            (JobRuntime::new(builder).await, state)
+            (JobRuntime::new(builder).await, Box::new(state))
         }
     };
 

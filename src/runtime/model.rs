@@ -63,7 +63,7 @@ impl ModelInfo {
     }
 }
 
-pub trait ModelState {
+pub trait State {
     /// Batch number of this state.
     fn num_batch(&self) -> usize;
     /// Initialize a one-batch state on CPU.
@@ -82,7 +82,8 @@ pub trait ModelState {
 
 pub trait ModelRuntime {
     fn info(&self) -> ModelInfo;
-    fn state(&self) -> Box<dyn ModelState + Send + Sync>;
+    fn state(&self) -> impl State + Send + Sync + 'static;
+    fn model(&self) -> impl Serialize + 'static;
 }
 
 /// Quantization of a layer.
