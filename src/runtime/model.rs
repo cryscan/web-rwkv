@@ -83,7 +83,7 @@ pub trait State {
 pub trait ModelRuntime {
     fn info(&self) -> ModelInfo;
     fn state(&self) -> impl State + Send + Sync + 'static;
-    fn model(&self) -> impl Serialize + 'static;
+    fn model(&self) -> impl Serialize + Send + Sync + 'static;
 }
 
 /// Quantization of a layer.

@@ -388,7 +388,7 @@ impl<F: Float> ModelRuntime for ModelJobBuilder<F> {
     }
 
     #[inline]
-    fn state(&self) -> impl super::model::State + Send + Sync + 'static {
+    fn state(&self) -> impl super::model::State + 'static {
         self.state.clone()
     }
 
