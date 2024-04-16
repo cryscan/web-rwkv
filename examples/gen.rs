@@ -215,8 +215,8 @@ where
     let mut instant = Instant::now();
     let mut prefill = Duration::ZERO;
 
-    let num_tokens = 500;
-    while count < num_tokens {
+    let num_token = 500;
+    while count < num_token {
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
 
@@ -252,9 +252,9 @@ where
     );
     println!(
         "Generation:\t{} tokens,\t{} mills,\t{} tps",
-        num_tokens,
+        num_token,
         duration.as_millis(),
-        num_tokens as f64 / duration.as_secs_f64()
+        num_token as f64 / duration.as_secs_f64()
     );
     std::io::stdout().flush()?;
 

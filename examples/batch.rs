@@ -263,7 +263,7 @@ where
         })
         .collect();
 
-    let mut num_tokens =
+    let mut num_token =
         [100usize, 400, 200, 300].to_vec().repeat((batch + 3) / 4)[..batch].to_vec();
     loop {
         #[cfg(not(debug_assertions))]
@@ -321,19 +321,19 @@ where
             ModelOutput::Last(x) => Some((index, x)),
             _ => None,
         }) {
-            if num_tokens[index] > 0 {
+            if num_token[index] > 0 {
                 let token = sample(probs.to_vec(), 0.5);
                 let decoded = tokenizer.decode(&[token])?;
                 let word = String::from_utf8_lossy(&decoded);
                 tokens[index].tokens = vec![token];
                 prompts[index].push_str(&word);
-                num_tokens[index] -= 1;
+                num_token[index] -= 1;
             } else {
                 tokens[index].tokens = vec![];
             }
         }
 
-        if num_tokens.iter().all(|x| *x == 0) {
+        if num_token.iter().all(|x| *x == 0) {
             break;
         }
     }

@@ -147,6 +147,11 @@ impl InferInput {
     pub fn token_chunk_size(&self) -> usize {
         self.token_chunk_size
     }
+
+    #[inline]
+    pub fn num_token(&self) -> usize {
+        self.batches.iter().map(|batch| batch.tokens.len()).sum()
+    }
 }
 
 impl JobInput for InferInput {

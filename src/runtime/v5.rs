@@ -119,7 +119,8 @@ impl State {
         let mut tensors = Vec::with_capacity(self.info.num_layer);
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for data in self.data.iter() {
-            let destination = context.tensor_init(data.shape());
+            let shape = data.shape();
+            let destination = context.tensor_init([shape[0], shape[1], 1, 1]);
             encoder.copy_tensor_batch(data, &destination, batch, 0)?;
             tensors.push(destination);
         }
@@ -160,6 +161,9 @@ impl ModelState for State {
     }
 
     fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
+        let head_size = self.info.num_emb / self.info.num_head;
+        tensor.check_shape([self.info.num_emb, head_size + 2, self.info.num_layer, 1])?;
+
         let context = &self.context;
         let mut encoder = context.device.create_command_encoder(&Default::default());
         for (data, source) in self.data.iter().zip_eq(tensor.split(2)?.into_iter()) {

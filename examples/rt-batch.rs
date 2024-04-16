@@ -239,7 +239,7 @@ async fn main() -> Result<()> {
         cli.token_chunk_size,
     );
 
-    let mut num_tokens =
+    let mut num_token =
         [100usize, 400, 200, 300].to_vec().repeat((batch + 3) / 4)[..batch].to_vec();
 
     loop {
@@ -305,18 +305,18 @@ async fn main() -> Result<()> {
             if batch.size() == 0 {
                 continue;
             }
-            if num_tokens[index] > 0 {
+            if num_token[index] > 0 {
                 let batch = batch.clone().map(|x| x.to_f32()).to_vec();
                 let token = sample(&batch, 0.5);
                 let decoded = tokenizer.decode(&[token])?;
                 let word = String::from_utf8_lossy(&decoded);
                 inference.batches[index].tokens = vec![token];
                 prompts[index].push_str(&word);
-                num_tokens[index] -= 1;
+                num_token[index] -= 1;
             }
         }
 
-        if num_tokens.iter().all(|x| *x == 0) {
+        if num_token.iter().all(|x| *x == 0) {
             break;
         }
     }

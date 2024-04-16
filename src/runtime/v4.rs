@@ -113,7 +113,8 @@ impl State {
     async fn back(&self, batch: usize) -> Result<TensorCpu<f32>, TensorError> {
         let context = &self.context;
 
-        let tensor: TensorGpu<f32, ReadWrite> = context.tensor_init(self.data.shape());
+        let shape = self.data.shape();
+        let tensor: TensorGpu<f32, ReadWrite> = context.tensor_init([shape[0], shape[1], 1, 1]);
         let mut encoder = context.device.create_command_encoder(&Default::default());
         encoder.copy_tensor_batch(&self.data, &tensor, batch, 0)?;
         context.queue.submit(Some(encoder.finish()));
@@ -159,6 +160,7 @@ impl ModelState for State {
     }
 
     fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
+        tensor.check_shape([self.info.num_emb, self.info.num_layer * 5, 1, 1])?;
         self.data.load_batch(&tensor, batch)?;
         Ok(())
     }

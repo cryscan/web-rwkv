@@ -265,8 +265,8 @@ where
     }];
 
     let mut count = 0usize;
-    let num_tokens = 100;
-    while count < num_tokens {
+    let num_token = 100;
+    while count < num_token {
         let logits = model.run(&mut tokens, &state).await?;
         let probs = model.softmax(logits).await?;
 
