@@ -301,11 +301,12 @@ pub struct InferJob<F: Float> {
 }
 
 impl<F: Float> Job for InferJob<F> {
+    type Info = InferInfo;
     type Input = InferChunk;
     type Output = InferOutput<F>;
 
-    fn check(&self, input: &Self::Input) -> bool {
-        input.num_token() == self.cursors.shape()[0]
+    fn check(&self, input: &Self::Input, info: &Self::Info) -> bool {
+        input.num_token() == self.cursors.shape()[0] && info.redirect() == self.redirect
     }
 
     fn load(self, input: &Self::Input) -> Result<Self> {
@@ -441,9 +442,9 @@ fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
 }
 
 impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
-    type Seed = InferInfo;
+    type Info = InferInfo;
 
-    async fn build(&self, seed: Self::Seed) -> Result<InferJob<F>> {
+    async fn build(&self, seed: Self::Info) -> Result<InferJob<F>> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;

@@ -13,11 +13,12 @@ pub mod v6;
 
 /// A [`Job`] to be executed on GPU.
 pub trait Job: Sized + Send + 'static {
+    type Info;
     type Input;
     type Output;
 
     /// Check if the input is compatible.
-    fn check(&self, input: &Self::Input) -> bool;
+    fn check(&self, input: &Self::Input, info: &Self::Info) -> bool;
     /// Load the data from CPU to GPU.
     fn load(self, input: &Self::Input) -> Result<Self>;
     /// Submit the job to GPU and execute it immediately.
@@ -27,11 +28,11 @@ pub trait Job: Sized + Send + 'static {
 }
 
 pub trait JobBuilder<J: Job>: Send + 'static {
-    type Seed;
+    type Info;
 
-    /// Build a [`Job`] from the given seed.
+    /// Build a [`Job`] from the given info.
     /// This usually involves creating a list of GPU commands (but not actually execution).
-    fn build(&self, seed: Self::Seed) -> impl Future<Output = Result<J>> + Send;
+    fn build(&self, info: Self::Info) -> impl Future<Output = Result<J>> + Send;
 }
 
 #[derive(Debug)]
@@ -62,9 +63,9 @@ where
     O: Send + 'static,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(builder: impl JobBuilder<J, Seed = T>) -> Self
+    pub async fn new<J>(builder: impl JobBuilder<J, Info = T>) -> Self
     where
-        J: Job<Input = I::Chunk, Output = O>,
+        J: Job<Info = T, Input = I::Chunk, Output = O>,
     {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let handle = tokio::spawn(Self::run(builder, receiver));
@@ -78,11 +79,11 @@ where
     }
 
     async fn run<J>(
-        builder: impl JobBuilder<J, Seed = T>,
+        builder: impl JobBuilder<J, Info = T>,
         mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
     ) -> Result<()>
     where
-        J: Job<Input = I::Chunk, Output = O>,
+        J: Job<Info = T, Input = I::Chunk, Output = O>,
     {
         let mut predict: Option<J> = None;
         while let Some(Submission { input, sender }) = receiver.recv().await {
@@ -93,12 +94,12 @@ where
             let next = iter.next();
             drop(iter);
 
-            fn check<J: Job>(job: J, input: &J::Input) -> Option<J> {
-                job.check(input).then_some(job)
+            fn check<J: Job>(job: J, input: &J::Input, info: &J::Info) -> Option<J> {
+                job.check(input, info).then_some(job)
             }
 
             let chunk = input.chunk();
-            let mut job = match predict.take().and_then(|job| check(job, &chunk)) {
+            let mut job = match predict.take().and_then(|job| check(job, &chunk, &info)) {
                 Some(job) => job,
                 None => builder.build(info).await?,
             }

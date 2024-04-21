@@ -69,7 +69,7 @@ impl InferInfo {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct InferRedirect {
     /// Indices in the *input* tensor that are included in the output.
     pub headers: Vec<usize>,
