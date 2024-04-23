@@ -1,4 +1,8 @@
-use std::marker::PhantomData;
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    marker::PhantomData,
+    sync::Arc,
+};
 
 use anyhow::Result;
 use futures::future::BoxFuture;
@@ -13,7 +17,9 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, ModelRuntime, Quant, State as _},
+    model::{
+        Build, EmbedDevice, HookMap, ModelBuilder, ModelInfo, ModelRuntime, Quant, State as _,
+    },
     Job, JobBuilder,
 };
 use crate::{
@@ -287,6 +293,14 @@ pub enum Hook {
     PostHead,
 }
 
+impl Hook {
+    pub fn hash(self) -> u64 {
+        let mut state = DefaultHasher::new();
+        Hash::hash(&self, &mut state);
+        state.finish()
+    }
+}
+
 pub struct InferJob<F: Float> {
     commands: Vec<CommandBuffer>,
     redirect: InferRedirect,
@@ -437,8 +451,11 @@ fn turbo(num_token: usize) -> bool {
     num_token % MIN_TOKEN_CHUNK_SIZE == 0
 }
 
-fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
-    Ok(TensorOp::List(vec![]))
+fn hook_op(hooks: &HookMap, hook: Hook) -> Result<TensorOp, TensorError> {
+    match hooks.get(&hook.hash()) {
+        Some(f) => f(),
+        None => Ok(TensorOp::List(vec![])),
+    }
 }
 
 impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
@@ -505,6 +522,8 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
             (ops, header.head_x.clone())
         };
 
+        let hook_op = |hook: Hook| hook_op(&seed.hooks, hook);
+
         let mut ops = vec![];
         let embed_device = match &tensor.embed.u {
             Some(u) => {
@@ -543,13 +562,14 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
 
         for (index, layer) in tensor.layers.iter().enumerate() {
             let context = context.clone();
+            let hooks = seed.hooks.clone();
             let layer = layer.clone();
             let state = state.clone();
             let buffer = buffer.clone();
             let f = move || -> Result<_> {
                 Ok((
                     index + 32,
-                    Self::build_layer(context, layer, state, buffer, index, num_token)?,
+                    Self::build_layer(context, hooks, layer, state, buffer, index, num_token)?,
                 ))
             };
             #[cfg(feature = "async-build")]
@@ -560,12 +580,13 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
 
         {
             let context = context.clone();
+            let hooks = seed.hooks.clone();
             let head = model.tensor.head.clone();
             let header = header.clone();
             let f = move || -> Result<_> {
                 Ok((
                     usize::MAX,
-                    Self::build_header(context, head, header, head_x, num_header, head_ops)?,
+                    Self::build_header(context, hooks, head, header, head_x, num_header, head_ops)?,
                 ))
             };
             #[cfg(feature = "async-build")]
@@ -603,12 +624,15 @@ impl<F: Float> ModelJobBuilder<F> {
     #[allow(clippy::too_many_arguments)]
     fn build_layer(
         context: Context,
+        hooks: Arc<HookMap>,
         layer: Layer,
         state: State,
         buffer: Runtime<F>,
         index: usize,
         num_token: usize,
     ) -> Result<CommandBuffer> {
+        let hook_op = |hook: Hook| hook_op(&hooks, hook);
+
         let info = &state.info;
         let mut encoder = context.device.create_command_encoder(&Default::default());
 
@@ -798,12 +822,15 @@ impl<F: Float> ModelJobBuilder<F> {
 
     fn build_header(
         context: Context,
+        hooks: Arc<HookMap>,
         head: Head,
         header: Header<F>,
         head_x: TensorGpu<F, ReadWrite>,
         num_header: usize,
         mut ops: Vec<TensorOp>,
     ) -> Result<CommandBuffer> {
+        let hook_op = |hook: Hook| hook_op(&hooks, hook);
+
         let mut encoder = context.device.create_command_encoder(&Default::default());
         if num_header > 0 {
             ops.append(&mut vec![

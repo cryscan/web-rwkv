@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future};
+use std::{collections::HashMap, future::Future, hash::Hash};
 
 use anyhow::Result;
 use futures::future::BoxFuture;
@@ -12,7 +12,7 @@ use crate::{
     context::{Context, ContextBuilder},
     impl_deserialize_seed,
     num::Scalar,
-    tensor::{TensorCpu, TensorError, TensorGpuView},
+    tensor::{ops::TensorOp, TensorCpu, TensorError, TensorGpuView},
 };
 
 #[wasm_bindgen]
@@ -85,6 +85,8 @@ pub trait ModelRuntime {
     fn state(&self) -> impl State + Send + Sync + 'static;
     fn model(&self) -> impl Serialize + Send + Sync + 'static;
 }
+
+pub type HookMap = HashMap<u64, Box<dyn Fn() -> Result<TensorOp, TensorError> + Send + Sync>>;
 
 /// Quantization of a layer.
 #[wasm_bindgen]
