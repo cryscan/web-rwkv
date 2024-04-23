@@ -624,7 +624,7 @@ impl<T: Scalar> From<TensorCpu<T>> for Vec<T> {
                 // SAFETY: if `data` is unique, it stays unique in the scope of this function since we own the `Arc`.
                 unsafe {
                     let len = data.len();
-                    let ptr = data.as_mut_ptr();
+                    let ptr = Arc::into_raw(value.data) as *mut T;
                     Vec::from_raw_parts(ptr, len, len)
                 }
             }
