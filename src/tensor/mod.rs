@@ -618,8 +618,18 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
 impl<T: Scalar> From<TensorCpu<T>> for Vec<T> {
     #[inline]
-    fn from(value: TensorCpu<T>) -> Self {
-        value.data.to_vec()
+    fn from(mut value: TensorCpu<T>) -> Self {
+        match Arc::get_mut(&mut value.data) {
+            Some(data) => {
+                // SAFETY: if `data` is unique, it stays unique in the scope of this function since we own the `Arc`.
+                unsafe {
+                    let len = data.len();
+                    let ptr = data.as_mut_ptr();
+                    Vec::from_raw_parts(ptr, len, len)
+                }
+            }
+            None => value.data.to_vec(),
+        }
     }
 }
 
