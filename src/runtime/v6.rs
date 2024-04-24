@@ -959,15 +959,14 @@ fn build_header<F: Float>(
     Ok(encoder.finish())
 }
 
-impl<F: Float, R: Reader> Build<ModelJobBuilder<F>> for ModelBuilder<R> {
-    async fn build(self) -> Result<ModelJobBuilder<F>> {
+impl<R: Reader> Build<Model> for ModelBuilder<R> {
+    async fn build(self) -> Result<Model> {
         let ModelBuilder {
             context,
             model,
             lora,
             quant,
             embed_device,
-            num_batch,
         } = self;
 
         let info = Loader::info(&model)?;
@@ -1160,6 +1159,6 @@ impl<F: Float, R: Reader> Build<ModelJobBuilder<F>> for ModelBuilder<R> {
                 tensor,
             }
         };
-        Ok(ModelJobBuilder::new(model, num_batch))
+        Ok(model)
     }
 }

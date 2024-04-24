@@ -260,17 +260,20 @@ async fn main() -> Result<()> {
 
     let (runtime, state): (_, Box<dyn State>) = match info.version {
         ModelVersion::V4 => {
-            let builder = Build::<v4::ModelJobBuilder<f16>>::build(builder).await?;
+            let model = Build::<v4::Model>::build(builder).await?;
+            let builder = v4::ModelJobBuilder::<f16>::new(model, 1);
             let state = builder.state();
             (JobRuntime::new(builder).await, Box::new(state))
         }
         ModelVersion::V5 => {
-            let builder = Build::<v5::ModelJobBuilder<f16>>::build(builder).await?;
+            let model = Build::<v5::Model>::build(builder).await?;
+            let builder = v5::ModelJobBuilder::<f16>::new(model, 1);
             let state = builder.state();
             (JobRuntime::new(builder).await, Box::new(state))
         }
         ModelVersion::V6 => {
-            let builder = Build::<v6::ModelJobBuilder<f16>>::build(builder).await?;
+            let model = Build::<v6::Model>::build(builder).await?;
+            let builder = v6::ModelJobBuilder::<f16>::new(model, 1);
             let state = builder.state();
             (JobRuntime::new(builder).await, Box::new(state))
         }
