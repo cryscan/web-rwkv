@@ -192,6 +192,11 @@ impl TensorOp {
         (count + block_size - 1) / block_size
     }
 
+    #[inline]
+    pub fn empty() -> Self {
+        Self::List(vec![])
+    }
+
     /// Softmax operator applied on `x`.
     pub fn softmax(x: &TensorGpu<impl Float, ReadWrite>) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;

@@ -768,12 +768,12 @@ impl<F: Float> ModelRunInternal for Model<F> {
             hooks
                 .get(&hook)
                 .map(|f| f(&self.tensor, state, &buffer, &header))
-                .unwrap_or_else(|| Ok(TensorOp::List(vec![])))
+                .unwrap_or_else(|| Ok(TensorOp::empty()))
         };
 
         // collect and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
-            (TensorOp::List(vec![]), &buffer.ffn_x)
+            (TensorOp::empty(), &buffer.ffn_x)
         } else {
             let mut start = 0;
             let mut end = 1;

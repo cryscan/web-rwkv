@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use anyhow::Result;
 use futures::future::BoxFuture;
@@ -390,10 +390,20 @@ impl<F: Float> Job for InferJob<F> {
     }
 }
 
-#[derive(Debug, Serialize, DeserializeSeed)]
+#[derive(Debug, Clone)]
+pub struct Frame<F: Float> {
+    pub state: State,
+    pub buffer: Runtime<F>,
+    pub header: Header<F>,
+}
+
+pub type HookFn<F> = Box<dyn Fn(Frame<F>) -> Result<TensorOp, TensorError> + Send + Sync>;
+pub type HookMap<F> = HashMap<Hook, HookFn<F>>;
+
 pub struct ModelJobBuilder<F: Float> {
     model: Model,
     state: State,
+    hooks: Arc<HookMap<F>>,
     phantom: PhantomData<F>,
 }
 
@@ -414,7 +424,15 @@ impl<F: Float> ModelJobBuilder<F> {
         Self {
             model,
             state,
+            hooks: Default::default(),
             phantom: PhantomData,
+        }
+    }
+
+    pub fn new_with_hooks(model: Model, num_batch: usize, hooks: HookMap<F>) -> Self {
+        Self {
+            hooks: Arc::new(hooks),
+            ..Self::new(model, num_batch)
         }
     }
 }
@@ -439,8 +457,15 @@ fn turbo(num_token: usize) -> bool {
     num_token % MIN_TOKEN_CHUNK_SIZE == 0
 }
 
-fn hook_op(_: Hook) -> Result<TensorOp, TensorError> {
-    Ok(TensorOp::List(vec![]))
+fn hook_op<F: Float>(
+    hooks: &HookMap<F>,
+    hook: &Hook,
+    frame: &Frame<F>,
+) -> Result<TensorOp, TensorError> {
+    match hooks.get(hook) {
+        Some(f) => f(frame.clone()),
+        None => Ok(TensorOp::empty()),
+    }
 }
 
 impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
@@ -461,6 +486,11 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
 
         let buffer = Runtime::<F>::new(context, info, num_token);
         let header = Header::<F>::new(context, info, num_header);
+        let frame = Frame {
+            state: state.clone(),
+            buffer: buffer.clone(),
+            header: header.clone(),
+        };
 
         if num_token == 0 {
             let embed_device = match &tensor.embed.u {
@@ -508,6 +538,8 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
             (ops, header.head_x.clone())
         };
 
+        let hook_op = |hook: Hook| hook_op(&self.hooks, &hook, &frame);
+
         let mut ops = vec![];
         let embed_device = match &tensor.embed.u {
             Some(u) => {
@@ -546,13 +578,13 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
 
         for (index, layer) in tensor.layers.iter().enumerate() {
             let context = context.clone();
+            let hooks = self.hooks.clone();
+            let frame = frame.clone();
             let layer = layer.clone();
-            let state = state.clone();
-            let buffer = buffer.clone();
             let f = move || -> Result<_> {
                 Ok((
                     index + 32,
-                    build_layer(context, layer, state, buffer, index, num_token, head_size)?,
+                    build_layer(context, hooks, frame, layer, index, num_token, head_size)?,
                 ))
             };
             #[cfg(feature = "async-build")]
@@ -563,12 +595,13 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
 
         {
             let context = context.clone();
+            let hooks = self.hooks.clone();
+            let frame = frame.clone();
             let head = model.tensor.head.clone();
-            let header = header.clone();
             let f = move || -> Result<_> {
                 Ok((
                     usize::MAX,
-                    build_header(context, head, header, head_x, num_header, head_ops)?,
+                    build_header(context, hooks, frame, head, head_x, num_header, head_ops)?,
                 ))
             };
             #[cfg(feature = "async-build")]
@@ -605,13 +638,16 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
 #[allow(clippy::too_many_arguments)]
 fn build_layer<F: Float>(
     context: Context,
+    hooks: Arc<HookMap<F>>,
+    frame: Frame<F>,
     layer: Layer,
-    state: State,
-    buffer: Runtime<F>,
     index: usize,
     num_token: usize,
     head_size: usize,
 ) -> Result<CommandBuffer> {
+    let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
+    let Frame { state, buffer, .. } = &frame;
+
     let info = &state.info;
     let mut encoder = context.device.create_command_encoder(&Default::default());
 
@@ -859,12 +895,16 @@ fn build_layer<F: Float>(
 
 fn build_header<F: Float>(
     context: Context,
+    hooks: Arc<HookMap<F>>,
+    frame: Frame<F>,
     head: Head,
-    header: Header<F>,
     head_x: TensorGpu<F, ReadWrite>,
     num_header: usize,
     mut ops: Vec<TensorOp>,
 ) -> Result<CommandBuffer> {
+    let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
+    let header = &frame.header;
+
     let mut encoder = context.device.create_command_encoder(&Default::default());
     if num_header > 0 {
         ops.append(&mut vec![
