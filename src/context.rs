@@ -39,6 +39,7 @@ impl Instance {
         selection: usize,
     ) -> Result<Adapter, CreateEnvironmentError> {
         self.enumerate_adapters(backends)
+            .into_iter()
             .nth(selection)
             .ok_or(CreateEnvironmentError::RequestAdapterFailed)
     }
@@ -130,8 +131,8 @@ impl<'a> ContextBuilder {
             .request_device(
                 &DeviceDescriptor {
                     label: None,
-                    features,
-                    limits,
+                    required_features: features,
+                    required_limits: limits,
                 },
                 None,
             )

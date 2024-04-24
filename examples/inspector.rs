@@ -65,6 +65,7 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
         let backends = wgpu::Backends::all();
         let adapters = instance
             .enumerate_adapters(backends)
+            .into_iter()
             .map(|adapter| adapter.get_info())
             .map(|info| format!("{} ({:?})", info.name, info.backend))
             .collect_vec();
