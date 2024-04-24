@@ -101,7 +101,7 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
         .adapter(wgpu::PowerPreference::HighPerformance)
         .await?;
     let context = ContextBuilder::new(adapter)
-        .with_auto_limits(info)
+        .auto_limits(info)
         .build()
         .await?;
     println!("{:#?}", context.adapter.get_info());
@@ -140,15 +140,15 @@ where
 
     let model = SafeTensors::deserialize(data)?;
     let model = ModelBuilder::new(context, model)
-        .with_quant(quant)
-        .with_turbo(turbo)
-        .with_token_chunk_size(token_chunk_size)
-        .with_embed_device(embed_device.unwrap_or_default().into());
+        .quant(quant)
+        .turbo(turbo)
+        .token_chunk_size(token_chunk_size)
+        .embed_device(embed_device.unwrap_or_default().into());
     let model: M = match lora {
         Some(lora) => {
             let data = SafeTensors::deserialize(lora)?;
             model
-                .add_lora(Lora {
+                .lora(Lora {
                     data,
                     blend: Default::default(),
                 })

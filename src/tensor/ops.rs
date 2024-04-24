@@ -2233,7 +2233,7 @@ mod tests {
         let instance = Instance::new();
         let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
         let context = ContextBuilder::new(adapter)
-            // .with_features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+            // .features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)
             .build()
             .await?;
         Ok(context)

@@ -175,22 +175,22 @@ impl<'a> ContextBuilder {
         Ok(context)
     }
 
-    pub fn with_limits(mut self, limits: Limits) -> Self {
+    pub fn limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
         self
     }
 
-    pub fn modify_limits(mut self, f: impl FnOnce(&mut Limits)) -> Self {
+    pub fn update_limits(mut self, f: impl FnOnce(&mut Limits)) -> Self {
         f(&mut self.limits);
         self
     }
 
-    pub fn with_features(mut self, features: Features) -> Self {
+    pub fn features(mut self, features: Features) -> Self {
         self.features = features;
         self
     }
 
-    pub fn modify_features(mut self, f: impl FnOnce(&mut Features)) -> Self {
+    pub fn update_features(mut self, f: impl FnOnce(&mut Features)) -> Self {
         f(&mut self.features);
         self
     }

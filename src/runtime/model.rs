@@ -133,23 +133,23 @@ impl<R: Reader> ModelBuilder<R> {
         }
     }
 
-    pub fn with_quant(mut self, value: HashMap<usize, Quant>) -> Self {
+    pub fn quant(mut self, value: HashMap<usize, Quant>) -> Self {
         self.quant = value;
         self
     }
 
-    pub fn with_embed_device(mut self, value: EmbedDevice) -> Self {
+    pub fn embed_device(mut self, value: EmbedDevice) -> Self {
         self.embed_device = value;
         self
     }
 
-    pub fn with_num_batch(mut self, value: usize) -> Self {
+    pub fn num_batch(mut self, value: usize) -> Self {
         assert_ne!(value, 0, "`num_batch` must not be 0");
         self.num_batch = value;
         self
     }
 
-    pub fn add_lora(mut self, value: Lora<R>) -> Self {
+    pub fn lora(mut self, value: Lora<R>) -> Self {
         self.lora.push(value);
         self
     }
@@ -157,11 +157,11 @@ impl<R: Reader> ModelBuilder<R> {
 
 pub trait ContextAutoLimits {
     /// Compute the limits automatically based on given model build info.
-    fn with_auto_limits(self, info: &ModelInfo) -> Self;
+    fn auto_limits(self, info: &ModelInfo) -> Self;
 }
 
 impl ContextAutoLimits for ContextBuilder {
-    fn with_auto_limits(mut self, info: &ModelInfo) -> Self {
+    fn auto_limits(mut self, info: &ModelInfo) -> Self {
         self.limits.max_buffer_size = ModelInfo::BUFFER_SIZE
             .max(info.max_non_head_buffer_size())
             .max(info.head_buffer_size()) as u64;

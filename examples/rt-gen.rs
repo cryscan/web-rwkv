@@ -61,7 +61,7 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
         .adapter(wgpu::PowerPreference::HighPerformance)
         .await?;
     let context = ContextBuilder::new(adapter)
-        .with_auto_limits(info)
+        .auto_limits(info)
         .build()
         .await?;
     Ok(context)
@@ -151,14 +151,14 @@ async fn main() -> Result<()> {
     };
 
     let builder = ModelBuilder::new(&context, model)
-        .with_embed_device(embed_device)
-        .with_quant(quant);
+        .embed_device(embed_device)
+        .quant(quant);
     let builder = match &lora {
         Some(data) => {
             let data = SafeTensors::deserialize(data)?;
             let blend = Default::default();
             let lora = Lora { data, blend };
-            builder.add_lora(lora)
+            builder.lora(lora)
         }
         None => builder,
     };
