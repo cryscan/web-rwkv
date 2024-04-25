@@ -1,4 +1,4 @@
-use std::{collections::HashMap, future::Future};
+use std::{any::Any, collections::HashMap, future::Future};
 
 use anyhow::Result;
 use futures::future::BoxFuture;
@@ -63,7 +63,11 @@ impl ModelInfo {
     }
 }
 
-pub trait State {
+pub trait AsAny {
+    fn as_any(&self) -> &dyn Any;
+}
+
+pub trait State: AsAny {
     /// Batch number of this state.
     fn num_batch(&self) -> usize;
     /// Initialize a one-batch state on CPU.

@@ -13,7 +13,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{Build, EmbedDevice, ModelBuilder, ModelInfo, ModelRuntime, Quant, State as _},
+    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, ModelRuntime, Quant, State as _},
     Job, JobBuilder,
 };
 use crate::{
@@ -131,6 +131,12 @@ impl State {
             backed.push(tensor.back().await);
         }
         TensorCpu::stack(backed)
+    }
+}
+
+impl AsAny for State {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
