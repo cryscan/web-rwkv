@@ -67,7 +67,7 @@ pub trait AsAny {
     fn as_any(&self) -> &dyn Any;
 }
 
-pub trait State: AsAny {
+pub trait State {
     /// Batch number of this state.
     fn num_batch(&self) -> usize;
     /// Initialize a one-batch state on CPU.
@@ -86,7 +86,7 @@ pub trait State: AsAny {
 
 pub trait ModelRuntime {
     fn info(&self) -> ModelInfo;
-    fn state(&self) -> impl State + Send + Sync + 'static;
+    fn state(&self) -> impl State + AsAny + Send + Sync + 'static;
     fn model(&self) -> impl Serialize + Send + Sync + 'static;
 }
 

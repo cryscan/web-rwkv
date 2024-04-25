@@ -450,7 +450,7 @@ impl<F: Float> ModelRuntime for ModelJobBuilder<F> {
     }
 
     #[inline]
-    fn state(&self) -> impl super::model::State + 'static {
+    fn state(&self) -> impl super::model::State + AsAny + 'static {
         self.state.clone()
     }
 
