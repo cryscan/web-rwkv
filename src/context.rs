@@ -288,6 +288,7 @@ impl ContextInternal {
                     layout: layout.as_ref(),
                     module,
                     entry_point,
+                    compilation_options: Default::default(),
                 });
             let layout = pipeline.get_bind_group_layout(0);
             CachedPipeline { pipeline, layout }
