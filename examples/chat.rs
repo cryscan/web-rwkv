@@ -16,7 +16,7 @@ use memmap2::Mmap;
 use safetensors::SafeTensors;
 use serde::Deserialize;
 use web_rwkv::{
-    context::{Context, ContextBuilder, Instance},
+    context::{Context, ContextBuilder, InstanceExt},
     model::{
         loader::{Loader, Lora},
         v4, v5, v6, Build, BuildFuture, ContextAutoLimits, Model, ModelBuilder, ModelInfo,
@@ -76,7 +76,7 @@ impl Sampler {
 }
 
 async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
-    let instance = Instance::new();
+    let instance = wgpu::Instance::default();
     #[cfg(not(debug_assertions))]
     let adapter = if _auto {
         instance
@@ -84,18 +84,18 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
             .await?
     } else {
         let backends = wgpu::Backends::all();
-        let adapters = instance
-            .enumerate_adapters(backends)
-            .into_iter()
+        let adapters = instance.enumerate_adapters(backends);
+        let names = adapters
+            .iter()
             .map(|adapter| adapter.get_info())
             .map(|info| format!("{} ({:?})", info.name, info.backend))
             .collect_vec();
         let selection = Select::with_theme(&ColorfulTheme::default())
             .with_prompt("Please select an adapter")
             .default(0)
-            .items(&adapters)
+            .items(&names)
             .interact()?;
-        instance.select_adapter(backends, selection)?
+        adapters.into_iter().nth(selection).unwrap()
     };
     #[cfg(debug_assertions)]
     let adapter = instance
@@ -408,7 +408,7 @@ struct Cli {
     embed_device: Option<EmbedDevice>,
     #[arg(short, long, action)]
     turbo: bool,
-    #[arg(long, default_value_t = 32)]
+    #[arg(long, default_value_t = 128)]
     token_chunk_size: usize,
     #[command(flatten)]
     sampler: Sampler,

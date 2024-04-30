@@ -2217,12 +2217,12 @@ mod tests {
     use anyhow::Result;
     use half::f16;
     use itertools::Itertools;
-    use wgpu::PowerPreference;
+    use wgpu::{Instance, PowerPreference};
     // use wgpu_profiler::GpuProfiler;
 
     use super::{TensorOp, TensorPass};
     use crate::{
-        context::{Context, ContextBuilder, Instance},
+        context::{Context, ContextBuilder, InstanceExt},
         tensor::{ops::Activation, Shape, TensorGpu},
     };
 
@@ -2235,7 +2235,7 @@ mod tests {
     }
 
     async fn create_context() -> Result<Context> {
-        let instance = Instance::new();
+        let instance = Instance::default();
         let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
         let context = ContextBuilder::new(adapter)
             // .features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)

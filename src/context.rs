@@ -1,5 +1,6 @@
 use std::{borrow::Cow, sync::Arc};
 
+use futures::Future;
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
@@ -7,7 +8,7 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
     BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
-    DeviceDescriptor, Features, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
+    DeviceDescriptor, Features, Instance, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
     RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
@@ -17,34 +18,15 @@ use crate::tensor::{
     View,
 };
 
-#[derive(Deref)]
-pub struct Instance(wgpu::Instance);
-
-impl Default for Instance {
-    fn default() -> Self {
-        Self::new()
-    }
+pub trait InstanceExt {
+    fn adapter(
+        &self,
+        power_preference: PowerPreference,
+    ) -> impl Future<Output = Result<Adapter, CreateEnvironmentError>> + Send;
 }
 
-impl Instance {
-    pub fn new() -> Self {
-        let instance = wgpu::Instance::new(Default::default());
-        Self(instance)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn select_adapter(
-        &self,
-        backends: wgpu::Backends,
-        selection: usize,
-    ) -> Result<Adapter, CreateEnvironmentError> {
-        self.enumerate_adapters(backends)
-            .into_iter()
-            .nth(selection)
-            .ok_or(CreateEnvironmentError::RequestAdapterFailed)
-    }
-
-    pub async fn adapter(
+impl InstanceExt for Instance {
+    async fn adapter(
         &self,
         power_preference: PowerPreference,
     ) -> Result<Adapter, CreateEnvironmentError> {
@@ -113,9 +95,12 @@ pub enum CreateEnvironmentError {
 
 impl<'a> ContextBuilder {
     pub fn new(adapter: Adapter) -> Self {
+        let features = Features::empty();
+        #[cfg(feature = "subgroup-ops")]
+        let features = features | Features::SUBGROUP;
         Self {
             adapter,
-            features: Features::empty(),
+            features,
             limits: Default::default(),
         }
     }
