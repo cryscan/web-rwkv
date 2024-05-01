@@ -1100,7 +1100,6 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
 /// Read the pre-trained state from the file.
 pub async fn read_state<R: Reader>(context: &Context, model: R) -> Result<TensorCpu<f32>> {
     let info = super::loader::Loader::info(&model)?;
-    let head_size = info.num_emb / info.num_head;
 
     let data: TensorGpu<f32, ReadWrite> =
         context.zeros([info.num_emb, info.num_emb + 2, info.num_layer, 1]);
@@ -1114,22 +1113,16 @@ pub async fn read_state<R: Reader>(context: &Context, model: R) -> Result<Tensor
     let mut encoder = context.device.create_command_encoder(&Default::default());
 
     for layer in 0..info.num_layer {
-        let matrix = loader
+        let state = loader
             .load_matrix_f16(format!("blocks.{layer}.att.time_state"))
             .await?;
-        let state: TensorGpu<f16, ReadWrite> =
-            context.tensor_init([info.num_emb, info.num_emb, head_size, 1]);
-        let ops = vec![
-            TensorOp::transpose(matrix.view(.., .., .., ..)?, state.view(.., .., .., ..)?)?,
-            TensorOp::blit(
-                state.view(.., .., .., ..)?,
-                data.view(.., 1..info.num_emb + 1, layer, ..)?,
-            )?,
-        ];
-        let ops = TensorOp::List(ops);
+        let op = TensorOp::blit(
+            state.view(.., .., .., ..)?,
+            data.view(.., 1..info.num_emb + 1, layer, ..)?,
+        )?;
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
+        pass.execute_tensor_op(&op);
     }
 
     context.queue.submit(Some(encoder.finish()));
