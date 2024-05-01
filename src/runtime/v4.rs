@@ -13,7 +13,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, ModelRuntime, Quant, State as _},
+    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
     Job, JobBuilder,
 };
 use crate::{
@@ -391,14 +391,14 @@ pub struct Frame<F: Float> {
 pub type HookFn<F> = Box<dyn Fn(Frame<F>) -> Result<TensorOp, TensorError> + Send + Sync>;
 pub type HookMap<F> = HashMap<Hook, HookFn<F>>;
 
-pub struct ModelJobBuilder<F: Float> {
+pub struct ModelRuntime<F: Float> {
     model: Model,
     state: State,
     hooks: Arc<HookMap<F>>,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> ModelRuntime for ModelJobBuilder<F> {
+impl<F: Float> super::model::ModelRuntime for ModelRuntime<F> {
     #[inline]
     fn info(&self) -> ModelInfo {
         self.model.info.clone()
@@ -415,7 +415,7 @@ impl<F: Float> ModelRuntime for ModelJobBuilder<F> {
     }
 }
 
-impl<F: Float> ModelJobBuilder<F> {
+impl<F: Float> ModelRuntime<F> {
     pub fn new(model: Model, num_batch: usize) -> Self {
         let context = model.context.clone();
         let info = model.info.clone();
@@ -472,7 +472,7 @@ fn hook_op<F: Float>(
     }
 }
 
-impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
+impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
     type Info = InferInfo;
 
     async fn build(&self, seed: Self::Info) -> Result<InferJob<F>> {

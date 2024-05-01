@@ -195,17 +195,17 @@ async fn main() -> Result<()> {
     let runtime = match info.version {
         ModelVersion::V4 => {
             let model = Build::<v4::Model>::build(builder).await?;
-            let builder = v4::ModelJobBuilder::<f16>::new(model, cli.batch);
+            let builder = v4::ModelRuntime::<f16>::new(model, cli.batch);
             JobRuntime::new(builder).await
         }
         ModelVersion::V5 => {
             let model = Build::<v5::Model>::build(builder).await?;
-            let builder = v5::ModelJobBuilder::<f16>::new(model, cli.batch);
+            let builder = v5::ModelRuntime::<f16>::new(model, cli.batch);
             JobRuntime::new(builder).await
         }
         ModelVersion::V6 => {
             let model = Build::<v6::Model>::build(builder).await?;
-            let builder = v6::ModelJobBuilder::<f16>::new(model, cli.batch);
+            let builder = v6::ModelRuntime::<f16>::new(model, cli.batch);
             JobRuntime::new(builder).await
         }
     };

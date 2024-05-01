@@ -13,7 +13,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, ModelRuntime, Quant, State as _},
+    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
     Job, JobBuilder,
 };
 use crate::{
@@ -435,14 +435,14 @@ pub struct Frame<F: Float> {
 pub type HookFn<F> = Box<dyn Fn(Frame<F>) -> Result<TensorOp, TensorError> + Send + Sync>;
 pub type HookMap<F> = HashMap<Hook, HookFn<F>>;
 
-pub struct ModelJobBuilder<F: Float> {
+pub struct ModelRuntime<F: Float> {
     model: Model,
     state: State,
     hooks: Arc<HookMap<F>>,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> ModelJobBuilder<F> {
+impl<F: Float> ModelRuntime<F> {
     pub fn new(model: Model, num_batch: usize) -> Self {
         let context = model.context.clone();
         let info = model.info.clone();
@@ -472,7 +472,7 @@ impl<F: Float> ModelJobBuilder<F> {
     }
 }
 
-impl<F: Float> ModelRuntime for ModelJobBuilder<F> {
+impl<F: Float> super::model::ModelRuntime for ModelRuntime<F> {
     #[inline]
     fn info(&self) -> ModelInfo {
         self.model.info.clone()
@@ -504,7 +504,7 @@ fn hook_op<F: Float>(
     }
 }
 
-impl<F: Float> JobBuilder<InferJob<F>> for ModelJobBuilder<F> {
+impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
     type Info = InferInfo;
 
     async fn build(&self, seed: Self::Info) -> Result<InferJob<F>> {
@@ -1207,4 +1207,43 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
         };
         Ok(model)
     }
+}
+
+/// Read the pre-trained state from the file.
+pub async fn read_state<R: Reader>(context: &Context, model: R) -> Result<TensorCpu<f32>> {
+    let info = super::loader::Loader::info(&model)?;
+    let head_size = info.num_emb / info.num_head;
+
+    let data: TensorGpu<f32, ReadWrite> =
+        context.zeros([info.num_emb, info.num_emb + 2, info.num_layer, 1]);
+
+    let loader = Loader {
+        context: context.clone(),
+        model,
+        lora: vec![],
+    };
+
+    let mut encoder = context.device.create_command_encoder(&Default::default());
+
+    for layer in 0..info.num_layer {
+        let matrix = loader
+            .load_matrix_f16(format!("blocks.{layer}.att.time_state"))
+            .await?;
+        let state: TensorGpu<f16, ReadWrite> =
+            context.tensor_init([info.num_emb, info.num_emb, head_size, 1]);
+        let ops = vec![
+            TensorOp::transpose(matrix.view(.., .., .., ..)?, state.view(.., .., .., ..)?)?,
+            TensorOp::blit(
+                state.view(.., .., .., ..)?,
+                data.view(.., 1..info.num_emb + 1, layer, ..)?,
+            )?,
+        ];
+        let ops = TensorOp::List(ops);
+
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.execute_tensor_op(&ops);
+    }
+
+    context.queue.submit(Some(encoder.finish()));
+    Ok(data.back().await)
 }
