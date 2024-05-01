@@ -467,6 +467,7 @@ impl TensorOp {
         };
 
         let context = output.context();
+        #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "matmul_vec_fp16",
             include_str!("../shaders/matmul_vec_fp16.wgsl"),
@@ -474,6 +475,19 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .custom(active, Some("ACT")),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "matmul_vec_fp16",
+            include_str!("../shaders/subgroup/matmul_vec_fp16.wgsl"),
+            "matmul",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),

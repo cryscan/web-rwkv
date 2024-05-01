@@ -45,6 +45,7 @@ fn softmax(
         _max_4 = max(_max_4, value);
     }
     _max_4 = subgroupMax(_max_4);
+
     if subgroup_invocation_id == 0u {
         sketch[subgroup_id] = _max_4;
     }
@@ -83,6 +84,7 @@ fn softmax(
         _sum_4 += exp(value - _maximum);
     }
     _sum_4 = subgroupAdd(_sum_4);
+
     if subgroup_invocation_id == 0u {
         sketch[subgroup_id] = _sum_4;
     }
