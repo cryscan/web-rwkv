@@ -172,6 +172,14 @@ impl Macros {
         }
         self
     }
+
+    /// Add a define when `condition` is true.
+    pub fn define(mut self, name: impl Into<String>, condition: bool) -> Self {
+        if condition {
+            self.push((name.into(), Default::default()))
+        }
+        self
+    }
 }
 
 pub enum TensorOp {
@@ -203,12 +211,24 @@ impl TensorOp {
 
         let shape = x.shape();
         let context = x.context();
+        #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "softmax",
             include_str!("../shaders/softmax.wgsl"),
             "softmax",
             None,
             Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "softmax",
+            include_str!("../shaders/subgroup/softmax.wgsl"),
+            "softmax",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -455,6 +475,7 @@ impl TensorOp {
         };
 
         let context = output.context();
+        #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "matmul_vec_fp16",
             include_str!("../shaders/matmul_vec_fp16.wgsl"),
@@ -462,6 +483,27 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .custom(active, Some("ACT")),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "matmul_vec_fp16",
+            include_str!("../shaders/subgroup/matmul_vec_fp16.wgsl"),
+            "matmul",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .define(
+                    format!(
+                        "SUBGROUP_SIZE_{}_{}",
+                        context.min_subgroup_size(),
+                        context.max_subgroup_size()
+                    ),
+                    true,
+                )
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),
@@ -529,6 +571,7 @@ impl TensorOp {
         };
 
         let context = matrix.context();
+        #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "matmul_vec_int8",
             include_str!("../shaders/matmul_vec_int8.wgsl"),
@@ -536,6 +579,27 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .custom(active, Some("ACT")),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "matmul_vec_int8",
+            include_str!("../shaders/matmul_vec_int8.wgsl"),
+            "matmul",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .define(
+                    format!(
+                        "SUBGROUP_SIZE_{}_{}",
+                        context.min_subgroup_size(),
+                        context.max_subgroup_size()
+                    ),
+                    true,
+                )
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -608,6 +672,7 @@ impl TensorOp {
         };
 
         let context = matrix.context();
+        #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "matmul_vec_nf4",
             include_str!("../shaders/matmul_vec_nf4.wgsl"),
@@ -615,6 +680,27 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .custom(active, Some("ACT")),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "matmul_vec_nf4",
+            include_str!("../shaders/matmul_vec_nf4.wgsl"),
+            "matmul",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .define(
+                    format!(
+                        "SUBGROUP_SIZE_{}_{}",
+                        context.min_subgroup_size(),
+                        context.max_subgroup_size()
+                    ),
+                    true,
+                )
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -2217,12 +2303,12 @@ mod tests {
     use anyhow::Result;
     use half::f16;
     use itertools::Itertools;
-    use wgpu::PowerPreference;
+    use wgpu::{Instance, PowerPreference};
     // use wgpu_profiler::GpuProfiler;
 
     use super::{TensorOp, TensorPass};
     use crate::{
-        context::{Context, ContextBuilder, Instance},
+        context::{Context, ContextBuilder, InstanceExt},
         tensor::{ops::Activation, Shape, TensorGpu},
     };
 
@@ -2235,7 +2321,7 @@ mod tests {
     }
 
     async fn create_context() -> Result<Context> {
-        let instance = Instance::new();
+        let instance = Instance::default();
         let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
         let context = ContextBuilder::new(adapter)
             // .features(Features::TIMESTAMP_QUERY | Features::TIMESTAMP_QUERY_INSIDE_PASSES)

@@ -59,10 +59,11 @@ ratatui = { version = "0.26", features = ["all-widgets"] }
 simple_logger = { version = "4.2", features = ["stderr"] }
 
 [features]
-default = ["runtime", "tokio-multi-thread"]
+default = ["runtime", "subgroup-ops", "tokio-multi-thread"]
 
 async-build = []
 runtime = []
+subgroup-ops = []
 tokio-multi-thread = ["tokio/rt-multi-thread"]
 
 [[example]]

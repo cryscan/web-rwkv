@@ -16,7 +16,7 @@ use memmap2::Mmap;
 use safetensors::SafeTensors;
 use serde::{de::DeserializeSeed, Serialize};
 use web_rwkv::{
-    context::{Context, ContextBuilder, Instance},
+    context::{Context, ContextBuilder, InstanceExt},
     model::{
         loader::{Loader, Lora},
         v4, v5, v6, Build, BuildFuture, ContextAutoLimits, Model, ModelBuilder, ModelInfo,
@@ -36,7 +36,7 @@ fn sample(probs: &[f32], _top_p: f32) -> u16 {
 }
 
 async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
-    let instance = Instance::new();
+    let instance = wgpu::Instance::default();
     #[cfg(not(debug_assertions))]
     let adapter = if _auto {
         instance
@@ -44,18 +44,18 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
             .await?
     } else {
         let backends = wgpu::Backends::all();
-        let adapters = instance
-            .enumerate_adapters(backends)
-            .into_iter()
+        let adapters = instance.enumerate_adapters(backends);
+        let names = adapters
+            .iter()
             .map(|adapter| adapter.get_info())
             .map(|info| format!("{} ({:?})", info.name, info.backend))
             .collect_vec();
         let selection = Select::with_theme(&ColorfulTheme::default())
             .with_prompt("Please select an adapter")
             .default(0)
-            .items(&adapters)
+            .items(&names)
             .interact()?;
-        instance.select_adapter(backends, selection)?
+        adapters.into_iter().nth(selection).unwrap()
     };
     #[cfg(debug_assertions)]
     let adapter = instance

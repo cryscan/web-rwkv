@@ -495,9 +495,10 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         });
         let data = receiver.blocking_recv().unwrap();
         let data = unsafe {
-            let data = Box::leak(data);
             let len = data.len() / std::mem::size_of::<T>();
-            let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
+            let data = Box::leak(data);
+            let data = data.as_mut_ptr() as *mut T;
+            let slice = core::slice::from_raw_parts_mut(data, len);
             Box::from_raw(slice)
         };
         let data = data.into_vec().into();
@@ -533,9 +534,10 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         });
         let data = receiver.await.unwrap();
         let data = unsafe {
-            let data = Box::leak(data);
             let len = data.len() / std::mem::size_of::<T>();
-            let slice = core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut T, len);
+            let data = Box::leak(data);
+            let data = data.as_mut_ptr() as *mut T;
+            let slice = core::slice::from_raw_parts_mut(data, len);
             Box::from_raw(slice)
         };
         let data = data.into_vec().into();
@@ -618,18 +620,21 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
 impl<T: Scalar> From<TensorCpu<T>> for Vec<T> {
     #[inline]
-    fn from(mut value: TensorCpu<T>) -> Self {
-        match Arc::get_mut(&mut value.data) {
-            Some(data) => {
-                // SAFETY: if `data` is unique, it stays unique in the scope of this function since we own the `Arc`.
-                unsafe {
-                    let len = data.len();
-                    let ptr = Arc::into_raw(value.data) as *mut T;
-                    Vec::from_raw_parts(ptr, len, len)
-                }
-            }
-            None => value.data.to_vec(),
-        }
+    fn from(value: TensorCpu<T>) -> Self {
+        // match Arc::get_mut(&mut value.data) {
+        //     Some(data) => {
+        //         // SAFETY: if `data` is unique, it stays unique in the scope of this function since we own the `Arc`.
+        //         unsafe {
+        //             let len = data.len();
+        //             let data = Arc::into_raw(value.data) as *mut T;
+        //             let slice = core::slice::from_raw_parts_mut(data, len);
+        //             let boxed = Box::from_raw(slice);
+        //             boxed.into_vec()
+        //         }
+        //     }
+        //     None => value.data.to_vec(),
+        // }
+        value.to_vec()
     }
 }
 

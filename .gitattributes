@@ -20,5 +20,5 @@
 *.wav binary
 *.ogg binary
 
-*.safetensors filter=lfs diff=lfs merge=lfs -text
-*.st filter=lfs diff=lfs merge=lfs -text
+*.safetensors binary
+*.st binary
