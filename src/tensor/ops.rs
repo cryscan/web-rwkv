@@ -172,6 +172,14 @@ impl Macros {
         }
         self
     }
+
+    /// Add a define when `condition` is true.
+    pub fn define(mut self, name: impl Into<String>, condition: bool) -> Self {
+        if condition {
+            self.push((name.into(), Default::default()))
+        }
+        self
+    }
 }
 
 pub enum TensorOp {
@@ -487,7 +495,9 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .u32("SUBGROUP_SIZE", context.max_subgroup_size())
+                .define("SUBGROUP_SIZE_32", context.max_subgroup_size() == 32)
+                .define("SUBGROUP_SIZE_64", context.max_subgroup_size() == 64)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),
@@ -562,6 +572,9 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("SUBGROUP_SIZE", context.max_subgroup_size())
+                .define("SUBGROUP_SIZE_32", context.max_subgroup_size() == 32)
+                .define("SUBGROUP_SIZE_64", context.max_subgroup_size() == 64)
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -641,6 +654,9 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("SUBGROUP_SIZE", context.max_subgroup_size())
+                .define("SUBGROUP_SIZE_32", context.max_subgroup_size() == 32)
+                .define("SUBGROUP_SIZE_64", context.max_subgroup_size() == 64)
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))

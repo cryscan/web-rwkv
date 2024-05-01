@@ -24,7 +24,7 @@ struct View {
 #endif
 
 const NF4_BLOCK_STEP: u32 = NF4_BLOCK_SIZE / 8u;
-const NUM_SUBGROUPS: u32 = BLOCK_SIZE / MIN_SUBGROUP_SIZE;
+const NUM_SUBGROUPS: u32 = BLOCK_SIZE / SUBGROUP_SIZE;
 
 var<workgroup> sketch: array<vec4<f32>, NUM_SUBGROUPS>;
 var<workgroup> q: array<vec4<f32>, 4u>;
@@ -141,6 +141,9 @@ fn matmul(
         local_sum = fma(m * x[1], a, local_sum);
 #endif
     }
+    // for (var step = subgroup_size >> 1u; step > 0u; step >>= 1u) {
+    //     local_sum += subgroupShuffleDown(local_sum, step);
+    // }
     local_sum = subgroupAdd(local_sum);
 
     if subgroup_invocation_id == 0u {
@@ -148,12 +151,21 @@ fn matmul(
     }
     workgroupBarrier();
 
+#ifdef SUBGROUP_SIZE_32
+    reduce_sum(index, 2u);
+    reduce_sum(index, 1u);
+#else
+#ifdef SUBGROUP_SIZE_64
+    reduce_sum(index, 1u);
+#else
     for (var step = num_subgroups >> 1u; step > 0u; step >>= 1u) {
         if index < step {
             sketch[index] += sketch[index + step];
         }
         workgroupBarrier();
     }
+#endif
+#endif
 
     if subgroup_invocation_id == 0u {
         local_sum = sketch[0];

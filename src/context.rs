@@ -354,4 +354,9 @@ impl ContextInternal {
     pub fn min_subgroup_size(&self) -> u32 {
         self.adapter.limits().min_subgroup_size
     }
+
+    #[cfg(feature = "subgroup-ops")]
+    pub fn max_subgroup_size(&self) -> u32 {
+        self.adapter.limits().max_subgroup_size
+    }
 }

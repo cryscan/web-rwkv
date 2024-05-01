@@ -23,7 +23,7 @@ struct View {
 #endif
 
 const INT8_BLOCK_STEP: u32 = INT8_BLOCK_SIZE / 4u;
-const NUM_SUBGROUPS: u32 = BLOCK_SIZE / MIN_SUBGROUP_SIZE;
+const NUM_SUBGROUPS: u32 = BLOCK_SIZE / SUBGROUP_SIZE;
 
 var<workgroup> sketch: array<vec4<f32>, NUM_SUBGROUPS>;
 
@@ -44,6 +44,13 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 fn unpack_minmax(index: u32) -> vec2<f32> {
     let i = index / INT8_BLOCK_STEP;
     return unpack2x16float(minmax[i]);
+}
+
+fn reduce_sum(index: u32, stride: u32) {
+    if index < stride {
+        sketch[index] += sketch[index + stride];
+    }
+    workgroupBarrier();
 }
 
 fn squared_relu(x: vec4<f32>) -> vec4<f32> {
@@ -89,9 +96,9 @@ fn matmul(
         b = unpack_minmax(ci); m[3] = fma(unpack4x8unorm(matrix[ci]), vec4<f32>(b[1] - b[0]), vec4<f32>(b[0]));
         local_sum += transpose(m) * x;
     }
-    sketch[index] = local_sum;
-    workgroupBarrier();
-
+    // for (var step = subgroup_size >> 1u; step > 0u; step >>= 1u) {
+    //     local_sum += subgroupShuffleDown(local_sum, step);
+    // }
     local_sum = subgroupAdd(local_sum);
 
     if subgroup_invocation_id == 0u {
@@ -99,12 +106,21 @@ fn matmul(
     }
     workgroupBarrier();
 
+#ifdef SUBGROUP_SIZE_32
+    reduce_sum(index, 2u);
+    reduce_sum(index, 1u);
+#else
+#ifdef SUBGROUP_SIZE_64
+    reduce_sum(index, 1u);
+#else
     for (var step = num_subgroups >> 1u; step > 0u; step >>= 1u) {
         if index < step {
             sketch[index] += sketch[index + step];
         }
         workgroupBarrier();
     }
+#endif
+#endif
 
     if subgroup_invocation_id == 0u {
         local_sum = sketch[0];
