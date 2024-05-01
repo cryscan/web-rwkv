@@ -203,12 +203,24 @@ impl TensorOp {
 
         let shape = x.shape();
         let context = x.context();
+        #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "softmax",
             include_str!("../shaders/softmax.wgsl"),
             "softmax",
             None,
             Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "softmax",
+            include_str!("../shaders/subgroup/softmax.wgsl"),
+            "softmax",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,

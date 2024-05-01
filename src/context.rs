@@ -349,4 +349,9 @@ impl ContextInternal {
         buffer.unmap();
         data
     }
+
+    #[cfg(feature = "subgroup-ops")]
+    pub fn min_subgroup_size(&self) -> u32 {
+        self.adapter.limits().min_subgroup_size
+    }
 }
