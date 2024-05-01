@@ -23,7 +23,7 @@ struct View {
 #endif
 
 const INT8_BLOCK_STEP: u32 = INT8_BLOCK_SIZE / 4u;
-const NUM_SUBGROUPS: u32 = BLOCK_SIZE / SUBGROUP_SIZE;
+const NUM_SUBGROUPS: u32 = BLOCK_SIZE / MIN_SUBGROUP_SIZE;
 
 var<workgroup> sketch: array<vec4<f32>, NUM_SUBGROUPS>;
 
@@ -106,11 +106,15 @@ fn matmul(
     }
     workgroupBarrier();
 
-#ifdef SUBGROUP_SIZE_32
+#ifdef SUBGROUP_SIZE_32_32
     reduce_sum(index, 2u);
     reduce_sum(index, 1u);
 #else
-#ifdef SUBGROUP_SIZE_64
+#ifdef SUBGROUP_SIZE_32_64
+    if subgroup_size == 32u { reduce_sum(index, 2u); }
+    reduce_sum(index, 1u);
+#else
+#ifdef SUBGROUP_SIZE_64_64
     reduce_sum(index, 1u);
 #else
     for (var step = num_subgroups >> 1u; step > 0u; step >>= 1u) {
@@ -119,6 +123,7 @@ fn matmul(
         }
         workgroupBarrier();
     }
+#endif
 #endif
 #endif
 

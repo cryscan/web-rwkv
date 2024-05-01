@@ -495,9 +495,15 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .u32("SUBGROUP_SIZE", context.max_subgroup_size())
-                .define("SUBGROUP_SIZE_32", context.max_subgroup_size() == 32)
-                .define("SUBGROUP_SIZE_64", context.max_subgroup_size() == 64)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .define(
+                    format!(
+                        "SUBGROUP_SIZE_{}_{}",
+                        context.min_subgroup_size(),
+                        context.max_subgroup_size()
+                    ),
+                    true,
+                )
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),
@@ -565,6 +571,7 @@ impl TensorOp {
         };
 
         let context = matrix.context();
+        #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "matmul_vec_int8",
             include_str!("../shaders/matmul_vec_int8.wgsl"),
@@ -572,9 +579,27 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .u32("SUBGROUP_SIZE", context.max_subgroup_size())
-                .define("SUBGROUP_SIZE_32", context.max_subgroup_size() == 32)
-                .define("SUBGROUP_SIZE_64", context.max_subgroup_size() == 64)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .custom(active, Some("ACT")),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "matmul_vec_int8",
+            include_str!("../shaders/matmul_vec_int8.wgsl"),
+            "matmul",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .define(
+                    format!(
+                        "SUBGROUP_SIZE_{}_{}",
+                        context.min_subgroup_size(),
+                        context.max_subgroup_size()
+                    ),
+                    true,
+                )
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -647,6 +672,7 @@ impl TensorOp {
         };
 
         let context = matrix.context();
+        #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "matmul_vec_nf4",
             include_str!("../shaders/matmul_vec_nf4.wgsl"),
@@ -654,9 +680,27 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .u32("SUBGROUP_SIZE", context.max_subgroup_size())
-                .define("SUBGROUP_SIZE_32", context.max_subgroup_size() == 32)
-                .define("SUBGROUP_SIZE_64", context.max_subgroup_size() == 64)
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
+                .custom(active, Some("ACT")),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "matmul_vec_nf4",
+            include_str!("../shaders/matmul_vec_nf4.wgsl"),
+            "matmul",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
+                .define(
+                    format!(
+                        "SUBGROUP_SIZE_{}_{}",
+                        context.min_subgroup_size(),
+                        context.max_subgroup_size()
+                    ),
+                    true,
+                )
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
