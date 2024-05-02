@@ -1099,6 +1099,9 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
 
 /// Read the pre-trained state from the file.
 pub async fn read_state<R: Reader>(context: &Context, model: R) -> Result<TensorCpu<f32>> {
+    use crate::tensor::TensorInitContext;
+    use TensorDimension::{Auto, Dimension};
+
     let info = super::loader::Loader::info(&model)?;
     let head_size = info.num_emb / info.num_head;
 
@@ -1113,16 +1116,27 @@ pub async fn read_state<R: Reader>(context: &Context, model: R) -> Result<Tensor
     let mut encoder = context.device.create_command_encoder(&Default::default());
 
     for layer in 0..info.num_layer {
-        let state = loader
+        let matrix = loader
             .load_matrix_f16(format!("blocks.{layer}.att.time_state"))
             .await?;
-        let op = TensorOp::blit(
-            state.view(.., .., .., ..)?,
-            data.view(.., 1..head_size + 1, layer, ..)?,
+        let state = TensorGpu::init(context, [head_size, info.num_head, head_size, 1]);
+        let reshaped: TensorGpu<f16, _> = state.reshape(
+            Dimension(info.num_emb),
+            Dimension(head_size),
+            Dimension(1),
+            Auto,
         )?;
+        let ops = vec![
+            TensorOp::transpose(matrix.view(.., .., .., ..)?, state.view(.., .., .., ..)?)?,
+            TensorOp::blit(
+                reshaped.view(.., .., .., ..)?,
+                data.view(.., 1..head_size + 1, layer, ..)?,
+            )?,
+        ];
+        let ops = TensorOp::List(ops);
 
         let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&op);
+        pass.execute_tensor_op(&ops);
     }
 
     context.queue.submit(Some(encoder.finish()));
