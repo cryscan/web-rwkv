@@ -56,7 +56,7 @@ crossterm = "0.27"
 dialoguer = "0.11.0"
 pollster = "0.3.0"
 ratatui = { version = "0.26", features = ["all-widgets"] }
-simple_logger = { version = "4.2", features = ["stderr"] }
+simple_logger = { version = "5.0.0", features = ["stderr"] }
 
 [features]
 default = ["runtime", "subgroup-ops", "tokio-multi-thread"]
@@ -72,4 +72,8 @@ required-features = ["runtime"]
 
 [[example]]
 name = "rt-chat"
+required-features = ["runtime"]
+
+[[example]]
+name = "rt-batch"
 required-features = ["runtime"]
