@@ -95,9 +95,6 @@ fn softmax(
     }
     workgroupBarrier();
 
-    if subgroup_invocation_id == 0u { _maximum = maximum; }
-    _maximum = subgroupBroadcast(_maximum, 0u);
-
     var _sum_4: vec4<f32>;
     for (var i = index; i < stride; i += BLOCK_SIZE) {
 #ifdef FP16
@@ -105,7 +102,7 @@ fn softmax(
 #else
         let value = x[bb + i];
 #endif
-        _sum_4 += exp(value - _maximum);
+        _sum_4 += exp(value - maximum);
     }
     _sum_4 = subgroupAdd(_sum_4);
 
@@ -143,10 +140,10 @@ fn softmax(
     for (var i = index; i < stride; i += BLOCK_SIZE) {
 #ifdef FP16
         let value = unpack4x16float(x[bb + i]);
-        x[bb + i] = pack4x16float(exp(value - _maximum) / sum);
+        x[bb + i] = pack4x16float(exp(value - maximum) / sum);
 #else
         let value = x[bb + i];
-        x[bb + i] = exp(value - _maximum) / sum;
+        x[bb + i] = exp(value - maximum) / sum;
 #endif
     }
 }
