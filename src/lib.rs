@@ -29,6 +29,10 @@
 //! - State caching or management system.
 //! - Python (or any other languages) binding.
 //! - Runtime. Without a runtime makes it easy to be integrated into any applications from servers, front-end apps (yes, `web-rwkv` can run in browser) to game engines.
+//!
+//! ## Crate Features
+//!
+#![doc = document_features::document_features!()]
 
 pub mod context;
 pub mod model;

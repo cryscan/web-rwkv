@@ -11,13 +11,12 @@ name = "web-rwkv"
 repository = "https://github.com/cryscan/web-rwkv"
 version = "0.8.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 ahash = "0.8"
 anyhow = "1.0"
 bytemuck = { version = "1.13", features = ["extern_crate_alloc"] }
 derive-getters = "0.3"
+document-features = "0.2.8"
 flume = { version = "0.11.0" }
 futures = "0.3"
 gpp = "0.6.2"
@@ -61,9 +60,13 @@ simple_logger = { version = "5.0.0", features = ["stderr"] }
 [features]
 default = ["runtime", "subgroup-ops", "tokio-multi-thread"]
 
+## Enables async GPU command building. Can be faster on some Xeon cpus but slower on others.
 async-build = []
+## Enables `runtime` API, which essentially doubles the inference speed comparing to the old API.
 runtime = []
+## Enables subgroup operations in the kernels. Accelerates the inference on some device.
 subgroup-ops = []
+## Enables tokio's multi-threaded runtime. Doesn't work on web platforms.
 tokio-multi-thread = ["tokio/rt-multi-thread"]
 
 [[example]]
