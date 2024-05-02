@@ -94,9 +94,7 @@ fn matmul(
     // }
     local_sum = subgroupAdd(local_sum);
 
-    if subgroup_invocation_id == 0u {
-        sketch[subgroup_id] = local_sum;
-    }
+    if subgroup_invocation_id == 0u { sketch[subgroup_id] = local_sum; }
     workgroupBarrier();
 
 #ifdef SUBGROUP_SIZE_32_32
@@ -120,14 +118,9 @@ fn matmul(
 #endif
 #endif
 
-    if subgroup_invocation_id == 0u {
-        local_sum = sketch[0];
-    }
-    local_sum = subgroupBroadcast(local_sum, 0u);
-
     if index == 0u {
         let btc = compute_index(destination, batch, token, channel);
-        var out = local_sum;
+        var out = sketch[0];
 #ifdef ACT_SQUARED_RELU
         out = squared_relu(out);
 #endif

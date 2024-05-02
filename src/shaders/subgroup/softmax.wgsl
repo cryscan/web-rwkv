@@ -20,6 +20,20 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
+fn reduce_max(index: u32, stride: u32) {
+    if index < stride {
+        sketch[index] = max(sketch[index], sketch[index + stride]);
+    }
+    workgroupBarrier();
+}
+
+fn reduce_sum(index: u32, stride: u32) {
+    if index < stride {
+        sketch[index] += sketch[index + stride];
+    }
+    workgroupBarrier();
+}
+
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn softmax(
     @builtin(global_invocation_id) invocation_id: vec3<u32>,
@@ -46,17 +60,29 @@ fn softmax(
     }
     _max_4 = subgroupMax(_max_4);
 
-    if subgroup_invocation_id == 0u {
-        sketch[subgroup_id] = _max_4;
-    }
+    if subgroup_invocation_id == 0u { sketch[subgroup_id] = _max_4; }
     workgroupBarrier();
 
+#ifdef SUBGROUP_SIZE_32_32
+    reduce_max(index, 2u);
+    reduce_max(index, 1u);
+#else
+#ifdef SUBGROUP_SIZE_32_64
+    if subgroup_size == 32u { reduce_max(index, 2u); }
+    reduce_max(index, 1u);
+#else
+#ifdef SUBGROUP_SIZE_64_64
+    reduce_max(index, 1u);
+#else
     for (var step = num_subgroups >> 1u; step > 0u; step >>= 1u) {
         if index < step {
             sketch[index] = max(sketch[index], sketch[index + step]);
         }
         workgroupBarrier();
     }
+#endif
+#endif
+#endif
 
     var _maximum: f32;
     if index == 0u {
@@ -69,9 +95,7 @@ fn softmax(
     }
     workgroupBarrier();
 
-    if subgroup_invocation_id == 0u {
-        _maximum = maximum;
-    }
+    if subgroup_invocation_id == 0u { _maximum = maximum; }
     _maximum = subgroupBroadcast(_maximum, 0u);
 
     var _sum_4: vec4<f32>;
@@ -85,17 +109,29 @@ fn softmax(
     }
     _sum_4 = subgroupAdd(_sum_4);
 
-    if subgroup_invocation_id == 0u {
-        sketch[subgroup_id] = _sum_4;
-    }
+    if subgroup_invocation_id == 0u { sketch[subgroup_id] = _sum_4; }
     workgroupBarrier();
 
+#ifdef SUBGROUP_SIZE_32_32
+    reduce_sum(index, 2u);
+    reduce_sum(index, 1u);
+#else
+#ifdef SUBGROUP_SIZE_32_64
+    if subgroup_size == 32u { reduce_sum(index, 2u); }
+    reduce_sum(index, 1u);
+#else
+#ifdef SUBGROUP_SIZE_64_64
+    reduce_sum(index, 1u);
+#else
     for (var step = num_subgroups >> 1u; step > 0u; step >>= 1u) {
         if index < step {
             sketch[index] += sketch[index + step];
         }
         workgroupBarrier();
     }
+#endif
+#endif
+#endif
 
     var _sum: f32;
     if index == 0u {
@@ -104,18 +140,13 @@ fn softmax(
     }
     workgroupBarrier();
 
-    if subgroup_invocation_id == 0u {
-        _sum = sum;
-    }
-    _sum = subgroupBroadcast(_sum, 0u);
-
     for (var i = index; i < stride; i += BLOCK_SIZE) {
 #ifdef FP16
         let value = unpack4x16float(x[bb + i]);
-        x[bb + i] = pack4x16float(exp(value - _maximum) / _sum);
+        x[bb + i] = pack4x16float(exp(value - _maximum) / sum);
 #else
         let value = x[bb + i];
-        x[bb + i] = exp(value - _maximum) / _sum;
+        x[bb + i] = exp(value - _maximum) / sum;
 #endif
     }
 }
