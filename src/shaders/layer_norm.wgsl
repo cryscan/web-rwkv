@@ -52,20 +52,23 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     let bb = (batch * shape[1] + token) * stride;
 
+    var _mu: vec4<f32>;
+    var _m2: vec4<f32>;
+    var _count: vec4<u32>;
     for (var i = index; i < stride; i += BLOCK_SIZE) {
 #ifdef FP16
         let value = unpack4x16float(x[bb + i]);
-#else   
+#else
         let value = x[bb + i];
 #endif
-        let delta = value - mu[index];
-        let _count = count[index] + 1u;
-        let _mu = mu[index] + delta / vec4<f32>(_count);
-
-        count[index] = _count;
-        mu[index] = _mu;
-        m2[index] += delta * (value - _mu);
+        let delta = value - _mu;
+        _count += 1u;
+        _mu += delta / vec4<f32>(_count);
+        _m2 += delta * (value - _mu);
     }
+    count[index] = _count;
+    mu[index] = _mu;
+    m2[index] = _m2;
     workgroupBarrier();
 
     reduce_step(index, 64u);
@@ -77,11 +80,12 @@ fn layer_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     reduce_step(index, 1u);
 
     if index == 0u {
+        let _mu = mu[0];
         let _count = vec4<f32>(count[0]);
-        mean = dot(mu[0], _count / f32(shape[0]));
+        mean = dot(_mu, _count / f32(shape[0]));
 
-        let _delta = mu[0] - mean;
-        let _m2 = dot(m2[0], vec4<f32>(1.0)) + dot(_delta * _delta, _count);
+        let delta = _mu - mean;
+        let _m2 = dot(m2[0], vec4<f32>(1.0)) + dot(delta * delta, _count);
         let _var = _m2 / f32(shape[0]) + EPS;
         dev = inverseSqrt(_var);
 
@@ -112,20 +116,23 @@ fn group_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let h = head * stride;
     let th = (token * shape[1] + head) * stride;
 
+    var _mu: vec4<f32>;
+    var _m2: vec4<f32>;
+    var _count: vec4<u32>;
     for (var i = index; i < stride; i += BLOCK_SIZE) {
 #ifdef FP16
         let value = unpack4x16float(x[th + i]);
 #else
         let value = x[th + i];
 #endif
-        let delta = value - mu[index];
-        let _count = count[index] + 1u;
-        let _mu = mu[index] + delta / vec4<f32>(_count);
-
-        count[index] = _count;
-        mu[index] = _mu;
-        m2[index] += delta * (value - _mu);
+        let delta = value - _mu;
+        _count += 1u;
+        _mu += delta / vec4<f32>(_count);
+        _m2 += delta * (value - _mu);
     }
+    count[index] = _count;
+    mu[index] = _mu;
+    m2[index] = _m2;
     workgroupBarrier();
 
     reduce_step(index, 16u);
@@ -135,11 +142,12 @@ fn group_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     reduce_step(index, 1u);
 
     if index == 0u {
+        let _mu = mu[0];
         let _count = vec4<f32>(count[0]);
-        mean = dot(mu[0], _count / f32(shape[0]));
+        mean = dot(_mu, _count / f32(shape[0]));
 
-        let _delta = mu[0] - mean;
-        let _m2 = dot(m2[0], vec4<f32>(1.0)) + dot(_delta * _delta, _count);
+        let delta = _mu - mean;
+        let _m2 = dot(m2[0], vec4<f32>(1.0)) + dot(delta * delta, _count);
         let _var = _m2 / f32(shape[0]) + EPS;
         dev = inverseSqrt(_var);
     }

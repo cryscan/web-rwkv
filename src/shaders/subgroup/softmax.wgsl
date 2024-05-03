@@ -84,14 +84,13 @@ fn softmax(
 #endif
 #endif
 
-    var _maximum: f32;
     if index == 0u {
         _max_4 = sketch[0];
-        _maximum = _max_4.x;
-        _maximum = max(_maximum, _max_4.y);
-        _maximum = max(_maximum, _max_4.z);
-        _maximum = max(_maximum, _max_4.w);
-        maximum = _maximum;
+        var _max = _max_4.x;
+        _max = max(_max, _max_4.y);
+        _max = max(_max, _max_4.z);
+        _max = max(_max, _max_4.w);
+        maximum = _max;
     }
     workgroupBarrier();
 
@@ -130,10 +129,8 @@ fn softmax(
 #endif
 #endif
 
-    var _sum: f32;
     if index == 0u {
-        _sum = dot(sketch[0], vec4<f32>(1.0));
-        sum = _sum;
+        sum = dot(sketch[0], vec4<f32>(1.0));
     }
     workgroupBarrier();
 

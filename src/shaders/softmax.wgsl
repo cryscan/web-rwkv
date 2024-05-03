@@ -41,16 +41,16 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     let bb = (batch * shape[1] + token) * stride;
 
-    var _maximum = vec4<f32>(-1.0e30);
+    var _max_4 = vec4<f32>(-1.0e30);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
 #ifdef FP16
         let value = unpack4x16float(x[bb + i]);
 #else
         let value = x[bb + i];
 #endif
-        _maximum = max(_maximum, value);
+        _max_4 = max(_max_4, value);
     }
-    sketch[index] = _maximum;
+    sketch[index] = _max_4;
     workgroupBarrier();
 
     reduce_max(index, 64u);
@@ -62,10 +62,12 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     reduce_max(index, 1u);
 
     if index == 0u {
-        maximum = sketch[0].x;
-        maximum = max(maximum, sketch[0].y);
-        maximum = max(maximum, sketch[0].z);
-        maximum = max(maximum, sketch[0].w);
+        _max_4 = sketch[0];
+        var _max = _max_4.x;
+        _max = max(_max, _max_4.y);
+        _max = max(_max, _max_4.z);
+        _max = max(_max, _max_4.w);
+        maximum = _max;
     }
     workgroupBarrier();
 
