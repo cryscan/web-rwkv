@@ -180,6 +180,14 @@ impl Macros {
         }
         self
     }
+
+    /// Add subgroup defines.
+    #[cfg(feature = "subgroup-ops")]
+    pub fn subgroup(self, min: u32, max: u32) -> Self {
+        self.u32("MIN_SUBGROUP_SIZE", min)
+            .u32("MAX_SUBGROUP_SIZE", max)
+            .define(format!("SUBGROUP_SIZE_{}_{}", min, max), true)
+    }
 }
 
 pub enum TensorOp {
@@ -226,8 +234,8 @@ impl TensorOp {
             "softmax",
             None,
             Macros::new()
+                .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
                 .tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
@@ -453,6 +461,134 @@ impl TensorOp {
         })
     }
 
+    /// Recenter `x` to be zero-mean.
+    pub fn recenter(x: &TensorGpu<impl Float, ReadWrite>) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let shape = x.shape();
+
+        let context = x.context();
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            "recenter",
+            include_str!("../shaders/rms_norm.wgsl"),
+            "recenter",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(x, None)
+                .f32("EPS", 0.0),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "recenter",
+            include_str!("../shaders/subgroup/rms_norm.wgsl"),
+            "recenter",
+            None,
+            Macros::new()
+                .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(x, None)
+                .f32("EPS", 0.0),
+        );
+
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [1, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
+    /// Root-mean-square normalization applied on `x`, with weight `w` and bias `b`.
+    /// - `x` shape: `[C, T, B]`.
+    /// - `w` shape: `[C, 1, 1]`.
+    /// - `b` shape: `[C, 1, 1]`.
+    pub fn rms_norm(
+        w: &TensorGpu<f16, ReadWrite>,
+        b: &TensorGpu<f16, ReadWrite>,
+        x: &TensorGpu<impl Float, ReadWrite>,
+        eps: f32,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let shape = {
+            let [index, token, batch, _] = *x.shape();
+            x.check_shape([index, token, batch, 1])?;
+            w.check_shape([index, 1, 1, 1])?;
+            b.check_shape([index, 1, 1, 1])?;
+            x.shape()
+        };
+
+        let context = x.context();
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            "rms_norm",
+            include_str!("../shaders/rms_norm.wgsl"),
+            "rms_norm",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(x, None)
+                .f32("EPS", eps),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "rms_norm",
+            include_str!("../shaders/subgroup/rms_norm.wgsl"),
+            "rms_norm",
+            None,
+            Macros::new()
+                .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(x, None)
+                .f32("EPS", eps),
+        );
+
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: w.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: b.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [1, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
     /// Fp32 matrix-vector multiplication.
     /// - `matrix` shape: `[C, R, B]`.
     /// - `input` shape: `[C, T, B]`.
@@ -494,16 +630,8 @@ impl TensorOp {
             "matmul",
             None,
             Macros::new()
+                .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
-                .define(
-                    format!(
-                        "SUBGROUP_SIZE_{}_{}",
-                        context.min_subgroup_size(),
-                        context.max_subgroup_size()
-                    ),
-                    true,
-                )
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),
@@ -590,16 +718,8 @@ impl TensorOp {
             "matmul",
             None,
             Macros::new()
+                .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
-                .define(
-                    format!(
-                        "SUBGROUP_SIZE_{}_{}",
-                        context.min_subgroup_size(),
-                        context.max_subgroup_size()
-                    ),
-                    true,
-                )
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -691,16 +811,8 @@ impl TensorOp {
             "matmul",
             None,
             Macros::new()
+                .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .u32("MIN_SUBGROUP_SIZE", context.min_subgroup_size())
-                .define(
-                    format!(
-                        "SUBGROUP_SIZE_{}_{}",
-                        context.min_subgroup_size(),
-                        context.max_subgroup_size()
-                    ),
-                    true,
-                )
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
@@ -2418,7 +2530,6 @@ mod tests {
         let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, Some(&s_dev), EPS)?;
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
-
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&layer_norm);
         drop(pass);
@@ -2426,6 +2537,22 @@ mod tests {
 
         let x_host = x_dev.back_block().to_vec();
         let s_host = s_dev.back_block().to_vec();
+
+        // test recenter and rms norm
+        let shape = Shape::new(C, T, B, 1);
+        let x_dev = context.tensor_from_data(shape, x.clone())?;
+        let ops = TensorOp::List(vec![
+            TensorOp::recenter(&x_dev)?,
+            TensorOp::rms_norm(&w_dev, &b_dev, &x_dev, EPS)?,
+        ]);
+
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.execute_tensor_op(&ops);
+        drop(pass);
+        context.queue.submit(Some(encoder.finish()));
+
+        let x_rms_host = x_dev.back_block().to_vec();
 
         let mut ans = vec![];
         let mut ans_stats = vec![];
@@ -2469,9 +2596,18 @@ mod tests {
                 );
             });
 
-        itertools::zip_eq(x_host.into_iter(), ans.into_iter())
+        itertools::zip_eq(x_host.into_iter(), ans.iter())
             .enumerate()
-            .for_each(|(index, (a, b))| {
+            .for_each(|(index, (a, &b))| {
+                assert!(
+                    is_approx_eps(a, b, 1.0e-3),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            });
+
+        itertools::zip_eq(x_rms_host.into_iter(), ans.iter())
+            .enumerate()
+            .for_each(|(index, (a, &b))| {
                 assert!(
                     is_approx_eps(a, b, 1.0e-3),
                     "Failed at index {index}, computed: {a} vs. answer: {b}"
