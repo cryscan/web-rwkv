@@ -59,6 +59,8 @@ simple_logger = { version = "5.0.0", features = ["stderr"] }
 
 [features]
 default = ["runtime", "subgroup-ops", "tokio-multi-thread", "vanilla"]
+native = ["runtime", "subgroup-ops", "tokio-multi-thread"]
+web = ["vanilla"]
 
 ## Enables async GPU command building. Can be faster on some Xeon cpus but slower on others.
 async-build = []
