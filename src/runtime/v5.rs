@@ -13,7 +13,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
+    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, PassId, Quant, State as _},
     Job, JobBuilder,
 };
 use crate::{
@@ -566,15 +566,18 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
             hook_op(Hook::PostEmbedLayerNorm)?,
         ]);
 
+        let mut id = PassId::new();
+
         {
             let context = context.clone();
+            let id = id.inc();
             let f = move || -> Result<_> {
                 let ops = TensorOp::List(ops);
                 let mut encoder = context.device.create_command_encoder(&Default::default());
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&ops);
                 drop(pass);
-                Ok((0, encoder.finish()))
+                Ok((id, encoder.finish()))
             };
             #[cfg(feature = "async-build")]
             tasks.spawn_blocking(f);
@@ -584,12 +587,13 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
 
         for (index, layer) in tensor.layers.iter().enumerate() {
             let context = context.clone();
+            let id = id.inc();
             let hooks = self.hooks.clone();
             let frame = frame.clone();
             let layer = layer.clone();
             let f = move || -> Result<_> {
                 Ok((
-                    index + 32,
+                    id,
                     build_layer(context, hooks, frame, layer, index, num_token, head_size)?,
                 ))
             };
@@ -601,12 +605,13 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
 
         {
             let context = context.clone();
+            let id = id.inc();
             let hooks = self.hooks.clone();
             let frame = frame.clone();
             let head = model.tensor.head.clone();
             let f = move || -> Result<_> {
                 Ok((
-                    usize::MAX,
+                    id,
                     build_header(context, hooks, frame, head, head_x, num_header, head_ops)?,
                 ))
             };
