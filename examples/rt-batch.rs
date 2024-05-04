@@ -309,7 +309,7 @@ async fn main() -> Result<()> {
                 continue;
             }
             if num_token[index] > 0 {
-                let batch = batch.clone().map(|x| x.to_f32()).to_vec();
+                let batch = batch.clone().to_vec();
                 let token = sample(&batch, 0.5);
                 let decoded = tokenizer.decode(&[token])?;
                 let word = String::from_utf8_lossy(&decoded);

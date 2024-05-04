@@ -194,7 +194,10 @@ impl DeepClone for State {
 pub struct Runtime<F: Float> {
     pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
-    pub input: TensorGpu<F, ReadWrite>,
+    pub input: TensorGpu<f16, ReadWrite>,
+
+    pub x: TensorGpu<F, ReadWrite>,
+    pub aux_x: TensorGpu<f32, ReadWrite>,
 
     pub att_x: TensorGpu<F, ReadWrite>,
     pub att_kx: TensorGpu<F, ReadWrite>,
@@ -211,8 +214,6 @@ pub struct Runtime<F: Float> {
     pub ffn_k: TensorGpu<F, ReadWrite>,
     pub ffn_v: TensorGpu<F, ReadWrite>,
     pub ffn_r: TensorGpu<F, ReadWrite>,
-
-    pub aux_x: TensorGpu<f32, ReadWrite>,
 }
 
 impl<F: Float> Runtime<F> {
@@ -226,6 +227,8 @@ impl<F: Float> Runtime<F> {
             cursors: context.tensor_init(cursors_shape),
             tokens: context.tensor_init(tokens_shape),
             input: context.tensor_init(shape),
+            x: context.tensor_init(shape),
+            aux_x: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
             att_kx: context.tensor_init(shape),
             att_vx: context.tensor_init(shape),
@@ -240,7 +243,6 @@ impl<F: Float> Runtime<F> {
             ffn_k: context.tensor_init(hidden_shape),
             ffn_v: context.tensor_init(shape),
             ffn_r: context.tensor_init(shape),
-            aux_x: context.tensor_init(shape),
         }
     }
 }
@@ -248,7 +250,7 @@ impl<F: Float> Runtime<F> {
 #[derive(Debug, Clone)]
 pub struct Header<F: Float> {
     pub head_x: TensorGpu<F, ReadWrite>,
-    pub head_o: TensorGpu<F, ReadWrite>,
+    pub head_o: TensorGpu<f32, ReadWrite>,
 }
 
 impl<F: Float> Header<F> {
@@ -293,7 +295,7 @@ pub enum Hook {
     PostHead,
 }
 
-pub struct InferJob<F: Float> {
+pub struct InferJob {
     commands: Vec<CommandBuffer>,
     redirect: InferRedirect,
 
@@ -302,14 +304,14 @@ pub struct InferJob<F: Float> {
 
     cursors: TensorGpu<u32, ReadWrite>,
     tokens: TensorGpu<u32, ReadWrite>,
-    input: TensorGpu<F, ReadWrite>,
-    output: TensorGpu<F, ReadWrite>,
+    input: TensorGpu<f16, ReadWrite>,
+    output: TensorGpu<f32, ReadWrite>,
 }
 
-impl<F: Float> Job for InferJob<F> {
+impl Job for InferJob {
     type Info = InferInfo;
     type Input = InferChunk;
-    type Output = InferOutput<F>;
+    type Output = InferOutput;
 
     fn check(&self, input: &Self::Input, info: &Self::Info) -> bool {
         input.num_token() == self.cursors.shape()[0] && info.redirect() == self.redirect
@@ -320,9 +322,9 @@ impl<F: Float> Job for InferJob<F> {
             return Ok(self);
         }
 
-        let stack: Vec<TensorCpu<F>> = input
+        let stack: Vec<TensorCpu<f16>> = input
             .iter()
-            .map(|chunk| -> Result<TensorCpu<F>, _> {
+            .map(|chunk| {
                 let num_emb = self.embed.shape()[0];
                 let num_token = chunk.len();
                 let data = self.embed.data();
@@ -334,7 +336,7 @@ impl<F: Float> Job for InferJob<F> {
                         data[start..end].to_vec()
                     })
                     .concat();
-                let data = data.into_iter().map(|x| F::co_hom(x)).collect_vec();
+                let data = data.into_iter().collect_vec();
                 let shape = Shape::new(num_emb, num_token, 1, 1);
                 TensorCpu::from_data(shape, data)
             })
@@ -472,10 +474,10 @@ fn hook_op<F: Float>(
     }
 }
 
-impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
+impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
     type Info = InferInfo;
 
-    async fn build(&self, seed: Self::Info) -> Result<InferJob<F>> {
+    async fn build(&self, seed: Self::Info) -> Result<InferJob> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
@@ -518,7 +520,7 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
         let mut commands = vec![];
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
-            (vec![], buffer.ffn_x.clone())
+            (vec![], buffer.x.clone())
         } else {
             let headers = &redirect.headers;
             let mut start = 0;
@@ -530,7 +532,7 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
                     let last = headers[end - 1];
                     assert_eq!(last - first + 1, end - start);
 
-                    let input = buffer.ffn_x.view(.., first..=last, .., ..)?;
+                    let input = buffer.x.view(.., first..=last, .., ..)?;
                     let output = header.head_x.view(.., start..end, .., ..)?;
                     ops.push(TensorOp::blit(input, output)?);
 
@@ -559,6 +561,10 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
                 &buffer.input,
                 None,
                 Model::LN_EPS,
+            )?,
+            TensorOp::blit(
+                buffer.input.view(.., .., .., ..)?,
+                buffer.x.view(.., .., .., ..)?,
             )?,
             hook_op(Hook::PostEmbedLayerNorm)?,
         ]);
@@ -655,10 +661,9 @@ fn build_layer<F: Float>(
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let Frame { state, buffer, .. } = &frame;
 
-    let info = &state.info;
     let mut encoder = context.device.create_command_encoder(&Default::default());
 
-    encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
+    encoder.copy_tensor(&buffer.x, &buffer.att_x)?;
 
     let ops = TensorOp::List(vec![
         hook_op(Hook::PreAtt(index))?,
@@ -745,8 +750,8 @@ fn build_layer<F: Float>(
         )?,
         hook_op(Hook::PostAttOut(index))?,
         TensorOp::add(
-            buffer.input.view(.., .., .., ..)?,
             buffer.att_o.view(.., .., .., ..)?,
+            buffer.x.view(.., .., .., ..)?,
         )?,
         hook_op(Hook::PostAtt(index))?,
     ]);
@@ -756,7 +761,7 @@ fn build_layer<F: Float>(
         pass.execute_tensor_op(&ops);
     }
 
-    encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
+    encoder.copy_tensor(&buffer.x, &buffer.ffn_x)?;
 
     let ops = TensorOp::List(vec![
         hook_op(Hook::PreFfn(index))?,
@@ -817,8 +822,8 @@ fn build_layer<F: Float>(
         )?,
         hook_op(Hook::PostFfnChannelMix(index))?,
         TensorOp::add(
-            buffer.att_o.view(.., .., .., ..)?,
             buffer.ffn_x.view(.., .., .., ..)?,
+            buffer.x.view(.., .., .., ..)?,
         )?,
         hook_op(Hook::PostFfn(index))?,
     ]);
@@ -829,14 +834,10 @@ fn build_layer<F: Float>(
     }
 
     if (index + 1) % Model::RESCALE_LAYER == 0 {
-        let op = TensorOp::discount(&buffer.ffn_x, 0.5, 0.0)?;
+        let op = TensorOp::discount(&buffer.x, 0.5, 0.0)?;
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
         drop(pass);
-    }
-
-    if index != info.num_layer - 1 {
-        encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
     }
 
     Ok(encoder.finish())

@@ -2,7 +2,7 @@ use itertools::Itertools;
 use web_rwkv_derive::{Deref, DerefMut};
 
 use super::JobInput;
-use crate::{num::Float, tensor::TensorCpu};
+use crate::tensor::TensorCpu;
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
@@ -262,10 +262,10 @@ impl Iterator for InferIter {
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
-pub struct InferOutputBatch<F: Float>(pub TensorCpu<F>);
+pub struct InferOutputBatch(pub TensorCpu<f32>);
 
 #[derive(Debug, Clone, Deref, DerefMut)]
-pub struct InferOutput<F: Float>(pub Vec<InferOutputBatch<F>>);
+pub struct InferOutput(pub Vec<InferOutputBatch>);
 
 #[cfg(test)]
 mod tests {

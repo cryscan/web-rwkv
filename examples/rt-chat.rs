@@ -368,7 +368,7 @@ async fn main() -> Result<()> {
                 continue;
             }
 
-            let output = output.map(|x| x.to_f32()).to_vec();
+            let output = output.to_vec();
             assert_eq!(output.len(), info.num_vocab);
 
             let output = TensorCpu::from_data(shape, output)?;

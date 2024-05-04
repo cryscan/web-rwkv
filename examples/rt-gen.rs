@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
             }
 
             let output = softmax_one(&context, output).await?;
-            let output = output.map(|x| x.to_f32()).to_vec();
+            let output = output.to_vec();
             let token = sample(&output, 0.0);
             prompt.batches[0].tokens.push(token);
 
