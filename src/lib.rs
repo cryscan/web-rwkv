@@ -35,6 +35,7 @@
 #![doc = document_features::document_features!()]
 
 pub mod context;
+#[cfg(feature = "vanilla")]
 pub mod model;
 pub mod num;
 #[cfg(feature = "runtime")]

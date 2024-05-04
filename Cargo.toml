@@ -58,7 +58,7 @@ ratatui = { version = "0.26", features = ["all-widgets"] }
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 
 [features]
-default = ["runtime", "subgroup-ops", "tokio-multi-thread"]
+default = ["runtime", "subgroup-ops", "tokio-multi-thread", "vanilla"]
 
 ## Enables async GPU command building. Can be faster on some Xeon cpus but slower on others.
 async-build = []
@@ -68,6 +68,28 @@ runtime = []
 subgroup-ops = []
 ## Enables tokio's multi-threaded runtime. Doesn't work on web platforms.
 tokio-multi-thread = ["tokio/rt-multi-thread"]
+## Enables `vanilla` API.
+vanilla = []
+
+[[example]]
+name = "gen"
+required-features = ["vanilla"]
+
+[[example]]
+name = "chat"
+required-features = ["vanilla"]
+
+[[example]]
+name = "batch"
+required-features = ["vanilla"]
+
+[[example]]
+name = "inspector"
+required-features = ["vanilla"]
+
+[[example]]
+name = "serialization"
+required-features = ["vanilla"]
 
 [[example]]
 name = "rt-gen"
