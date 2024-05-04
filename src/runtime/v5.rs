@@ -892,7 +892,7 @@ fn build_layer<F: Float>(
     }
 
     if (index + 1) % Model::RESCALE_LAYER == 0 {
-        let op = TensorOp::discount(&buffer.ffn_x, 0.5)?;
+        let op = TensorOp::discount(&buffer.ffn_x, 0.5, 0.0)?;
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
     }

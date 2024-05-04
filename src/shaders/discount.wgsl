@@ -23,9 +23,9 @@ fn discount(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if index < stride {
         let bti = (batch * shape[1] + token) * stride + index;
 #ifdef FP16
-        x[bti] = pack4x16float(FACTOR * unpack4x16float(x[bti]));
+        x[bti] = pack4x16float(FACTOR * unpack4x16float(x[bti]) + BIAS);
 #else
-        x[bti] = FACTOR * x[bti];
+        x[bti] = FACTOR * x[bti] + BIAS;
 #endif
     }
 }

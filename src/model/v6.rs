@@ -1153,7 +1153,7 @@ impl<F: Float> ModelRunInternal for Model<F> {
             drop(pass);
 
             if (index + 1) % RESCALE_LAYER == 0 {
-                let op = TensorOp::discount(&buffer.ffn_x, 0.5)?;
+                let op = TensorOp::discount(&buffer.ffn_x, 0.5, 0.0)?;
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.execute_tensor_op(&op);
                 drop(pass);

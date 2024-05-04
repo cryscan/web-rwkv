@@ -2153,6 +2153,7 @@ impl TensorOp {
     pub fn discount(
         x: &TensorGpu<impl Float, ReadWrite>,
         factor: f32,
+        bias: f32,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -2166,7 +2167,8 @@ impl TensorOp {
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
-                .f32("FACTOR", factor),
+                .f32("FACTOR", factor)
+                .f32("BIAS", bias),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,

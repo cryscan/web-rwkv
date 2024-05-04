@@ -593,6 +593,13 @@ impl<F: Float> JobBuilder<InferJob<F>> for ModelRuntime<F> {
                 None,
                 Model::LN_EPS,
             )?,
+            // TensorOp::recenter(&buffer.input)?,
+            // TensorOp::rms_norm(
+            //     &tensor.embed.layer_norm.w,
+            //     &tensor.embed.layer_norm.b,
+            //     &buffer.input,
+            //     Model::LN_EPS,
+            // )?,
             hook_op(Hook::PostEmbedLayerNorm)?,
         ]);
 
@@ -744,6 +751,12 @@ fn build_layer<F: Float>(
             None,
             Model::LN_EPS,
         )?,
+        // TensorOp::rms_norm(
+        //     &layer.att_layer_norm.w,
+        //     &layer.att_layer_norm.b,
+        //     &buffer.att_x,
+        //     Model::LN_EPS,
+        // )?,
         hook_op(Hook::PostAttLayerNorm(index))?,
         hook_op(Hook::PreAttTokenShift(index))?,
         TensorOp::token_shift(
@@ -896,6 +909,12 @@ fn build_layer<F: Float>(
             None,
             Model::LN_EPS,
         )?,
+        // TensorOp::rms_norm(
+        //     &layer.ffn_layer_norm.w,
+        //     &layer.ffn_layer_norm.b,
+        //     &buffer.ffn_x,
+        //     Model::LN_EPS,
+        // )?,
         hook_op(Hook::PostFfnLayerNorm(index))?,
         hook_op(Hook::PreFfnTokenShift(index))?,
         TensorOp::token_shift(
@@ -958,7 +977,7 @@ fn build_layer<F: Float>(
     }
 
     if (index + 1) % Model::RESCALE_LAYER == 0 {
-        let op = TensorOp::discount(&buffer.ffn_x, 0.5)?;
+        let op = TensorOp::discount(&buffer.ffn_x, 0.5, 0.0)?;
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.execute_tensor_op(&op);
     }
@@ -993,6 +1012,12 @@ fn build_header<F: Float>(
                 None,
                 Model::LN_EPS,
             )?,
+            // TensorOp::rms_norm(
+            //     &head.layer_norm.w,
+            //     &head.layer_norm.b,
+            //     &head_x,
+            //     Model::LN_EPS,
+            // )?,
             hook_op(Hook::PostHeadLayerNorm)?,
             head.w.matmul_op(
                 head_x.view(.., .., .., ..)?,
@@ -1059,6 +1084,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
         for layer in 0..info.num_layer {
             let quant = quant.get(&layer).copied().unwrap_or_default();
             let discount = 2.0_f32.powi(-((layer / Model::RESCALE_LAYER) as i32));
+            let discount = discount * (1.0 - 1.0 / info.num_emb as f32);
 
             let att_layer_norm = LayerNorm {
                 w: loader
