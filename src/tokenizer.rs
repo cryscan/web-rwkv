@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::JsError;
+use tokenizers::tokenizer::{Tokenizer as BaseHFTokenizer};
 
 #[derive(Debug, Error, JsError)]
 pub enum TokenizerError {
@@ -13,14 +14,28 @@ pub enum TokenizerError {
     NoMatchingTokenFound,
     #[error("out of range token: {0}")]
     OutOfRangeToken(u16),
+    #[error("HFTokenizer error: {0}")]
+    HFTokenizerError(String),
 }
 
 #[wasm_bindgen]
 #[derive(Debug, Clone, Getters)]
-pub struct Tokenizer {
+pub struct RWKVTokenizer {
     first_bytes_to_lengths: Vec<Box<[u16]>>,
     bytes_to_token_index: HashMap<Vec<u8>, u16>,
     token_index_to_bytes: Vec<Vec<u8>>,
+}
+
+#[derive(Debug)]
+pub struct HFTokenizer {
+    tokenizer: BaseHFTokenizer,
+    bytes_to_token_index: HashMap<Vec<u8>, u16>,
+}
+
+#[derive(Debug)]
+pub enum Tokenizer {
+    RWKV(RWKVTokenizer),
+    HF(HFTokenizer),
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -30,10 +45,41 @@ enum StrOrBytes {
     Bytes(Vec<u8>),
 }
 
+impl HFTokenizer {
+    pub fn new(json_str: &str) -> Result<Self, TokenizerError> {
+        let tokenizer: BaseHFTokenizer = BaseHFTokenizer::from_bytes(json_str.as_bytes())
+            .map_err(|e| TokenizerError::HFTokenizerError(e.to_string()))?;
+
+        let bytes_to_token_index: HashMap<Vec<u8>, u16> = tokenizer
+            .get_vocab(true)
+            .iter()
+            .map(|(key, value)| (key.as_bytes().to_vec(), *value as u16))
+            .collect();      
+
+        Ok(Self {
+            tokenizer,
+            bytes_to_token_index,
+        })
+    }
+
+    pub fn encode(&self, input: &[u8]) -> Result<Vec<u16>, TokenizerError> {
+        let text = std::str::from_utf8(input).expect("Failed to convert byte slice to UTF-8 string slice");
+        let encoding = self.tokenizer.encode(text, false)
+            .map_err(|e| TokenizerError::HFTokenizerError(e.to_string()))?;
+        Ok(encoding.get_ids().iter().map(|&id| id as u16).collect())
+    }
+
+    pub fn decode(&self, tokens: &[u16]) -> Result<Vec<u8>, TokenizerError> {
+        let decoded_text = self.tokenizer.decode(tokens.iter().map(|&t| t as u32).collect::<Vec<u32>>().as_slice(), true)
+            .map_err(|e| TokenizerError::HFTokenizerError(e.to_string()))?;
+        Ok(decoded_text.into_bytes())
+    }
+}
+
 #[wasm_bindgen]
-impl Tokenizer {
+impl RWKVTokenizer {
     #[wasm_bindgen(constructor)]
-    pub fn new(vocab: &str) -> Result<Tokenizer, TokenizerError> {
+    pub fn new(vocab: &str) -> Result<RWKVTokenizer, TokenizerError> {
         let map: BTreeMap<u16, StrOrBytes> =
             serde_json::from_str(vocab).map_err(TokenizerError::FailedToParseVocabulary)?;
 
@@ -86,7 +132,7 @@ impl Tokenizer {
             })
             .collect();
 
-        Ok(Tokenizer {
+        Ok(RWKVTokenizer {
             first_bytes_to_lengths,
             bytes_to_token_index,
             token_index_to_bytes,
@@ -106,7 +152,7 @@ impl Tokenizer {
     }
 }
 
-impl Tokenizer {
+impl RWKVTokenizer {
     pub fn encode_into(
         &self,
         mut input: &[u8],
@@ -152,3 +198,38 @@ impl Tokenizer {
         Ok(())
     }
 }
+
+
+impl Tokenizer {
+    pub fn new(json_str: &str) -> Result<Self, TokenizerError> {
+        if json_str.contains("\"version\":") {
+            let hf_tokenizer = HFTokenizer::new(json_str)?;
+            Ok(Tokenizer::HF(hf_tokenizer))
+        } else {
+            let rwkv_tokenizer = RWKVTokenizer::new(json_str)?;
+            Ok(Tokenizer::RWKV(rwkv_tokenizer))
+        }
+    }
+
+    pub fn encode(&self, input: &[u8]) -> Result<Vec<u16>, TokenizerError> {
+        match self {
+            Tokenizer::HF(tokenizer) => tokenizer.encode(input),
+            Tokenizer::RWKV(tokenizer) => tokenizer.encode(input)
+        }
+    }
+
+    pub fn decode(&self, tokens: &[u16]) -> Result<Vec<u8>, TokenizerError> {
+        match self {
+            Tokenizer::HF(tokenizer) => tokenizer.decode(tokens),
+            Tokenizer::RWKV(tokenizer) => tokenizer.decode(tokens)
+        }
+    }
+
+    pub fn bytes_to_token_index(&self) -> &HashMap<Vec<u8>, u16> {
+        match self {
+            Tokenizer::HF(tokenizer) => &tokenizer.bytes_to_token_index,
+            Tokenizer::RWKV(tokenizer) => &tokenizer.bytes_to_token_index,
+        }
+    }
+}
+
