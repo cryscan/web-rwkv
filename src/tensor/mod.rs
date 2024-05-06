@@ -428,7 +428,7 @@ impl<T: Scalar> TensorInto<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> 
     fn transfer_into(self, context: &Context) -> Self {
         match context {
             context if context == &self.context => self,
-            _ => self.back_block().transfer_into(context),
+            _ => self.back_local().transfer_into(context),
         }
     }
 }
@@ -474,7 +474,7 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
 
 impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn back_block(&self) -> TensorCpu<T> {
+    pub fn back_local(&self) -> TensorCpu<T> {
         use crate::context::ContextEvent;
 
         let context = &self.context;

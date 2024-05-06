@@ -404,11 +404,7 @@ mod tests {
                 (vec![2; 0], InferOption::Full),
                 (vec![3; 3], InferOption::Full),
             ]
-            .map(|(tokens, option)| InferInputBatch {
-                tokens,
-                option,
-                ..Default::default()
-            })
+            .map(|(tokens, option)| InferInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
         };
@@ -438,11 +434,7 @@ mod tests {
                 (vec![2; 0], InferOption::Full),
                 (vec![3; 3], InferOption::Full),
             ]
-            .map(|(tokens, option)| InferInputBatch {
-                tokens,
-                option,
-                ..Default::default()
-            })
+            .map(|(tokens, option)| InferInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
         };
@@ -463,11 +455,7 @@ mod tests {
                 (vec![2; 9], InferOption::Last),
                 (vec![3; 4], InferOption::Last),
             ]
-            .map(|(tokens, option)| InferInputBatch {
-                tokens,
-                option,
-                ..Default::default()
-            })
+            .map(|(tokens, option)| InferInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 32,
         };

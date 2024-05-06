@@ -333,7 +333,6 @@ impl TensorOp {
         w: &TensorGpu<f16, ReadWrite>,
         b: &TensorGpu<f16, ReadWrite>,
         x: &TensorGpu<impl Float, ReadWrite>,
-        s: Option<&TensorGpu<f32, ReadWrite>>,
         eps: f32,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
@@ -343,9 +342,6 @@ impl TensorOp {
             x.check_shape([index, token, batch, 1])?;
             w.check_shape([index, 1, 1, 1])?;
             b.check_shape([index, 1, 1, 1])?;
-            if let Some(s) = s {
-                s.check_shape([4, token, batch, 1])?;
-            }
             x.shape()
         };
 
@@ -358,39 +354,30 @@ impl TensorOp {
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
-                .f32("EPS", eps)
-                .bool("STATS", s.is_some()),
+                .f32("EPS", eps),
         );
-
-        let mut entries = vec![
-            BindGroupEntry {
-                binding: 0,
-                resource: x.meta_binding(),
-            },
-            BindGroupEntry {
-                binding: 1,
-                resource: w.binding(),
-            },
-            BindGroupEntry {
-                binding: 2,
-                resource: b.binding(),
-            },
-            BindGroupEntry {
-                binding: 3,
-                resource: x.binding(),
-            },
-        ];
-        if let Some(s) = s {
-            entries.push(BindGroupEntry {
-                binding: 4,
-                resource: s.binding(),
-            });
-        }
 
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
             layout: &pipeline.layout,
-            entries: &entries,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: w.binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: b.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: x.binding(),
+                },
+            ],
         })];
 
         Ok(Self::Atom {
@@ -2470,7 +2457,7 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = x_dev.back_block().to_vec();
+        let x_host = x_dev.back_local().to_vec();
 
         let mut ans = vec![];
         for x in &x.into_iter().chunks(C) {
@@ -2482,7 +2469,7 @@ mod tests {
             ans.append(&mut x);
         }
 
-        itertools::zip_eq(x_host.into_iter(), ans.into_iter())
+        itertools::zip_eq(x_host, ans)
             .enumerate()
             .for_each(|(index, (a, b))| {
                 assert!(
@@ -2526,10 +2513,10 @@ mod tests {
         let w_dev = context.tensor_from_data(shape, &w[..1000])?;
         let b_dev = context.tensor_from_data(shape, &b[..1000])?;
 
-        let shape = Shape::new(4, T, B, 1);
-        let s_dev = context.tensor_init(shape);
+        // let shape = Shape::new(4, T, B, 1);
+        // let s_dev = context.tensor_init(shape);
 
-        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, Some(&s_dev), EPS)?;
+        let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, EPS)?;
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
         let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -2537,8 +2524,8 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let x_host = x_dev.back_block().to_vec();
-        let s_host = s_dev.back_block().to_vec();
+        let x_host = x_dev.back_local().to_vec();
+        // let s_host = s_dev.back_local().to_vec();
 
         // test recenter and rms norm
         let shape = Shape::new(C, T, B, 1);
@@ -2554,10 +2541,10 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let x_rms_host = x_dev.back_block().to_vec();
+        let x_rms_host = x_dev.back_local().to_vec();
 
         let mut ans = vec![];
-        let mut ans_stats = vec![];
+        // let mut ans_stats = vec![];
         for chunk in &x
             .into_iter()
             .zip(w.into_iter())
@@ -2580,7 +2567,7 @@ mod tests {
             });
             let variance = m2 / count as f32 + EPS;
             let deviation = 1.0 / variance.sqrt();
-            ans_stats.append(&mut vec![mean, deviation, variance, 0.0]);
+            // ans_stats.append(&mut vec![mean, deviation, variance, 0.0]);
 
             let mut x: Vec<_> = chunk
                 .into_iter()
@@ -2589,16 +2576,16 @@ mod tests {
             ans.append(&mut x);
         }
 
-        itertools::zip_eq(s_host.into_iter(), ans_stats.into_iter())
-            .enumerate()
-            .for_each(|(index, (a, b))| {
-                assert!(
-                    is_approx_eps(a, b, 1.0e-3),
-                    "Failed at index {index}, computed: {a} vs. answer: {b}"
-                );
-            });
+        // itertools::zip_eq(s_host.into_iter(), ans_stats.into_iter())
+        //     .enumerate()
+        //     .for_each(|(index, (a, b))| {
+        //         assert!(
+        //             is_approx_eps(a, b, 1.0e-3),
+        //             "Failed at index {index}, computed: {a} vs. answer: {b}"
+        //         );
+        //     });
 
-        itertools::zip_eq(x_host.into_iter(), ans.iter())
+        itertools::zip_eq(x_host, ans.iter())
             .enumerate()
             .for_each(|(index, (a, &b))| {
                 assert!(
@@ -2607,7 +2594,7 @@ mod tests {
                 );
             });
 
-        itertools::zip_eq(x_rms_host.into_iter(), ans.iter())
+        itertools::zip_eq(x_rms_host, ans.iter())
             .enumerate()
             .for_each(|(index, (a, &b))| {
                 assert!(
@@ -2682,7 +2669,7 @@ mod tests {
         // profiler.resolve_queries(&mut encoder);
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = output_dev.back_block();
+        let output_host = output_dev.back_local();
         let output_host = Vec::from(output_host);
 
         // profiler.end_frame().unwrap();
@@ -2718,7 +2705,7 @@ mod tests {
             }
         }
 
-        itertools::zip_eq(output_host.into_iter(), ans.into_iter())
+        itertools::zip_eq(output_host, ans)
             .enumerate()
             .for_each(|(index, (a, b))| {
                 assert!(
@@ -2810,8 +2797,8 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let matrix_u8_host = matrix_u8_dev.back_block().to_vec();
-        let output_host = output_dev.back_block().to_vec();
+        let matrix_u8_host = matrix_u8_dev.back_local().to_vec();
+        let output_host = output_dev.back_local().to_vec();
 
         // let mut truth = vec![0.0; output_host.len()];
         // for token in 0..T {
@@ -2846,7 +2833,7 @@ mod tests {
             }
         }
 
-        itertools::zip_eq(matrix_u8_host.into_iter(), matrix_u8.into_iter())
+        itertools::zip_eq(matrix_u8_host, matrix_u8)
             .enumerate()
             .for_each(|(index, (a, b))| {
                 assert!(
@@ -2856,7 +2843,7 @@ mod tests {
                 );
             });
 
-        itertools::zip_eq(output_host.into_iter(), ans.into_iter())
+        itertools::zip_eq(output_host, ans)
             .enumerate()
             .for_each(|(index, (a, b))| {
                 assert!(
@@ -2984,9 +2971,9 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let matrix_u4_host = matrix_u4_dev.back_block().to_vec();
-        let absmax_host = absmax_dev.back_block().to_vec();
-        let output_host = output_dev.back_block().to_vec();
+        let matrix_u4_host = matrix_u4_dev.back_local().to_vec();
+        let absmax_host = absmax_dev.back_local().to_vec();
+        let output_host = output_dev.back_local().to_vec();
 
         let mut truth = vec![0.0; output_host.len()];
         for token in 0..T {
@@ -3019,7 +3006,7 @@ mod tests {
             }
         }
 
-        itertools::zip_eq(matrix_u4_host.into_iter(), matrix_u4.into_iter())
+        itertools::zip_eq(matrix_u4_host, matrix_u4)
             .enumerate()
             .for_each(|(index, (a, b))| {
                 assert!(
@@ -3028,7 +3015,7 @@ mod tests {
                 );
             });
 
-        itertools::zip_eq(absmax_host.into_iter(), absmax.into_iter())
+        itertools::zip_eq(absmax_host, absmax)
             .enumerate()
             .for_each(|(index, (a, b))| {
                 assert!(
@@ -3037,7 +3024,7 @@ mod tests {
                 );
             });
 
-        itertools::zip_eq(output_host.into_iter(), ans.into_iter())
+        itertools::zip_eq(output_host, ans)
             .enumerate()
             .for_each(|(index, (a, b))| {
                 assert!(
@@ -3083,7 +3070,7 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = output.back_block();
+        let output_host = output.back_local();
         let output_host = Vec::from(output_host);
 
         assert_eq!(
@@ -3120,7 +3107,7 @@ mod tests {
         drop(pass);
         context.queue.submit(Some(encoder.finish()));
 
-        let output_host = output.back_block();
+        let output_host = output.back_local();
         let output_host: Vec<f32> = Vec::from(output_host);
 
         assert_eq!(

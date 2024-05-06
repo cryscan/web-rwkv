@@ -252,7 +252,6 @@ async fn run(cli: Cli) -> Result<()> {
             &tensor.head.layer_norm.w,
             &tensor.head.layer_norm.b,
             &buffer.ffn_x,
-            None,
             v5::Model::<f16>::LN_EPS,
         )?,
         tensor.head.w.matmul_mat_op(
