@@ -11,7 +11,7 @@ pub mod v4;
 pub mod v5;
 pub mod v6;
 
-const MAX_QUEUE_SIZE: usize = 4;
+const MAX_QUEUE_SIZE: usize = 2;
 
 pub trait JobInfo: Send + Clone + 'static {
     /// Check if the info are compatible.
