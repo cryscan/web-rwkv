@@ -11,6 +11,8 @@ pub mod v4;
 pub mod v5;
 pub mod v6;
 
+const MAX_QUEUE_SIZE: usize = 4;
+
 pub trait JobInfo: Send + Clone + 'static {
     /// Check if the info are compatible.
     fn check(&self, info: &Self) -> bool;
@@ -110,7 +112,7 @@ where
                 }
                 queue.append(&mut remain);
 
-                let predict = if queue.len() > 4 { 0 } else { 4 - queue.len() };
+                let predict = MAX_QUEUE_SIZE - MAX_QUEUE_SIZE.min(queue.len());
                 for info in (&input).into_iter().take(predict) {
                     let _info = info.clone();
                     let builder = builder.clone();
