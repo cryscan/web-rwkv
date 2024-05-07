@@ -479,20 +479,17 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
         let context = &self.context;
         let size = self.buffer.size();
-        let map = context.checkout_buffer(
+        let buffer = context.checkout_buffer(
             size as usize,
             BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         );
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
-        encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &buffer, 0, size);
         context.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let _ = context.event().send(ContextEvent::ReadBack {
-            buffer: map,
-            sender,
-        });
+        let _ = context.event().send(ContextEvent { buffer, sender });
         let data = receiver.blocking_recv().unwrap();
         let data = unsafe {
             let data = Box::leak(data);
@@ -515,21 +512,18 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
         let context = &self.context;
         let size = self.buffer.size();
-        let map = context.checkout_buffer(
+        let buffer = context.checkout_buffer(
             size as usize,
             BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         );
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
-        encoder.copy_buffer_to_buffer(&self.buffer, 0, &map, 0, size);
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &buffer, 0, size);
         context.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = tokio::sync::oneshot::channel();
 
-        let _ = context.event().send(ContextEvent::ReadBack {
-            buffer: map,
-            sender,
-        });
+        let _ = context.event().send(ContextEvent { buffer, sender });
         let data = receiver.await.unwrap();
         let data = unsafe {
             let data = Box::leak(data);
