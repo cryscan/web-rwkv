@@ -1,7 +1,7 @@
 use itertools::Itertools;
 use web_rwkv_derive::{Deref, DerefMut};
 
-use super::JobInput;
+use super::{JobInfo, JobInput};
 use crate::tensor::TensorCpu;
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
@@ -66,6 +66,13 @@ impl InferInfo {
             inputs,
             outputs,
         }
+    }
+}
+
+impl JobInfo for InferInfo {
+    #[inline]
+    fn check(&self, info: &Self) -> bool {
+        self.num_token() == info.num_token() && self.redirect() == info.redirect()
     }
 }
 

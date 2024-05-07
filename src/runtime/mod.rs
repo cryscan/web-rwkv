@@ -11,14 +11,17 @@ pub mod v4;
 pub mod v5;
 pub mod v6;
 
+pub trait JobInfo: Send + Clone + 'static {
+    /// Check if the info are compatible.
+    fn check(&self, info: &Self) -> bool;
+}
+
 /// A [`Job`] to be executed on GPU.
 pub trait Job: Sized + Send + 'static {
-    type Info;
+    type Info: JobInfo;
     type Input;
     type Output;
 
-    /// Check if the input is compatible.
-    fn check(&self, input: &Self::Input, info: &Self::Info) -> bool;
     /// Load the data from CPU to GPU.
     fn load(self, input: &Self::Input) -> Result<Self>;
     /// Submit the job to GPU and execute it immediately.
@@ -27,12 +30,12 @@ pub trait Job: Sized + Send + 'static {
     fn back(self) -> impl Future<Output = Result<Self::Output>> + Send;
 }
 
-pub trait JobBuilder<J: Job>: Send + 'static {
+pub trait JobBuilder<J: Job>: Send + Clone + 'static {
     type Info;
 
     /// Build a [`Job`] from the given info.
     /// This usually involves creating a list of GPU commands (but not actually execution).
-    fn build(&self, info: Self::Info) -> impl Future<Output = Result<J>> + Send;
+    fn build(&self, info: Self::Info) -> Result<J>;
 }
 
 #[derive(Debug)]
@@ -57,7 +60,7 @@ pub struct JobRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
 #[allow(clippy::type_complexity)]
 impl<I, O, T, F> JobRuntime<I, O>
 where
-    T: Send + 'static,
+    T: JobInfo,
     F: Iterator<Item = T> + Send + 'static,
     I: JobInput,
     O: Send + 'static,
@@ -85,23 +88,39 @@ where
     where
         J: Job<Info = T, Input = I::Chunk, Output = O>,
     {
-        let mut predict: Option<J> = None;
+        let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
+
         while let Some(Submission { input, sender }) = receiver.recv().await {
             let mut iter = (&input).into_iter();
             let Some(info) = iter.next() else {
                 continue;
             };
-            let next = iter.next();
-            drop(iter);
-
-            fn check<J: Job>(job: J, input: &J::Input, info: &J::Info) -> Option<J> {
-                job.check(input, info).then_some(job)
-            }
 
             let chunk = input.chunk();
-            let mut job = match predict.take().and_then(|job| check(job, &chunk, &info)) {
-                Some(job) => job,
-                None => builder.build(info).await?,
+
+            let mut job = loop {
+                let mut job = None;
+                let mut remain = vec![];
+                for (_info, handle) in queue.drain(..) {
+                    match (job.is_none(), info.check(&_info)) {
+                        (true, true) => job = Some(handle),
+                        (true, false) => handle.abort(),
+                        (false, _) => remain.push((_info, handle)),
+                    }
+                }
+                queue.append(&mut remain);
+
+                let predict = if queue.len() > 4 { 0 } else { 4 - queue.len() };
+                for info in (&input).into_iter().take(predict) {
+                    let _info = info.clone();
+                    let builder = builder.clone();
+                    let handle = tokio::task::spawn_blocking(move || builder.build(_info));
+                    queue.push((info.clone(), handle));
+                }
+
+                if let Some(job) = job {
+                    break job.await??;
+                }
             }
             .load(&chunk)?;
 
@@ -117,13 +136,7 @@ where
             }
 
             job.submit();
-            let handle = tokio::spawn(back(job, input, sender));
-
-            predict = match next {
-                Some(info) => Some(builder.build(info).await?),
-                None => None,
-            };
-            handle.await??;
+            tokio::spawn(back(job, input, sender));
         }
         Ok(())
     }
