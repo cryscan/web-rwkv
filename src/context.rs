@@ -344,7 +344,15 @@ impl ContextInternal {
 
         let data = {
             let map = slice.get_mapped_range();
-            map.to_vec().into_boxed_slice()
+            let len = map.len();
+            let size = std::mem::size_of::<u32>();
+            let data = vec![0u32; (len + size - 1) / size].into_boxed_slice();
+            unsafe {
+                let data = Box::leak(data);
+                let data: &mut [u8] = bytemuck::cast_slice_mut(data);
+                data.copy_from_slice(&map);
+                Box::from_raw(data)
+            }
         };
         buffer.unmap();
         data

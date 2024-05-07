@@ -428,7 +428,7 @@ impl<T: Scalar> TensorInto<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> 
     fn transfer_into(self, context: &Context) -> Self {
         match context {
             context if context == &self.context => self,
-            _ => self.back_local().transfer_into(context),
+            _ => self.back_in_place().transfer_into(context),
         }
     }
 }
@@ -474,7 +474,7 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
 
 impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn back_local(&self) -> TensorCpu<T> {
+    pub fn back_in_place(&self) -> TensorCpu<T> {
         use crate::context::ContextEvent;
 
         let context = &self.context;
@@ -495,10 +495,8 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         });
         let data = receiver.blocking_recv().unwrap();
         let data = unsafe {
-            let len = data.len() / std::mem::size_of::<T>();
             let data = Box::leak(data);
-            let data = data.as_mut_ptr() as *mut T;
-            let slice = core::slice::from_raw_parts_mut(data, len);
+            let slice = bytemuck::cast_slice_mut::<_, T>(data);
             Box::from_raw(slice)
         };
         let data = data.into_vec().into();
@@ -534,10 +532,8 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         });
         let data = receiver.await.unwrap();
         let data = unsafe {
-            let len = data.len() / std::mem::size_of::<T>();
             let data = Box::leak(data);
-            let data = data.as_mut_ptr() as *mut T;
-            let slice = core::slice::from_raw_parts_mut(data, len);
+            let slice = bytemuck::cast_slice_mut::<_, T>(data);
             Box::from_raw(slice)
         };
         let data = data.into_vec().into();
