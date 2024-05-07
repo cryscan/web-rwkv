@@ -8,8 +8,8 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
     BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
-    DeviceDescriptor, Features, Instance, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
-    RequestAdapterOptions, ShaderModuleDescriptor,
+    DeviceDescriptor, Features, Instance, Limits, Maintain, PipelineLayoutDescriptor,
+    PowerPreference, Queue, RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
 use crate::tensor::{
@@ -44,12 +44,9 @@ impl InstanceExt for Instance {
 pub struct ContextId;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub enum ContextEvent {
-    ReadBack {
-        buffer: Arc<Buffer>,
-        sender: tokio::sync::oneshot::Sender<Box<[u8]>>,
-    },
-    Drop,
+pub struct ContextEvent {
+    pub buffer: Arc<Buffer>,
+    pub sender: tokio::sync::oneshot::Sender<Box<[u8]>>,
 }
 
 #[derive(Debug)]
@@ -73,7 +70,8 @@ pub struct Context(Arc<ContextInternal>);
 impl Drop for Context {
     fn drop(&mut self) {
         if Arc::strong_count(&self.0) <= 1 {
-            let _ = self.event.send(ContextEvent::Drop);
+            self.queue.submit(None);
+            self.device.poll(Maintain::Wait);
         }
     }
 }
@@ -145,13 +143,13 @@ impl<'a> ContextBuilder {
             let id = context.id;
             let context = Arc::downgrade(&context);
             std::thread::spawn(move || {
-                while let Some(event) = receiver.blocking_recv() {
-                    match (event, context.upgrade()) {
-                        (ContextEvent::ReadBack { buffer, sender }, Some(context)) => {
+                while let Some(ContextEvent { buffer, sender }) = receiver.blocking_recv() {
+                    match context.upgrade() {
+                        Some(context) => {
                             let data = context.read_back_buffer(buffer);
                             let _ = sender.send(data);
                         }
-                        _ => break,
+                        None => break,
                     }
                 }
                 log::info!("context {} destroyed", id);
