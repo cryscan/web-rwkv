@@ -357,10 +357,6 @@ impl Job for InferJob {
     type Input = InferChunk;
     type Output = InferOutput;
 
-    fn check(&self, input: &Self::Input, info: &Self::Info) -> bool {
-        input.num_token() == self.cursors.shape()[0] && info.redirect() == self.redirect
-    }
-
     fn load(self, input: &Self::Input) -> Result<Self> {
         if input.num_token() == 0 {
             return Ok(self);
@@ -437,6 +433,7 @@ pub struct Frame<F: Float> {
 pub type HookFn<F> = Box<dyn Fn(Frame<F>) -> Result<TensorOp, TensorError> + Send + Sync>;
 pub type HookMap<F> = HashMap<Hook, HookFn<F>>;
 
+#[derive(Clone)]
 pub struct ModelRuntime<F: Float> {
     model: Model,
     state: State,
@@ -509,7 +506,7 @@ fn hook_op<F: Float>(
 impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
     type Info = InferInfo;
 
-    async fn build(&self, seed: Self::Info) -> Result<InferJob> {
+    fn build(&self, seed: Self::Info) -> Result<InferJob> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
