@@ -9,7 +9,7 @@ keywords = ["deep-learning", "language", "model", "rwkv"]
 license = "MIT OR Apache-2.0"
 name = "web-rwkv"
 repository = "https://github.com/cryscan/web-rwkv"
-version = "0.8.5"
+version = "0.8.6"
 
 [dependencies]
 ahash = "0.8"
