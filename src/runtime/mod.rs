@@ -101,32 +101,40 @@ where
             let chunk = input.chunk();
 
             let mut job = loop {
-                let mut job = None;
+                let mut candidates = vec![];
                 let mut remain = vec![];
-                for (_info, handle) in queue.drain(..) {
-                    match (job.is_none(), info.check(&_info)) {
-                        (true, true) => job = Some(handle),
+                for (key, handle) in queue.drain(..) {
+                    match (candidates.is_empty(), info.check(&key)) {
                         (true, false) => handle.abort(),
-                        (false, _) => remain.push((_info, handle)),
+                        (false, false) => remain.push((key, handle)),
+                        (_, true) => candidates.push(handle),
                     }
                 }
-                queue.append(&mut remain);
+                queue = remain;
 
-                if job.is_none() || iter.is_none() {
+                if candidates.is_empty() || iter.is_none() {
                     iter = Some((&input).into_iter());
                 }
                 let iter = iter.as_mut().expect("iter should be assigned");
 
-                let predict = MAX_QUEUE_SIZE - MAX_QUEUE_SIZE.min(queue.len());
+                let remain = queue.len() + candidates.len().max(1) - 1;
+                let predict = MAX_QUEUE_SIZE - MAX_QUEUE_SIZE.min(remain);
                 for info in iter.take(predict) {
-                    let _info = info.clone();
+                    let key = info.clone();
                     let builder = builder.clone();
-                    let handle = tokio::task::spawn_blocking(move || builder.build(_info));
+                    let handle = tokio::task::spawn_blocking(move || builder.build(key));
                     queue.push((info.clone(), handle));
                 }
 
-                if let Some(job) = job {
-                    break job.await??;
+                if !candidates.is_empty() {
+                    let (job, _, remain) = futures::future::select_all(candidates).await;
+                    let mut remain = remain
+                        .into_iter()
+                        .map(|handle| (info.clone(), handle))
+                        .collect();
+                    std::mem::swap(&mut queue, &mut remain);
+                    queue.append(&mut remain);
+                    break job??;
                 }
             }
             .load(&chunk)?;
