@@ -206,6 +206,7 @@ impl IntoIterator for &InferInput {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct InferIter {
     batches: Vec<(BatchState, InferOption)>,
     token_chunk_size: usize,

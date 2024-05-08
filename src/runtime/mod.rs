@@ -91,10 +91,10 @@ where
         J: Job<Info = T, Input = I::Chunk, Output = O>,
     {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
+        let mut iter: Option<F> = None;
 
         while let Some(Submission { input, sender }) = receiver.recv().await {
-            let mut iter = (&input).into_iter();
-            let Some(info) = iter.next() else {
+            let Some(info) = (&input).into_iter().next() else {
                 continue;
             };
 
@@ -112,8 +112,13 @@ where
                 }
                 queue.append(&mut remain);
 
+                if job.is_none() || iter.is_none() {
+                    iter = Some((&input).into_iter());
+                }
+                let iter = iter.as_mut().expect("iter should be assigned");
+
                 let predict = MAX_QUEUE_SIZE - MAX_QUEUE_SIZE.min(queue.len());
-                for info in (&input).into_iter().take(predict) {
+                for info in iter.take(predict) {
                     let _info = info.clone();
                     let builder = builder.clone();
                     let handle = tokio::task::spawn_blocking(move || builder.build(_info));
