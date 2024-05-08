@@ -11,8 +11,7 @@ pub mod v4;
 pub mod v5;
 pub mod v6;
 
-const MAX_QUEUE_SIZE: usize = 4;
-const MIN_QUEUE_SIZE: usize = 2;
+const MAX_QUEUE_SIZE: usize = 2;
 
 pub trait JobInfo: Send + Clone + 'static {
     /// Check if the info are compatible.
@@ -93,7 +92,6 @@ where
     {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
         let mut iter: Option<F> = None;
-        let mut capacity = MAX_QUEUE_SIZE;
 
         while let Some(Submission { input, sender }) = receiver.recv().await {
             let Some(info) = (&input).into_iter().next() else {
@@ -119,14 +117,8 @@ where
                 }
                 let iter = iter.as_mut().expect("iter should be assigned");
 
-                // adjust the number of running tasks on the fly
-                capacity -= 1;
-                if capacity < MIN_QUEUE_SIZE {
-                    capacity = MAX_QUEUE_SIZE;
-                }
-
                 let remain = queue.len() + candidates.len().max(1) - 1;
-                let predict = capacity - capacity.min(remain);
+                let predict = MAX_QUEUE_SIZE - MAX_QUEUE_SIZE.min(remain);
                 for info in iter.take(predict) {
                     let key = info.clone();
                     let builder = builder.clone();
