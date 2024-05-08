@@ -185,11 +185,8 @@ impl<'a> ContextBuilder {
 pub struct Macros(Vec<(String, String)>);
 
 impl Macros {
-    // pub fn new(block_size: u32) -> Self {
-    //     Self(vec![("BLOCK_SIZE".into(), format!("{}u", block_size))])
-    // }
     pub fn new() -> Self {
-        Self(vec![])
+        Default::default()
     }
 }
 
@@ -201,8 +198,8 @@ struct PipelineKey {
 }
 
 impl PipelineKey {
-    fn new(name: String, entry_point: String, mut macros: Macros) -> Self {
-        macros.0.sort();
+    fn new(name: String, entry_point: String, macros: Macros) -> Self {
+        // macros.0.sort();
         Self {
             name,
             entry_point,
@@ -238,11 +235,11 @@ impl ContextInternal {
         let entry_point = entry_point.as_ref();
         let key = PipelineKey::new(name.into(), entry_point.into(), macros.clone());
 
-        use gpp::{process_str, Context};
-        let mut context = Context::new();
-        context.macros = macros.0.into_iter().collect();
+        self.pipeline_cache.checkout(key, move || {
+            use gpp::{process_str, Context};
+            let mut context = Context::new();
+            context.macros = macros.0.into_iter().collect();
 
-        self.pipeline_cache.checkout(key, || {
             let shader = process_str(source.as_ref(), &mut context).unwrap();
             let module = &self.device.create_shader_module(ShaderModuleDescriptor {
                 label: Some(name),

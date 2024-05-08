@@ -1,5 +1,5 @@
+use rustc_hash::FxHashMap as HashMap;
 use std::{
-    collections::HashMap,
     hash::Hash,
     sync::{Arc, Mutex},
 };
@@ -42,8 +42,8 @@ where
     pub fn checkout(&self, key: K, miss: impl FnOnce() -> V) -> Arc<V> {
         let mut map = self.map.lock().unwrap();
 
-        let value = match map.remove(&key) {
-            Some((value, _)) => value,
+        let value = match map.get(&key) {
+            Some((value, _)) => value.clone(),
             None => Arc::new(miss()),
         };
 
