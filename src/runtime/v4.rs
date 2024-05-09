@@ -511,9 +511,6 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
             });
         }
 
-        #[cfg(feature = "async-build")]
-        let mut tasks = tokio::task::JoinSet::new();
-        #[cfg(not(feature = "async-build"))]
         let mut commands = vec![];
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
@@ -578,9 +575,6 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
                 drop(pass);
                 Ok((id, encoder.finish()))
             };
-            #[cfg(feature = "async-build")]
-            tasks.spawn_blocking(f);
-            #[cfg(not(feature = "async-build"))]
             commands.push(f()?)
         }
 
@@ -596,9 +590,6 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
                     build_layer(context, hooks, frame, layer, index, num_token)?,
                 ))
             };
-            #[cfg(feature = "async-build")]
-            tasks.spawn_blocking(f);
-            #[cfg(not(feature = "async-build"))]
             commands.push(f()?)
         }
 
@@ -614,18 +605,9 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
                     build_header(context, hooks, frame, head, head_x, num_header, head_ops)?,
                 ))
             };
-            #[cfg(feature = "async-build")]
-            tasks.spawn_blocking(f);
-            #[cfg(not(feature = "async-build"))]
             commands.push(f()?)
         }
 
-        #[cfg(feature = "async-build")]
-        let mut commands = vec![];
-        #[cfg(feature = "async-build")]
-        while let Some(result) = tasks.join_next().await {
-            commands.push(result??);
-        }
         let commands = commands
             .into_iter()
             .sorted_by_key(|x| x.0)

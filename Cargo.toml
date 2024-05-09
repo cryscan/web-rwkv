@@ -63,8 +63,6 @@ default = ["runtime", "subgroup-ops", "tokio-multi-thread", "vanilla"]
 native = ["runtime", "subgroup-ops", "tokio-multi-thread"]
 web = ["vanilla"]
 
-## Enables async GPU command building. Can be faster on some Xeon cpus but slower on others.
-async-build = []
 ## Enables `runtime` API, which essentially doubles the inference speed comparing to the old API.
 runtime = []
 ## Enables subgroup operations in the kernels. Accelerates the inference on some device.
