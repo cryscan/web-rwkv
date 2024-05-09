@@ -72,7 +72,7 @@ subgroup-ops = []
 ## Enables tokio's multi-threaded runtime. Doesn't work on web platforms.
 tokio-multi-thread = ["tokio/rt-multi-thread"]
 ## Enables performance tracing.
-tracy = ["tracing", "tracing-tracy"]
+trace = ["tracing", "tracing-tracy"]
 ## Enables `vanilla` API.
 vanilla = []
 

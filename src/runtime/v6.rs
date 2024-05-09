@@ -544,6 +544,9 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
             });
         }
 
+        #[cfg(feature = "trace")]
+        let _span = tracing::trace_span!("build").entered();
+
         let mut commands = vec![];
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
@@ -598,6 +601,9 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
         let mut id = PassId::new();
 
         {
+            #[cfg(feature = "trace")]
+            let _span = tracing::trace_span!("embed").entered();
+
             let context = context.clone();
             let id = id.inc();
             let f = move || -> Result<_> {
@@ -612,6 +618,9 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
         }
 
         for (index, layer) in tensor.layers.iter().enumerate() {
+            #[cfg(feature = "trace")]
+            let _span = tracing::trace_span!("layer", index).entered();
+
             let context = context.clone();
             let id = id.inc();
             let hooks = self.hooks.clone();
@@ -627,6 +636,9 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
         }
 
         {
+            #[cfg(feature = "trace")]
+            let _span = tracing::trace_span!("header").entered();
+
             let context = context.clone();
             let id = id.inc();
             let hooks = self.hooks.clone();
