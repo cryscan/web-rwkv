@@ -317,12 +317,12 @@ where
             break;
         } else if &user_text == "+" {
             state.load(&backed)?;
-            user_text = last_user_text.clone();
-            tokens = last_tokens.clone();
+            user_text.clone_from(&last_user_text);
+            tokens.clone_from(&last_tokens);
         } else {
             backed = state.back().await;
-            last_user_text = user_text.clone();
-            last_tokens = tokens.clone();
+            last_user_text.clone_from(&user_text);
+            last_tokens.clone_from(&tokens);
         }
 
         print!("\n{}:", bot);

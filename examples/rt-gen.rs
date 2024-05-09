@@ -14,6 +14,8 @@ use tokio::{
     fs::File,
     io::{AsyncReadExt, BufReader},
 };
+#[cfg(feature = "trace")]
+use tracing_subscriber::layer::SubscriberExt;
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
@@ -119,8 +121,13 @@ async fn main() -> Result<()> {
         .with_level(log::LevelFilter::Warn)
         .with_module_level("web_rwkv", log::LevelFilter::Info)
         .with_module_level("rt_gen", log::LevelFilter::Info)
-        .init()
-        .unwrap();
+        .init()?;
+    #[cfg(feature = "trace")]
+    {
+        let registry = tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default());
+        tracing::subscriber::set_global_default(registry)?;
+    }
+
     let cli = Cli::parse();
 
     let tokenizer = load_tokenizer().await?;
