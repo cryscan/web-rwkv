@@ -13,7 +13,7 @@ use super::{
         InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
     },
     loader::{Loader, Reader},
-    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, PassId, Quant, State as _},
+    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
     Job, JobBuilder,
 };
 use crate::{
@@ -547,8 +547,6 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
         #[cfg(feature = "trace")]
         let _span = tracing::trace_span!("build").entered();
 
-        let mut commands = vec![];
-
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
             (vec![], buffer.x.clone())
         } else {
@@ -574,90 +572,70 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
         };
 
         let hook_op = |hook: Hook| hook_op(&self.hooks, &hook, &frame);
-
         let mut ops = vec![];
-        let embed_device = match &tensor.embed.u {
-            Some(u) => {
-                ops.push(TensorOp::embed(&buffer.tokens, u, &buffer.input)?);
-                EmbedDevice::Gpu
-            }
-            None => EmbedDevice::Cpu,
-        };
-        ops.append(&mut vec![
-            hook_op(Hook::PostEmbedLoaded)?,
-            TensorOp::layer_norm(
-                &tensor.embed.layer_norm.w,
-                &tensor.embed.layer_norm.b,
-                &buffer.input,
-                Model::LN_EPS,
-            )?,
-            TensorOp::blit(
-                buffer.input.view(.., .., .., ..)?,
-                buffer.x.view(.., .., .., ..)?,
-            )?,
-            hook_op(Hook::PostEmbedLayerNorm)?,
-        ]);
 
-        let mut id = PassId::new();
-
-        {
+        let embed_device = {
             #[cfg(feature = "trace")]
             let _span = tracing::trace_span!("embed").entered();
 
-            let context = context.clone();
-            let id = id.inc();
-            let f = move || -> Result<_> {
-                let ops = TensorOp::List(ops);
-                let mut encoder = context.device.create_command_encoder(&Default::default());
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.execute_tensor_op(&ops);
-                drop(pass);
-                Ok((id, encoder.finish()))
+            let embed_device = match &tensor.embed.u {
+                Some(u) => {
+                    ops.push(TensorOp::embed(&buffer.tokens, u, &buffer.input)?);
+                    EmbedDevice::Gpu
+                }
+                None => EmbedDevice::Cpu,
             };
-            commands.push(f()?)
-        }
+            ops.append(&mut vec![
+                hook_op(Hook::PostEmbedLoaded)?,
+                TensorOp::layer_norm(
+                    &tensor.embed.layer_norm.w,
+                    &tensor.embed.layer_norm.b,
+                    &buffer.input,
+                    Model::LN_EPS,
+                )?,
+                TensorOp::blit(
+                    buffer.input.view(.., .., .., ..)?,
+                    buffer.x.view(.., .., .., ..)?,
+                )?,
+                hook_op(Hook::PostEmbedLayerNorm)?,
+            ]);
+            embed_device
+        };
 
         for (index, layer) in tensor.layers.iter().enumerate() {
             #[cfg(feature = "trace")]
             let _span = tracing::trace_span!("layer", index).entered();
 
-            let context = context.clone();
-            let id = id.inc();
             let hooks = self.hooks.clone();
             let frame = frame.clone();
             let layer = layer.clone();
-            let f = move || -> Result<_> {
-                Ok((
-                    id,
-                    build_layer(context, hooks, frame, layer, index, num_token, head_size)?,
-                ))
-            };
-            commands.push(f()?)
+
+            let op = build_layer(hooks, frame, layer, index, num_token, head_size)?;
+            ops.push(op);
         }
 
         {
             #[cfg(feature = "trace")]
             let _span = tracing::trace_span!("header").entered();
 
-            let context = context.clone();
-            let id = id.inc();
             let hooks = self.hooks.clone();
             let frame = frame.clone();
             let head = model.tensor.head.clone();
-            let f = move || -> Result<_> {
-                Ok((
-                    id,
-                    build_header(context, hooks, frame, head, head_x, num_header, head_ops)?,
-                ))
-            };
-            commands.push(f()?)
+
+            let op = build_header(hooks, frame, head, head_x, num_header, head_ops)?;
+            ops.push(op);
         }
 
-        let commands = commands
-            .into_iter()
-            .sorted_by_key(|x| x.0)
-            .map(|x| x.1)
-            .collect_vec();
+        let mut encoder = context.device.create_command_encoder(&Default::default());
+        {
+            #[cfg(feature = "trace")]
+            let _span = tracing::trace_span!("encode").entered();
+            let op = TensorOp::List(ops);
+
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.execute_tensor_op(&op);
+        }
+        let commands = vec![encoder.finish()];
 
         Ok(InferJob {
             commands,
@@ -674,18 +652,15 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
 
 #[allow(clippy::too_many_arguments)]
 fn build_layer<F: Float>(
-    context: Context,
     hooks: Arc<HookMap<F>>,
     frame: Frame<F>,
     layer: Layer,
     index: usize,
     num_token: usize,
     head_size: usize,
-) -> Result<CommandBuffer> {
+) -> Result<TensorOp> {
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let Frame { state, buffer, .. } = &frame;
-
-    let mut encoder = context.device.create_command_encoder(&Default::default());
 
     use TensorDimension::{Auto, Dimension};
     let time_first =
@@ -728,9 +703,13 @@ fn build_layer<F: Float>(
         Dimension(1),
     )?;
 
-    encoder.copy_tensor(&buffer.x, &buffer.att_x)?;
+    let mut ops = vec![];
 
-    let ops = TensorOp::List(vec![
+    ops.append(&mut vec![
+        TensorOp::blit(
+            buffer.x.view(.., .., .., ..)?,
+            buffer.att_x.view(.., .., .., ..)?,
+        )?,
         hook_op(Hook::PreAtt(index))?,
         TensorOp::layer_norm(
             &layer.att_layer_norm.w,
@@ -874,14 +853,11 @@ fn build_layer<F: Float>(
         hook_op(Hook::PostAtt(index))?,
     ]);
 
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-    }
-
-    encoder.copy_tensor(&buffer.x, &buffer.ffn_x)?;
-
-    let ops = TensorOp::List(vec![
+    ops.append(&mut vec![
+        TensorOp::blit(
+            buffer.x.view(.., .., .., ..)?,
+            buffer.ffn_x.view(.., .., .., ..)?,
+        )?,
         hook_op(Hook::PreFfn(index))?,
         TensorOp::layer_norm(
             &layer.ffn_layer_norm.w,
@@ -945,33 +921,24 @@ fn build_layer<F: Float>(
         hook_op(Hook::PostFfn(index))?,
     ]);
 
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-    }
-
     if (index + 1) % Model::RESCALE_LAYER == 0 {
-        let op = TensorOp::discount(&buffer.x, 0.5, 0.0)?;
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&op);
+        ops.push(TensorOp::discount(&buffer.x, 0.5, 0.0)?);
     }
 
-    Ok(encoder.finish())
+    Ok(TensorOp::List(ops))
 }
 
 fn build_header<F: Float>(
-    context: Context,
     hooks: Arc<HookMap<F>>,
     frame: Frame<F>,
     head: Head,
     head_x: TensorGpu<F, ReadWrite>,
     num_header: usize,
     mut ops: Vec<TensorOp>,
-) -> Result<CommandBuffer> {
+) -> Result<TensorOp> {
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let header = &frame.header;
 
-    let mut encoder = context.device.create_command_encoder(&Default::default());
     if num_header > 0 {
         ops.append(&mut vec![
             hook_op(Hook::PreHead)?,
@@ -990,12 +957,8 @@ fn build_header<F: Float>(
             )?,
             hook_op(Hook::PostHead)?,
         ]);
-        let ops = TensorOp::List(ops);
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
     }
-    Ok(encoder.finish())
+    Ok(TensorOp::List(ops))
 }
 
 impl<R: Reader> Build<Model> for ModelBuilder<R> {

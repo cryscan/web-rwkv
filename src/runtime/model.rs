@@ -151,23 +151,6 @@ impl<R: Reader> ModelBuilder<R> {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct PassId(usize);
-
-impl PassId {
-    #[inline]
-    pub fn new() -> Self {
-        Self(0)
-    }
-
-    #[inline]
-    pub fn inc(&mut self) -> usize {
-        let x = self.0;
-        self.0 += 1;
-        x
-    }
-}
-
 pub trait ContextAutoLimits {
     /// Compute the limits automatically based on given model build info.
     fn auto_limits(self, info: &ModelInfo) -> Self;
