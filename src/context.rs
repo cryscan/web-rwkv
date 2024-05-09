@@ -146,6 +146,8 @@ impl<'a> ContextBuilder {
                 while let Some(ContextEvent { buffer, sender }) = receiver.blocking_recv() {
                     match context.upgrade() {
                         Some(context) => {
+                            #[cfg(feature = "trace")]
+                            let _span = tracing::trace_span!("device").entered();
                             let data = context.read_back_buffer(buffer);
                             let _ = sender.send(data);
                         }

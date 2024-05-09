@@ -166,8 +166,6 @@ where
                 let output = job.back().await?;
                 input.step();
                 let _ = sender.send((input, output));
-                #[cfg(feature = "trace")]
-                tracing::event!(tracing::Level::TRACE, "back");
                 Ok(())
             }
 
