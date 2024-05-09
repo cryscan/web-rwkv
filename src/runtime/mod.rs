@@ -99,13 +99,6 @@ where
                 continue;
             };
 
-            predict = match predict {
-                2 => 1,
-                1 => 0,
-                0 => 2,
-                _ => unreachable!(),
-            };
-
             let chunk = input.chunk();
 
             let mut job = loop {
@@ -119,6 +112,13 @@ where
                     }
                 }
                 queue = remain;
+
+                predict = match predict {
+                    2 => 1,
+                    1 => 0,
+                    0 => 2,
+                    _ => unreachable!(),
+                };
 
                 // we have a cache miss, restart the pipeline
                 if candidates.is_empty() || iter.is_none() {
