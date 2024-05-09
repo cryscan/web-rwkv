@@ -544,9 +544,9 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
             });
         }
 
-        #[cfg(feature = "async-build")]
-        let mut tasks = tokio::task::JoinSet::new();
-        #[cfg(not(feature = "async-build"))]
+        #[cfg(feature = "trace")]
+        let _span = tracing::trace_span!("build").entered();
+
         let mut commands = vec![];
 
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
@@ -601,6 +601,9 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
         let mut id = PassId::new();
 
         {
+            #[cfg(feature = "trace")]
+            let _span = tracing::trace_span!("embed").entered();
+
             let context = context.clone();
             let id = id.inc();
             let f = move || -> Result<_> {
@@ -611,13 +614,13 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
                 drop(pass);
                 Ok((id, encoder.finish()))
             };
-            #[cfg(feature = "async-build")]
-            tasks.spawn_blocking(f);
-            #[cfg(not(feature = "async-build"))]
             commands.push(f()?)
         }
 
         for (index, layer) in tensor.layers.iter().enumerate() {
+            #[cfg(feature = "trace")]
+            let _span = tracing::trace_span!("layer", index).entered();
+
             let context = context.clone();
             let id = id.inc();
             let hooks = self.hooks.clone();
@@ -629,13 +632,13 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
                     build_layer(context, hooks, frame, layer, index, num_token, head_size)?,
                 ))
             };
-            #[cfg(feature = "async-build")]
-            tasks.spawn_blocking(f);
-            #[cfg(not(feature = "async-build"))]
             commands.push(f()?)
         }
 
         {
+            #[cfg(feature = "trace")]
+            let _span = tracing::trace_span!("header").entered();
+
             let context = context.clone();
             let id = id.inc();
             let hooks = self.hooks.clone();
@@ -647,18 +650,9 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
                     build_header(context, hooks, frame, head, head_x, num_header, head_ops)?,
                 ))
             };
-            #[cfg(feature = "async-build")]
-            tasks.spawn_blocking(f);
-            #[cfg(not(feature = "async-build"))]
             commands.push(f()?)
         }
 
-        #[cfg(feature = "async-build")]
-        let mut commands = vec![];
-        #[cfg(feature = "async-build")]
-        while let Some(result) = tasks.join_next().await {
-            commands.push(result??);
-        }
         let commands = commands
             .into_iter()
             .sorted_by_key(|x| x.0)

@@ -146,8 +146,7 @@ async fn main() -> Result<()> {
         .with_level(log::LevelFilter::Warn)
         .with_module_level("web_rwkv", log::LevelFilter::Info)
         .with_module_level("rt_batch", log::LevelFilter::Info)
-        .init()
-        .unwrap();
+        .init()?;
     let cli = Cli::parse();
     let batch = cli.batch;
 

@@ -214,8 +214,7 @@ async fn main() -> Result<()> {
         .with_level(log::LevelFilter::Warn)
         .with_module_level("web_rwkv", log::LevelFilter::Info)
         .with_module_level("rt_chat", log::LevelFilter::Info)
-        .init()
-        .unwrap();
+        .init()?;
     let cli = Cli::parse();
 
     let tokenizer = load_tokenizer().await?;
@@ -330,7 +329,7 @@ async fn main() -> Result<()> {
         match user_text.as_str() {
             "-" => break,
             "+" => {
-                user_text = last_user_text.clone();
+                user_text.clone_from(&last_user_text);
                 inference.batches[0] = InferInputBatch {
                     tokens: last_tokens.clone(),
                     option: InferOption::Last,
@@ -338,8 +337,8 @@ async fn main() -> Result<()> {
                 state.load(0, backed.clone())?;
             }
             _ => {
-                last_user_text = user_text.clone();
-                last_tokens = inference.batches[0].tokens.clone();
+                last_user_text.clone_from(&user_text);
+                last_tokens.clone_from(&inference.batches[0].tokens);
                 backed = state.back(0).await?;
             }
         }
