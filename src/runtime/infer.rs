@@ -5,6 +5,7 @@ use super::{JobInfo, JobInput};
 use crate::tensor::TensorCpu;
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
+pub const NUM_LAYER_CHUNK: usize = 4;
 
 #[derive(Debug, Clone, Deref, DerefMut, PartialEq, Eq)]
 pub struct InferInfo(pub Vec<InferInfoBatch>);

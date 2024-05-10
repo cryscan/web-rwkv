@@ -7,7 +7,6 @@ use wgpu::{BindingResource, Buffer, BufferBinding, BufferUsages};
 
 use self::{
     kind::{Kind, ReadWrite, Uniform},
-    ops::TensorCommand,
     shape::{IntoBytes, Shape, TensorAxis, TensorDimension, TensorSlice},
 };
 use crate::{
@@ -843,12 +842,11 @@ impl<T: Scalar> DeepClone for TensorGpu<T, ReadWrite> {
     fn deep_clone(&self) -> Self {
         let context = &self.context;
         let shape = self.shape;
-        let cloned = context.tensor_init(shape);
+        let size = shape.len() as u64;
+        let cloned: TensorGpu<_, _> = context.tensor_init(shape);
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
-        encoder
-            .copy_tensor(self, &cloned)
-            .expect("tensor deep clone");
+        encoder.copy_buffer_to_buffer(&self.buffer, 0, &cloned.buffer, 0, size);
         context.queue.submit(Some(encoder.finish()));
 
         cloned

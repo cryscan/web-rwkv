@@ -22,11 +22,7 @@ use web_rwkv::{
         v5, Build, BuildFuture, ContextAutoLimits, Model, ModelBuilder, ModelInfo, ModelInput,
         ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
     },
-    tensor::{
-        kind::ReadWrite,
-        ops::{TensorOp, TensorPass},
-        TensorError, TensorGpu, TensorShape,
-    },
+    tensor::{kind::ReadWrite, ops::TensorOp, TensorError, TensorGpu, TensorShape},
     tokenizer::Tokenizer,
 };
 
@@ -244,10 +240,8 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     // map the activations into vocab space
-    let mut encoder = context.device.create_command_encoder(&Default::default());
-
     let tensor = model.tensor();
-    let ops = TensorOp::List(vec![
+    let ops = vec![
         TensorOp::layer_norm(
             &tensor.head.layer_norm.w,
             &tensor.head.layer_norm.b,
@@ -259,13 +253,8 @@ async fn run(cli: Cli) -> Result<()> {
             buffer.out.view(.., .., .., ..)?,
             Default::default(),
         )?,
-    ]);
-
-    let mut pass = encoder.begin_compute_pass(&Default::default());
-    pass.execute_tensor_op(&ops);
-    drop(pass);
-
-    context.queue.submit(Some(encoder.finish()));
+    ];
+    context.queue.submit(context.encode(&TensorOp::List(ops)));
 
     // for each layer, choose the top 5 tokens
     let backed = buffer.out.back().await.to_vec();

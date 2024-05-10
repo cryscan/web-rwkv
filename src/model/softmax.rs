@@ -7,10 +7,8 @@ use super::{ModelBase, ModelInfo, ModelOutput};
 use crate::{
     context::Context,
     tensor::{
-        kind::ReadWrite,
-        ops::{TensorOp, TensorPass},
-        shape::Shape,
-        TensorCpu, TensorError, TensorGpu, TensorInit, TensorShape,
+        kind::ReadWrite, ops::TensorOp, shape::Shape, TensorCpu, TensorError, TensorGpu,
+        TensorInit, TensorShape,
     },
 };
 
@@ -75,16 +73,7 @@ impl<M: ModelBase> ModelSoftmax for M {
         softmax.buffer.load(&input)?;
 
         let op = TensorOp::softmax(&softmax.buffer)?;
-
-        let mut encoder = self
-            .context()
-            .device
-            .create_command_encoder(&Default::default());
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&op);
-        drop(pass);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&op));
 
         let output = softmax.buffer.back().await;
         Ok(redirect

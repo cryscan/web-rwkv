@@ -7,7 +7,7 @@ use crate::{
     num::Float,
     tensor::{
         kind::{ReadWrite, Uniform},
-        ops::{TensorOp, TensorPass},
+        ops::TensorOp,
         shape::Shape,
         TensorError, TensorGpu, TensorGpuView, TensorShape,
     },
@@ -115,14 +115,7 @@ impl Matrix {
         ));
 
         let op = TensorOp::quantize_mat_int8(matrix, &m, &w)?;
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&op);
-        drop(pass);
-
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&op));
 
         Ok(Matrix::Int8 { w, m })
     }
@@ -144,14 +137,7 @@ impl Matrix {
         let m = context.tensor_init(absmax_shape);
 
         let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&op);
-        drop(pass);
-
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&op));
 
         Ok(Matrix::NF4 { w, q, m })
     }

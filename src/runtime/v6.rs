@@ -9,9 +9,7 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{
-        InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
-    },
+    infer::{InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
     model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
     Job, JobBuilder,
@@ -22,7 +20,7 @@ use crate::{
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{Activation, TensorCommand, TensorOp, TensorPass},
+        ops::{Activation, TensorCommand, TensorOp},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
         TensorInto, TensorReshape, TensorShape, TensorStack,
@@ -489,7 +487,7 @@ impl<F: Float> super::model::ModelRuntime for ModelRuntime<F> {
 }
 
 fn turbo(num_token: usize) -> bool {
-    num_token % MIN_TOKEN_CHUNK_SIZE == 0
+    num_token % super::infer::MIN_TOKEN_CHUNK_SIZE == 0
 }
 
 fn hook_op<F: Float>(
@@ -612,6 +610,10 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
 
             let op = build_layer(hooks, frame, layer, index, num_token, head_size)?;
             ops.push(op);
+
+            if (index + 1) % (info.num_layer / super::infer::NUM_LAYER_CHUNK) == 0 {
+                ops.push(TensorOp::Sep);
+            }
         }
 
         {
@@ -626,16 +628,11 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
             ops.push(op);
         }
 
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        {
+        let commands = {
             #[cfg(feature = "trace")]
             let _span = tracing::trace_span!("encode").entered();
-            let op = TensorOp::List(ops);
-
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&op);
-        }
-        let commands = vec![encoder.finish()];
+            context.encode(&TensorOp::List(ops))
+        };
 
         Ok(InferJob {
             commands,
@@ -1032,7 +1029,6 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
                 let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r")).await?;
                 let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g")).await?;
 
-                let mut encoder = context.device.create_command_encoder(&Default::default());
                 let ops = TensorOp::List(vec![
                     TensorOp::blit(
                         time_mix_w.view(.., .., .., ..)?,
@@ -1055,12 +1051,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
                         time_mix.view(.., .., 4, ..)?,
                     )?,
                 ]);
-
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.execute_tensor_op(&ops);
-                drop(pass);
-
-                context.queue.submit(Some(encoder.finish()));
+                context.queue.submit(context.encode(&ops));
                 time_mix
             };
 
@@ -1183,8 +1174,7 @@ pub async fn read_state<R: Reader>(
     let head_size = info.num_emb / info.num_head;
     let data: TensorGpu<f32, _> = context.zeros([info.num_emb, head_size + 2, info.num_layer, 1]);
 
-    let mut encoder = context.device.create_command_encoder(&Default::default());
-
+    let mut ops = vec![];
     for layer in 0..info.num_layer {
         let matrix = loader
             .load_matrix_f16(format!("blocks.{layer}.att.time_state"))
@@ -1196,19 +1186,15 @@ pub async fn read_state<R: Reader>(
             Dimension(1),
             Auto,
         )?;
-        let ops = vec![
+        ops.append(&mut vec![
             TensorOp::transpose(matrix.view(.., .., .., ..)?, state.view(.., .., .., ..)?)?,
             TensorOp::blit(
                 reshaped.view(.., .., .., ..)?,
                 data.view(.., 1..head_size + 1, layer, ..)?,
             )?,
-        ];
-        let ops = TensorOp::List(ops);
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
+        ]);
     }
+    context.queue.submit(context.encode(&TensorOp::List(ops)));
 
-    context.queue.submit(Some(encoder.finish()));
     Ok(data.back().await)
 }
