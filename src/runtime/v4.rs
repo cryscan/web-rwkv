@@ -22,7 +22,7 @@ use crate::{
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{Activation, TensorCommand, TensorOp, TensorPass},
+        ops::{Activation, TensorCommand, TensorOp},
         shape::Shape,
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
         TensorShape, TensorStack,
@@ -591,18 +591,14 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
 
             let op = build_header(hooks, frame, head, head_x, num_header, head_ops)?;
             ops.push(op);
+            ops.push(TensorOp::Sep);
         }
 
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        {
+        let commands = {
             #[cfg(feature = "trace")]
             let _span = tracing::trace_span!("encode").entered();
-            let op = TensorOp::List(ops);
-
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&op);
-        }
-        let commands = vec![encoder.finish()];
+            context.encode(&TensorOp::List(ops))
+        };
 
         Ok(InferJob {
             commands,

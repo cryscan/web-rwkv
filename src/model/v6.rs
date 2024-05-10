@@ -19,7 +19,7 @@ use crate::{
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{Activation, TensorCommand, TensorOp, TensorPass},
+        ops::{Activation, TensorCommand, TensorOp},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView,
         TensorReshape, TensorShape,
@@ -117,6 +117,9 @@ pub struct Runtime<F: Float> {
     pub cursors: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<F, ReadWrite>,
 
+    pub x: TensorGpu<F, ReadWrite>,
+    pub aux_x: TensorGpu<f32, ReadWrite>,
+
     pub att_x: TensorGpu<F, ReadWrite>,
     pub att_xx: TensorGpu<F, ReadWrite>,
     /// Token shifted time decay input, `[C, T]`.
@@ -147,8 +150,6 @@ pub struct Runtime<F: Float> {
     pub ffn_k: TensorGpu<F, ReadWrite>,
     pub ffn_v: TensorGpu<F, ReadWrite>,
     pub ffn_r: TensorGpu<F, ReadWrite>,
-
-    pub aux_x: TensorGpu<f32, ReadWrite>,
 }
 
 impl<F: Float> Runtime<F> {
@@ -166,6 +167,8 @@ impl<F: Float> Runtime<F> {
             tokens: context.tensor_init(tokens_shape),
             cursors: context.tensor_init(cursors_shape),
             input: context.tensor_init(shape),
+            x: context.tensor_init(shape),
+            aux_x: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
             att_xx: context.tensor_init(shape),
             att_wx: context.tensor_init(shape),
@@ -189,7 +192,6 @@ impl<F: Float> Runtime<F> {
             ffn_k: context.tensor_init(hidden_shape),
             ffn_v: context.tensor_init(shape),
             ffn_r: context.tensor_init(shape),
-            aux_x: context.tensor_init(shape),
         }
     }
 }
@@ -422,17 +424,11 @@ impl super::ModelState for ModelState {
     ) -> Result<(), TensorError> {
         for (state, other) in self.state.iter().zip(other.state.iter()) {
             let context = state.context();
-            let mut encoder = context.device.create_command_encoder(&Default::default());
-
             let op = TensorOp::blit(
                 state.view(.., .., from_batch, ..)?,
                 other.view(.., .., to_batch, ..)?,
             )?;
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&op);
-            drop(pass);
-
-            context.queue.submit(Some(encoder.finish()));
+            context.queue.submit(context.encode(&op));
         }
         Ok(())
     }
@@ -773,7 +769,7 @@ impl<F: Float> ModelRunInternal for Model<F> {
 
         // collect and group copy operations
         let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
-            (TensorOp::empty(), &buffer.ffn_x)
+            (TensorOp::empty(), &buffer.x)
         } else {
             let mut start = 0;
             let mut end = 1;
@@ -784,7 +780,7 @@ impl<F: Float> ModelRunInternal for Model<F> {
                     let last = headers[end - 1];
                     assert_eq!(last - first + 1, end - start);
 
-                    let input = buffer.ffn_x.view(.., first..=last, .., ..)?;
+                    let input = buffer.x.view(.., first..=last, .., ..)?;
                     let output = header.head_x.view(.., start..end, .., ..)?;
                     ops.push(TensorOp::blit(input, output)?);
 
@@ -826,15 +822,12 @@ impl<F: Float> ModelRunInternal for Model<F> {
                 &buffer.input,
                 Self::LN_EPS,
             )?,
+            TensorOp::blit(
+                buffer.input.view(.., .., .., ..)?,
+                buffer.x.view(.., .., .., ..)?,
+            )?,
             hook_op(Hook::PostEmbedLayerNorm)?,
         ]);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-
-        let ops = TensorOp::List(ops);
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
 
         for (index, layer) in tensor.layers.iter().enumerate() {
             use TensorDimension::{Auto, Dimension};
@@ -881,9 +874,11 @@ impl<F: Float> ModelRunInternal for Model<F> {
                 Dimension(1),
             )?;
 
-            encoder.copy_tensor(&buffer.input, &buffer.att_x)?;
-
-            let ops = TensorOp::List(vec![
+            ops.append(&mut vec![
+                TensorOp::blit(
+                    buffer.x.view(.., .., .., ..)?,
+                    buffer.att_x.view(.., .., .., ..)?,
+                )?,
                 hook_op(Hook::PreAtt(index))?,
                 TensorOp::layer_norm(
                     &layer.att_layer_norm.w,
@@ -1069,19 +1064,17 @@ impl<F: Float> ModelRunInternal for Model<F> {
                 )?,
                 hook_op(Hook::PostAttOut(index))?,
                 TensorOp::add(
-                    buffer.input.view(.., .., .., ..)?,
                     buffer.att_o.view(.., .., .., ..)?,
+                    buffer.x.view(.., .., .., ..)?,
                 )?,
                 hook_op(Hook::PostAtt(index))?,
             ]);
 
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&ops);
-            drop(pass);
-
-            encoder.copy_tensor(&buffer.att_o, &buffer.ffn_x)?;
-
-            let ops = TensorOp::List(vec![
+            ops.append(&mut vec![
+                TensorOp::blit(
+                    buffer.x.view(.., .., .., ..)?,
+                    buffer.ffn_x.view(.., .., .., ..)?,
+                )?,
                 hook_op(Hook::PreFfn(index))?,
                 TensorOp::layer_norm(
                     &layer.ffn_layer_norm.w,
@@ -1139,30 +1132,20 @@ impl<F: Float> ModelRunInternal for Model<F> {
                 )?,
                 hook_op(Hook::PostFfnChannelMix(index))?,
                 TensorOp::add(
-                    buffer.att_o.view(.., .., .., ..)?,
                     buffer.ffn_x.view(.., .., .., ..)?,
+                    buffer.x.view(.., .., .., ..)?,
                 )?,
                 hook_op(Hook::PostFfn(index))?,
             ]);
 
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&ops);
-            drop(pass);
-
             if (index + 1) % RESCALE_LAYER == 0 {
-                let op = TensorOp::discount(&buffer.ffn_x, 0.5, 0.0)?;
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.execute_tensor_op(&op);
-                drop(pass);
-            }
-
-            if index != self.info.num_layer - 1 {
-                encoder.copy_tensor(&buffer.ffn_x, &buffer.input)?;
+                ops.push(TensorOp::discount(&buffer.x, 0.5, 0.0)?);
             }
         }
 
         if num_header > 0 {
-            let ops = TensorOp::List(vec![
+            ops.append(&mut vec![
+                head_ops,
                 hook_op(Hook::PreHead)?,
                 TensorOp::layer_norm(
                     &tensor.head.layer_norm.w,
@@ -1179,14 +1162,9 @@ impl<F: Float> ModelRunInternal for Model<F> {
                 )?,
                 hook_op(Hook::PostHead)?,
             ]);
-
-            let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.execute_tensor_op(&head_ops);
-            pass.execute_tensor_op(&ops);
-            drop(pass);
         }
 
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&TensorOp::List(ops)));
         Ok((header.head_o.clone(), redirect))
     }
 }

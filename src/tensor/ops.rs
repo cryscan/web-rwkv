@@ -1,7 +1,9 @@
 use std::{hash::Hash, sync::Arc};
 
 use half::f16;
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, CommandEncoder, ComputePass};
+use wgpu::{
+    BindGroup, BindGroupDescriptor, BindGroupEntry, CommandBuffer, CommandEncoder, ComputePass,
+};
 
 use super::{
     kind::{Kind, ReadWrite, Uniform},
@@ -72,28 +74,71 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
     }
 }
 
-pub trait TensorPass<'a> {
-    fn execute_tensor_op(&mut self, op: &'a TensorOp);
-}
+impl crate::context::Context {
+    pub fn encode(&self, op: &TensorOp) -> Vec<CommandBuffer> {
+        struct Atom<'a> {
+            pipeline: &'a CachedPipeline,
+            bindings: &'a [BindGroup],
+            dispatch: &'a [u32; 3],
+        }
 
-impl<'b, 'a: 'b> TensorPass<'a> for ComputePass<'b> {
-    fn execute_tensor_op(&mut self, op: &'a TensorOp) {
-        match op {
-            TensorOp::Atom {
+        fn dispatch<'b, 'a: 'b>(
+            pass: &'b mut ComputePass<'a>,
+            Atom {
                 pipeline,
                 bindings,
                 dispatch,
-            } => {
-                self.set_pipeline(&pipeline.pipeline);
-                for (index, bind_group) in bindings.iter().enumerate() {
-                    self.set_bind_group(index as u32, bind_group, &[])
-                }
-                self.dispatch_workgroups(dispatch[0], dispatch[1], dispatch[2]);
+            }: Atom<'a>,
+        ) {
+            pass.set_pipeline(&pipeline.pipeline);
+            for (index, bind) in bindings.iter().enumerate() {
+                pass.set_bind_group(index as u32, bind, &[]);
             }
-            TensorOp::List(ops) => {
-                ops.iter().for_each(|op| self.execute_tensor_op(op));
+            pass.dispatch_workgroups(dispatch[0], dispatch[1], dispatch[2]);
+        }
+
+        fn flatten<'b, 'a: 'b>(
+            commands: &'b mut Vec<Vec<Atom<'a>>>,
+            passes: &'b mut Vec<Atom<'a>>,
+            op: &'a TensorOp,
+        ) {
+            match op {
+                TensorOp::Atom {
+                    pipeline,
+                    bindings,
+                    dispatch,
+                } => passes.push(Atom {
+                    pipeline,
+                    bindings,
+                    dispatch,
+                }),
+                TensorOp::List(ops) => ops.iter().for_each(|op| flatten(commands, passes, op)),
+                TensorOp::Sep => {
+                    let mut temp = vec![];
+                    std::mem::swap(&mut temp, passes);
+                    commands.push(temp);
+                }
             }
         }
+
+        let mut commands = vec![];
+        let mut passes = vec![];
+        flatten(&mut commands, &mut passes, op);
+        commands.push(passes);
+
+        commands
+            .into_iter()
+            .filter(|atoms| !atoms.is_empty())
+            .map(|atoms| {
+                let mut encoder = self.device.create_command_encoder(&Default::default());
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                for atom in atoms {
+                    dispatch(&mut pass, atom);
+                }
+                drop(pass);
+                encoder.finish()
+            })
+            .collect()
     }
 }
 
@@ -197,6 +242,7 @@ pub enum TensorOp {
         dispatch: [u32; 3],
     },
     List(Vec<TensorOp>),
+    Sep,
 }
 
 impl TensorOp {
@@ -2407,7 +2453,7 @@ mod tests {
     use wgpu::{Instance, PowerPreference};
     // use wgpu_profiler::GpuProfiler;
 
-    use super::{TensorOp, TensorPass};
+    use super::TensorOp;
     use crate::{
         context::{Context, ContextBuilder, InstanceExt},
         tensor::{ops::Activation, Shape, TensorGpu},
@@ -2451,11 +2497,7 @@ mod tests {
         let x_dev: TensorGpu<_, _> = context.tensor_from_data(shape, x.clone())?;
         let softmax = TensorOp::softmax(&x_dev)?;
 
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&softmax);
-        drop(pass);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&softmax));
 
         let x_host = x_dev.back_in_place().to_vec();
 
@@ -2517,12 +2559,7 @@ mod tests {
         // let s_dev = context.tensor_init(shape);
 
         let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, EPS)?;
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&layer_norm);
-        drop(pass);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&layer_norm));
 
         let x_host = x_dev.back_in_place().to_vec();
         // let s_host = s_dev.back_in_place().to_vec();
@@ -2534,12 +2571,7 @@ mod tests {
             TensorOp::recenter(&x_dev)?,
             TensorOp::rms_norm(&w_dev, &b_dev, &x_dev, EPS)?,
         ]);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&ops));
 
         let x_rms_host = x_dev.back_in_place().to_vec();
 
@@ -2660,14 +2692,8 @@ mod tests {
             )?,
         ]);
 
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
-
         // profiler.resolve_queries(&mut encoder);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&ops));
 
         let output_host = output_dev.back_in_place();
         let output_host = Vec::from(output_host);
@@ -2789,13 +2815,7 @@ mod tests {
                 Activation::None,
             )?,
         ]);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&ops));
 
         let matrix_u8_host = matrix_u8_dev.back_in_place().to_vec();
         let output_host = output_dev.back_in_place().to_vec();
@@ -2963,13 +2983,7 @@ mod tests {
                 Activation::None,
             )?,
         ]);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&ops));
 
         let matrix_u4_host = matrix_u4_dev.back_in_place().to_vec();
         let absmax_host = absmax_dev.back_in_place().to_vec();
@@ -3062,13 +3076,7 @@ mod tests {
         ops.push(TensorOp::blit(input, output.view(.., 2.., 1..2, ..)?)?);
 
         let ops = TensorOp::List(ops);
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&ops));
 
         let output_host = output.back_in_place();
         let output_host = Vec::from(output_host);
@@ -3099,13 +3107,7 @@ mod tests {
         let input: TensorGpu<_, _> = context.tensor_from_data([4, 3, 2, 1], input)?;
 
         let ops = TensorOp::transpose(input.view(.., .., .., ..)?, output.view(.., ..2, .., ..)?)?;
-
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.execute_tensor_op(&ops);
-        drop(pass);
-        context.queue.submit(Some(encoder.finish()));
+        context.queue.submit(context.encode(&ops));
 
         let output_host = output.back_in_place();
         let output_host: Vec<f32> = Vec::from(output_host);
