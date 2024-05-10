@@ -9,9 +9,7 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{
-        InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect, MIN_TOKEN_CHUNK_SIZE,
-    },
+    infer::{InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
     model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
     Job, JobBuilder,
@@ -457,7 +455,7 @@ impl<F: Float> ModelRuntime<F> {
 }
 
 fn turbo(num_token: usize) -> bool {
-    num_token % MIN_TOKEN_CHUNK_SIZE == 0
+    num_token % super::infer::MIN_TOKEN_CHUNK_SIZE == 0
 }
 
 fn hook_op<F: Float>(
@@ -579,6 +577,10 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
 
             let op = build_layer(hooks, frame, layer, index, num_token)?;
             ops.push(op);
+
+            if (index + 1) % (info.num_layer / super::infer::NUM_LAYER_CHUNK) == 0 {
+                ops.push(TensorOp::Sep);
+            }
         }
 
         {
@@ -591,7 +593,6 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
 
             let op = build_header(hooks, frame, head, head_x, num_header, head_ops)?;
             ops.push(op);
-            ops.push(TensorOp::Sep);
         }
 
         let commands = {
