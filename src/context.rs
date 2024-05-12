@@ -8,8 +8,8 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
     BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
-    DeviceDescriptor, Features, Instance, Limits, Maintain, PipelineLayoutDescriptor,
-    PowerPreference, Queue, RequestAdapterOptions, ShaderModuleDescriptor,
+    DeviceDescriptor, Features, Instance, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
+    RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
 use crate::tensor::{
@@ -22,7 +22,7 @@ pub trait InstanceExt {
     fn adapter(
         &self,
         power_preference: PowerPreference,
-    ) -> impl Future<Output = Result<Adapter, CreateEnvironmentError>> + Send;
+    ) -> impl Future<Output = Result<Adapter, CreateEnvironmentError>>;
 }
 
 impl InstanceExt for Instance {
@@ -71,7 +71,7 @@ impl Drop for Context {
     fn drop(&mut self) {
         if Arc::strong_count(&self.0) <= 1 {
             self.queue.submit(None);
-            self.device.poll(Maintain::Wait);
+            self.device.poll(wgpu::Maintain::Wait);
         }
     }
 }
