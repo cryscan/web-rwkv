@@ -23,7 +23,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
-        v4, v5, v6, JobRuntime, Submission,
+        v4, v5, v6, JobRuntime,
     },
     tokenizer::Tokenizer,
 };
@@ -205,14 +205,8 @@ async fn main() -> Result<()> {
 
     let num_token = 500;
     for _ in 0..num_token {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
         let input = prompt.clone();
-        let submission = Submission { input, sender };
-
-        let _ = runtime.send(submission).await;
-        let Ok((input, output)) = receiver.await else {
-            break;
-        };
+        let (input, output) = runtime.infer(input).await;
         prompt = input;
 
         let output = output[0].0.clone();

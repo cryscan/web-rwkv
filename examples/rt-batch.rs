@@ -31,7 +31,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax,
-        v4, v5, v6, JobRuntime, Submission,
+        v4, v5, v6, JobRuntime,
     },
     tokenizer::Tokenizer,
 };
@@ -294,11 +294,7 @@ async fn main() -> Result<()> {
         }
 
         let input = inference.clone();
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let submission = Submission { input, sender };
-
-        let _ = runtime.send(submission).await;
-        let (input, output) = receiver.await.unwrap();
+        let (input, output) = runtime.infer(input).await;
         inference = input;
 
         let output = output.iter().map(|batch| batch.0.clone()).collect_vec();

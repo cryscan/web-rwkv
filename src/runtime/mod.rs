@@ -1,7 +1,6 @@
 use std::future::Future;
 
 use anyhow::Result;
-use web_rwkv_derive::Deref;
 
 pub mod infer;
 pub mod loader;
@@ -41,9 +40,9 @@ pub trait JobBuilder<J: Job>: Send + Clone + 'static {
 }
 
 #[derive(Debug)]
-pub struct Submission<I, O> {
-    pub input: I,
-    pub sender: tokio::sync::oneshot::Sender<(I, O)>,
+struct Submission<I, O> {
+    input: I,
+    sender: tokio::sync::oneshot::Sender<(I, O)>,
 }
 
 pub trait JobInput: Send + 'static {
@@ -56,7 +55,7 @@ pub trait JobInput: Send + 'static {
     fn chunk(&self) -> Self::Chunk;
 }
 
-#[derive(Debug, Clone, Deref)]
+#[derive(Debug, Clone)]
 pub struct JobRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
 
 #[allow(clippy::type_complexity)]
@@ -127,8 +126,6 @@ where
                 }
                 let iter = iter.as_mut().expect("iter should be assigned");
 
-                // let remain = queue.len() + candidates.len().max(1) - 1;
-                // let predict = MAX_QUEUE_SIZE - MAX_QUEUE_SIZE.min(remain);
                 for info in iter.take(predict) {
                     #[cfg(feature = "trace")]
                     tracing::event!(
@@ -175,5 +172,14 @@ where
             tokio::spawn(back(job, input, sender));
         }
         Ok(())
+    }
+
+    /// Perform (partial) inference and return the remaining input and (perhaps partial) output.
+    /// The amount of input processed during one call is bound by the input chunk size.
+    pub async fn infer(&self, input: I) -> (I, O) {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let submission = Submission { input, sender };
+        let _ = self.0.send(submission).await;
+        receiver.await.expect("receive infer output error")
     }
 }

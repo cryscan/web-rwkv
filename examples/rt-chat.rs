@@ -23,7 +23,7 @@ use web_rwkv::{
             State,
         },
         softmax::softmax_one,
-        v4, v5, v6, JobRuntime, Submission,
+        v4, v5, v6, JobRuntime,
     },
     tensor::{TensorCpu, TensorInit, TensorShape},
     tokenizer::Tokenizer,
@@ -293,11 +293,7 @@ async fn main() -> Result<()> {
 
     loop {
         let input = inference.clone();
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let submission = Submission { input, sender };
-
-        let _ = runtime.send(submission).await;
-        let (input, output) = receiver.await.unwrap();
+        let (input, output) = runtime.infer(input).await;
         inference = input;
 
         if output[0].size() > 0 {
@@ -353,11 +349,7 @@ async fn main() -> Result<()> {
 
         loop {
             let input = inference.clone();
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            let submission = Submission { input, sender };
-
-            let _ = runtime.send(submission).await;
-            let (input, output) = receiver.await.unwrap();
+            let (input, output) = runtime.infer(input).await;
             inference = input;
 
             let output = output[0].0.clone();
