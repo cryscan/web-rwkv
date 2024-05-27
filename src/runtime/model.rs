@@ -80,8 +80,10 @@ pub trait State {
     fn load(&self, tensor: TensorCpu<f32>, batch: usize) -> Result<(), TensorError>;
     /// Read back a batch of the state from GPU to CPU.
     fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>>;
-    /// Copy the state from GPU to GPU.
-    fn blit(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError>;
+    /// Write into the state from a GPU tensor.
+    fn write(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError>;
+    /// Read the state out into a GPU tensor.
+    fn read(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError>;
     /// Get an embed vector from a backed state.
     fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError>;
 }

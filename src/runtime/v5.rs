@@ -177,16 +177,33 @@ impl super::model::State for State {
         Box::pin(self.back(batch))
     }
 
-    fn blit(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
+    fn write(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         tensor.check_shape([self.info.num_emb, head_size + 2, self.info.num_layer, 1])?;
 
         let context = &self.context;
-        let mut ops = vec![];
+        let mut ops = Vec::with_capacity(self.data.len());
         for (layer, data) in self.data.iter().enumerate() {
             ops.push(TensorOp::blit(
                 tensor.view(.., .., layer, ..)?,
                 data.view(.., .., batch, ..)?,
+            )?);
+        }
+        context.queue.submit(context.encode(&TensorOp::List(ops)));
+
+        Ok(())
+    }
+
+    fn read(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
+        let head_size = self.info.num_emb / self.info.num_head;
+        tensor.check_shape([self.info.num_emb, head_size + 2, self.info.num_layer, 1])?;
+
+        let context = &self.context;
+        let mut ops = Vec::with_capacity(self.data.len());
+        for (layer, data) in self.data.iter().enumerate() {
+            ops.push(TensorOp::blit(
+                data.view(.., .., batch, ..)?,
+                tensor.view(.., .., layer, ..)?,
             )?);
         }
         context.queue.submit(context.encode(&TensorOp::List(ops)));

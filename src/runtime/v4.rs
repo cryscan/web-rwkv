@@ -173,11 +173,21 @@ impl super::model::State for State {
         Box::pin(self.back(batch))
     }
 
-    fn blit(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
+    fn write(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
         tensor.check_shape([self.info.num_emb, self.info.num_layer * 5, 1, 1])?;
         let op = TensorOp::blit(
             tensor.view(.., .., .., ..)?,
             self.data.view(.., .., batch, ..)?,
+        )?;
+        self.context.queue.submit(self.context.encode(&op));
+        Ok(())
+    }
+
+    fn read(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
+        tensor.check_shape([self.info.num_emb, self.info.num_layer * 5, 1, 1])?;
+        let op = TensorOp::blit(
+            self.data.view(.., .., batch, ..)?,
+            tensor.view(.., .., .., ..)?,
         )?;
         self.context.queue.submit(self.context.encode(&op));
         Ok(())
