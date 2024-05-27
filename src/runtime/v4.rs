@@ -163,7 +163,7 @@ impl super::model::State for State {
         self.data.view(.., start..=start, .., ..)
     }
 
-    fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
+    fn load(&self, tensor: TensorCpu<f32>, batch: usize) -> Result<(), TensorError> {
         tensor.check_shape([self.info.num_emb, self.info.num_layer * 5, 1, 1])?;
         self.data.load_batch(&tensor, batch)?;
         Ok(())
@@ -171,6 +171,16 @@ impl super::model::State for State {
 
     fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>> {
         Box::pin(self.back(batch))
+    }
+
+    fn blit(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
+        tensor.check_shape([self.info.num_emb, self.info.num_layer * 5, 1, 1])?;
+        let op = TensorOp::blit(
+            tensor.view(.., .., .., ..)?,
+            self.data.view(.., .., batch, ..)?,
+        )?;
+        self.context.queue.submit(self.context.encode(&op));
+        Ok(())
     }
 
     fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError> {

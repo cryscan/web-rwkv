@@ -330,7 +330,7 @@ async fn main() -> Result<()> {
                     tokens: last_tokens.clone(),
                     option: InferOption::Last,
                 };
-                state.load(0, backed.clone())?;
+                state.load(backed.clone(), 0)?;
             }
             _ => {
                 last_user_text.clone_from(&user_text);

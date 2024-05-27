@@ -23,7 +23,7 @@ use crate::{
         ops::{Activation, TensorCommand, TensorOp},
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
-        TensorInto, TensorReshape, TensorShape, TensorStack,
+        TensorReshape, TensorShape, TensorStack,
     },
 };
 
@@ -167,22 +167,34 @@ impl super::model::State for State {
         self.data[layer].view(.., start, .., ..)
     }
 
-    fn load(&self, batch: usize, tensor: TensorCpu<f32>) -> Result<(), TensorError> {
+    fn load(&self, tensor: TensorCpu<f32>, batch: usize) -> Result<(), TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         tensor.check_shape([self.info.num_emb, head_size + 2, self.info.num_layer, 1])?;
-
-        let context = &self.context;
-        let mut encoder = context.device.create_command_encoder(&Default::default());
-        for (data, source) in self.data.iter().zip_eq(tensor.split(2)?.into_iter()) {
-            let source: TensorGpu<f32, ReadWrite> = source.transfer_into(context);
-            encoder.copy_tensor_batch(&source, data, 0, batch)?;
+        for (data, source) in self.data.iter().zip(tensor.split(2)?.into_iter()) {
+            data.load_batch(&source, batch)?;
         }
-        context.queue.submit(Some(encoder.finish()));
         Ok(())
     }
 
     fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>> {
         Box::pin(self.back(batch))
+    }
+
+    fn blit(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
+        let head_size = self.info.num_emb / self.info.num_head;
+        tensor.check_shape([self.info.num_emb, head_size + 2, self.info.num_layer, 1])?;
+
+        let context = &self.context;
+        let mut ops = vec![];
+        for (layer, data) in self.data.iter().enumerate() {
+            ops.push(TensorOp::blit(
+                tensor.view(.., .., layer, ..)?,
+                data.view(.., .., batch, ..)?,
+            )?);
+        }
+        context.queue.submit(context.encode(&TensorOp::List(ops)));
+
+        Ok(())
     }
 
     fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError> {
