@@ -83,7 +83,7 @@ pub trait State {
     /// Write into the state from a GPU tensor.
     fn write(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError>;
     /// Read the state out into a GPU tensor.
-    fn read(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError>;
+    fn read(&self, batch: usize) -> Result<TensorGpu<f32, ReadWrite>, TensorError>;
     /// Get an embed vector from a backed state.
     fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError>;
 }

@@ -197,11 +197,12 @@ impl super::model::State for State {
         Ok(())
     }
 
-    fn read(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
-        let head_size = self.info.num_emb / self.info.num_head;
-        tensor.check_shape([self.info.num_emb, head_size + 2, self.info.num_layer, 1])?;
-
+    fn read(&self, batch: usize) -> Result<TensorGpu<f32, ReadWrite>, TensorError> {
         let context = &self.context;
+        let head_size = self.info.num_emb / self.info.num_head;
+        let shape = [self.info.num_emb, head_size + 2, self.info.num_layer, 1];
+        let tensor: TensorGpu<_, _> = context.tensor_init(shape);
+
         let mut ops = Vec::with_capacity(self.data.len());
         for (layer, data) in self.data.iter().enumerate() {
             ops.push(TensorOp::blit(
@@ -211,7 +212,7 @@ impl super::model::State for State {
         }
         context.queue.submit(context.encode(&TensorOp::List(ops)));
 
-        Ok(())
+        Ok(tensor)
     }
 
     fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError> {

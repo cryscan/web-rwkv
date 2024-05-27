@@ -183,14 +183,15 @@ impl super::model::State for State {
         Ok(())
     }
 
-    fn read(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
-        tensor.check_shape([self.info.num_emb, self.info.num_layer * 5, 1, 1])?;
+    fn read(&self, batch: usize) -> Result<TensorGpu<f32, ReadWrite>, TensorError> {
+        let shape = [self.info.num_emb, self.info.num_layer * 5, 1, 1];
+        let tensor: TensorGpu<_, _> = self.context.tensor_init(shape);
         let op = TensorOp::blit(
             self.data.view(.., .., batch, ..)?,
             tensor.view(.., .., .., ..)?,
         )?;
         self.context.queue.submit(self.context.encode(&op));
-        Ok(())
+        Ok(tensor)
     }
 
     fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError> {
