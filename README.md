@@ -81,7 +81,8 @@ In this demo, type `+` to retry last round's generation; type `-` to exit.
   ```
   to quantize all 32 layers.
 
-- Use `--turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.
+- ~~Use `--turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.~~
+  The `rt` examples enforces `turbo`.
 
 
 ### Batched Inference
@@ -97,8 +98,10 @@ The inspector demo is a guide to an advanced usage called hooks. Hooks allow use
 All versions of models implements `serde::ser::Serialize` and `serde::de::DeserializeSeed<'de>`, which means that one can save quantized or lora-merged model into a file and load it afterwards.
 
 ## Use in Your Project
-To use in your own rust project, simply add `web-rwkv = "0.6"` as a dependency in your `Cargo.toml`.
+To use in your own rust project, simply add `web-rwkv = "0.8"` as a dependency in your `Cargo.toml`.
 Check examples on how to create the environment, the tokenizer and how to run the model.
+
+## Explanations
 
 ### Inference Runtime
 Since v0.7 there is a `runtime` feature for the crate. When enabled, applications can use infrastructures of the asynchronous `runtime` API.
@@ -107,7 +110,7 @@ In general, a `runtime` is an asynchronous task that is driven by `tokio`. It al
 
 Check examples starting with `rt` for more information, and compare the generation speed with their non-`rt` counterparts.
 
-### Explanation of Batched Inference
+### Batched Inference
 Since version v0.2.4, the engine supports batched inference, i.e., inference of a batch of prompts (with different length) in parallel.
 This is achieved by a modified `WKV` kernel.
 
@@ -122,7 +125,7 @@ If a slot is empty, no inference will be run for it.
 After calling `run()`, some (but may not be all) input tokens are consumed, and `logits` appears in their corresponding returned slots if the inference of that slot is finished during this run.
 Since there are only `token_chunk_size` tokens are processed during each `run()` call, there may be none of `logits` appearing in the results.
 
-### Explanation of Hooks
+### Hooks
 Hooks are a very powerful tool for customizing model inference process.
 The library provides with the `Model::run_with_hooks` function, which takes into a `HookMap` as a parameter.
 
@@ -163,11 +166,15 @@ You can now download the converted models [here](https://huggingface.co/cgisky/R
 
 You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
 
+```bash
+$ python convert_safetensors.py --input /path/to/model.pth --output /path/to/model.st
+```
+
 If you don't have python installed or don't want to, there is a pure rust [`converter`](https://github.com/cryscan/web-rwkv-converter).
 You can clone that repo and run
 ```bash
 $ cd /path/to/web-rwkv-converter
-$ cargo run --release --example converter -- --input /path/to/model.pth
+$ cargo run --release --example converter -- --input /path/to/model.pth --output /path/to/model.st
 ```
 
 ## Troubleshoot
