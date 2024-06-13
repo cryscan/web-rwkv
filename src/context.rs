@@ -60,7 +60,7 @@ pub struct ContextInternal {
     view_cache: ResourceCache<View, Buffer>,
 
     #[cfg(not(target_arch = "wasm32"))]
-    event: tokio::sync::mpsc::UnboundedSender<ContextEvent>,
+    event: flume::Sender<ContextEvent>,
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
@@ -123,7 +123,7 @@ impl<'a> ContextBuilder {
             .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
 
         #[cfg(not(target_arch = "wasm32"))]
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (event, receiver) = flume::unbounded();
 
         let context = Arc::new(ContextInternal {
             id: uid::Id::new(),
@@ -133,7 +133,7 @@ impl<'a> ContextBuilder {
             pipeline_cache: Default::default(),
             view_cache: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
-            event: sender,
+            event,
         });
         let context = Context(context);
 
@@ -143,7 +143,7 @@ impl<'a> ContextBuilder {
             let id = context.id;
             let context = Arc::downgrade(&context);
             std::thread::spawn(move || {
-                while let Some(ContextEvent { buffer, sender }) = receiver.blocking_recv() {
+                while let Ok(ContextEvent { buffer, sender }) = receiver.recv() {
                     match context.upgrade() {
                         Some(context) => {
                             #[cfg(feature = "trace")]
@@ -324,7 +324,7 @@ impl ContextInternal {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn event(&self) -> tokio::sync::mpsc::UnboundedSender<ContextEvent> {
+    pub(crate) fn event(&self) -> flume::Sender<ContextEvent> {
         self.event.clone()
     }
 
