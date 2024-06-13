@@ -228,12 +228,16 @@ pub trait TensorReshape: Sized {
 }
 
 /// A tensor on either CPU or GPU.
-#[derive(Debug)]
+#[derive(Debug, Eq)]
 pub struct Tensor<D: Device, T: Scalar> {
     shape: Shape,
     data: D::Data,
+    id: uid::Id<TensorId>,
     phantom: PhantomData<T>,
 }
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TensorId;
 
 pub type TensorCpu<T> = Tensor<Cpu<T>, T>;
 pub type TensorGpu<T, K> = Tensor<Gpu<K>, T>;
@@ -243,6 +247,7 @@ impl<D: Device, T: Scalar> Clone for Tensor<D, T> {
         Self {
             shape: self.shape,
             data: self.data.clone(),
+            id: self.id,
             phantom: PhantomData,
         }
     }
@@ -254,6 +259,12 @@ impl<D: Device, T: Scalar> std::ops::Deref for Tensor<D, T> {
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.data
+    }
+}
+
+impl<D: Device, T: Scalar> PartialEq for Tensor<D, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
     }
 }
 
@@ -288,6 +299,11 @@ impl<D: Device, T: Scalar> Tensor<D, T> {
     pub fn data(&self) -> &D::Data {
         &self.data
     }
+
+    #[inline]
+    pub fn id(&self) -> uid::Id<TensorId> {
+        self.id
+    }
 }
 
 impl<D: Device, F: Float> Tensor<D, F> {
@@ -301,12 +317,14 @@ impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
     fn from_data(shape: impl Into<Shape>, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError> {
         let shape = shape.into();
         let data = data.into();
+        let id = uid::Id::new();
         if shape.len() != data.len() {
             return Err(TensorError::Size(shape.len(), data.len()));
         }
         Ok(Self {
             shape,
             data,
+            id,
             phantom: PhantomData,
         })
     }
@@ -315,9 +333,11 @@ impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
     fn init(shape: impl Into<Shape>) -> Self {
         let shape = shape.into();
         let data = vec![T::zero(); shape.len()].into();
+        let id = uid::Id::new();
         Self {
             shape,
             data,
+            id,
             phantom: PhantomData,
         }
     }
@@ -391,6 +411,8 @@ impl<T: Scalar, K: Kind> TensorInitContext<T> for TensorGpu<T, K> {
         let size = shape.len() * std::mem::size_of::<T>();
         let buffer = context.checkout_buffer(size, K::buffer_usages());
 
+        let id = uid::Id::new();
+
         Self {
             shape,
             data: TensorGpuData {
@@ -398,6 +420,7 @@ impl<T: Scalar, K: Kind> TensorInitContext<T> for TensorGpu<T, K> {
                 meta,
                 buffer,
             },
+            id,
             phantom: PhantomData,
         }
     }
@@ -410,6 +433,7 @@ impl<T: Scalar, K: Kind> TensorInto<TensorGpu<T, K>> for TensorCpu<T> {
         let meta = context.checkout_shape_uniform(shape);
         let contents = bytemuck::cast_slice(&data);
         let buffer = context.checkout_buffer_init(contents, K::buffer_usages());
+        let id = uid::Id::new();
         TensorGpu {
             shape,
             data: TensorGpuData {
@@ -417,6 +441,7 @@ impl<T: Scalar, K: Kind> TensorInto<TensorGpu<T, K>> for TensorCpu<T> {
                 meta,
                 buffer,
             },
+            id,
             phantom: PhantomData,
         }
     }
@@ -498,9 +523,12 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         let data = data.into_vec().into();
         let shape = self.shape;
 
+        let id = uid::Id::new();
+
         TensorCpu {
             shape,
             data,
+            id,
             phantom: PhantomData,
         }
     }
@@ -531,9 +559,12 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         };
         let data = data.into_vec().into();
 
+        let id = uid::Id::new();
+
         TensorCpu {
             shape: self.shape,
             data,
+            id,
             phantom: PhantomData,
         }
     }
@@ -565,9 +596,12 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         };
         buffer.unmap();
 
+        let id = uid::Id::new();
+
         TensorCpu {
             shape: self.shape,
             data,
+            id,
             phantom: PhantomData,
         }
     }
@@ -651,6 +685,8 @@ impl<T: Scalar> TensorCpu<T> {
         let num_chunk: usize = shape.iter().skip(axis + 1).product();
         let chunk_size = data.len() / num_chunk;
 
+        shape[axis] *= repeat;
+
         let data = (0..num_chunk)
             .map(|chunk| {
                 let start = chunk * chunk_size;
@@ -661,10 +697,13 @@ impl<T: Scalar> TensorCpu<T> {
             .collect_vec()
             .concat()
             .into();
-        shape[axis] *= repeat;
+
+        let id = uid::Id::new();
+
         Self {
             shape,
             data,
+            id,
             phantom: PhantomData,
         }
     }
@@ -689,9 +728,13 @@ impl<T: Scalar> TensorCpu<T> {
             .collect_vec()
             .concat()
             .into();
+
+        let id = uid::Id::new();
+
         Ok(Self {
             shape,
             data,
+            id,
             phantom: PhantomData,
         })
     }
@@ -727,9 +770,12 @@ impl<T: Scalar> TensorCpu<T> {
         let (start, end) = slice.bounds(self.shape)?;
         let data = self.data[start..end].into();
 
+        let id = uid::Id::new();
+
         Ok(Self {
             shape,
             data,
+            id,
             phantom: PhantomData,
         })
     }
@@ -748,9 +794,12 @@ impl<T: Scalar> TensorCpu<T> {
         let (start, end) = slice.bounds(self.shape)?;
         let data = self.data[start..end].into();
 
+        let id = uid::Id::new();
+
         Ok(Self {
             shape,
             data,
+            id,
             phantom: PhantomData,
         })
     }
@@ -762,6 +811,7 @@ pub struct TensorGpuView<'a, T: Scalar> {
     tensor: &'a TensorGpu<T, ReadWrite>,
     meta: Arc<Buffer>,
     view: View,
+    id: uid::Id<TensorId>,
 }
 
 impl<T: Scalar> TensorShape for TensorGpuView<'_, T> {
@@ -800,6 +850,11 @@ impl<T: Scalar> TensorGpuView<'_, T> {
     pub fn binding(&self) -> BindingResource {
         self.data().binding()
     }
+
+    #[inline]
+    pub fn id(&self) -> uid::Id<TensorId> {
+        self.id
+    }
 }
 
 impl<T: Scalar> TensorScalar for TensorGpuView<'_, T> {
@@ -830,10 +885,12 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
             shape: end - start,
         };
         let meta = self.context.checkout_view_uniform(view);
+        let id = uid::Id::new();
         Ok(TensorGpuView {
             tensor: self,
             meta,
             view,
+            id,
         })
     }
 }
@@ -915,11 +972,15 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<T>>> for TensorStack<T> {
                 (shape, data)
             },
         );
+        let data = data.into();
+
+        let id = uid::Id::new();
 
         Ok(Self {
             tensor: Tensor {
                 shape,
-                data: data.into(),
+                data,
+                id,
                 phantom: PhantomData,
             },
             cursors,

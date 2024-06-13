@@ -28,9 +28,11 @@ impl<T: Scalar> From<TensorBlob> for TensorCpu<T> {
         let TensorBlob { shape, data } = value;
         let data: Vec<T> = bytemuck::cast_slice(&data).to_vec();
         let data = data.into();
+        let id = uid::Id::new();
         Self {
             shape,
             data,
+            id,
             phantom: PhantomData,
         }
     }
