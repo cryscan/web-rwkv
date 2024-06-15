@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 
 use futures::Future;
 use thiserror::Error;
@@ -57,7 +57,8 @@ pub struct ContextInternal {
     pub queue: Queue,
 
     pipeline_cache: ResourceCache<PipelineKey, CachedPipeline>,
-    view_cache: ResourceCache<View, Buffer>,
+    shape_cache: ResourceCache<View, Buffer>,
+    buffer_cache: ResourceCache<BufferKey, Buffer>,
 
     #[cfg(not(target_arch = "wasm32"))]
     event: flume::Sender<ContextEvent>,
@@ -131,7 +132,8 @@ impl<'a> ContextBuilder {
             device,
             queue,
             pipeline_cache: Default::default(),
-            view_cache: Default::default(),
+            shape_cache: Default::default(),
+            buffer_cache: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             event,
         });
@@ -184,11 +186,15 @@ impl<'a> ContextBuilder {
 
 /// A container of macro definitions in shader.
 #[derive(Debug, Default, Clone, Deref, DerefMut, PartialEq, Eq, Hash)]
-pub struct Macros(Vec<(String, String)>);
+pub struct Macros(BTreeMap<String, String>);
 
 impl Macros {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    pub fn compile(self) -> Vec<(String, String)> {
+        self.0.into_iter().collect()
     }
 }
 
@@ -196,12 +202,12 @@ impl Macros {
 struct PipelineKey {
     name: String,
     entry_point: String,
-    macros: Macros,
+    macros: Vec<(String, String)>,
 }
 
 impl PipelineKey {
     fn new(name: String, entry_point: String, macros: Macros) -> Self {
-        // macros.0.sort();
+        let macros = macros.compile();
         Self {
             name,
             entry_point,
@@ -222,6 +228,12 @@ impl PartialEq for Context {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BufferKey {
+    size: usize,
+    usage: BufferUsages,
+}
+
 impl Eq for Context {}
 
 impl ContextInternal {
@@ -237,44 +249,48 @@ impl ContextInternal {
         let entry_point = entry_point.as_ref();
         let key = PipelineKey::new(name.into(), entry_point.into(), macros.clone());
 
-        self.pipeline_cache.checkout(key, move || {
-            use gpp::{process_str, Context};
-            let mut context = Context::new();
-            context.macros = macros.0.into_iter().collect();
+        self.pipeline_cache.checkout(
+            key,
+            || {
+                use gpp::{process_str, Context};
+                let mut context = Context::new();
+                context.macros = macros.0.into_iter().collect();
 
-            let shader = process_str(source.as_ref(), &mut context).unwrap();
-            let module = &self.device.create_shader_module(ShaderModuleDescriptor {
-                label: Some(name),
-                source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
-            });
-
-            let layout = layout.map(|entries| {
-                let layout = self
-                    .device
-                    .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                        label: None,
-                        entries,
-                    });
-                self.device
-                    .create_pipeline_layout(&PipelineLayoutDescriptor {
-                        label: None,
-                        bind_group_layouts: &[&layout],
-                        push_constant_ranges: &[],
-                    })
-            });
-
-            let pipeline = self
-                .device
-                .create_compute_pipeline(&ComputePipelineDescriptor {
+                let shader = process_str(source.as_ref(), &mut context).unwrap();
+                let module = &self.device.create_shader_module(ShaderModuleDescriptor {
                     label: Some(name),
-                    layout: layout.as_ref(),
-                    module,
-                    entry_point,
-                    compilation_options: Default::default(),
+                    source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
                 });
-            let layout = pipeline.get_bind_group_layout(0);
-            CachedPipeline { pipeline, layout }
-        })
+
+                let layout = layout.map(|entries| {
+                    let layout = self
+                        .device
+                        .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                            label: None,
+                            entries,
+                        });
+                    self.device
+                        .create_pipeline_layout(&PipelineLayoutDescriptor {
+                            label: None,
+                            bind_group_layouts: &[&layout],
+                            push_constant_ranges: &[],
+                        })
+                });
+
+                let pipeline = self
+                    .device
+                    .create_compute_pipeline(&ComputePipelineDescriptor {
+                        label: Some(name),
+                        layout: layout.as_ref(),
+                        module,
+                        entry_point,
+                        compilation_options: Default::default(),
+                    });
+                let layout = pipeline.get_bind_group_layout(0);
+                CachedPipeline { pipeline, layout }
+            },
+            |_| {},
+        )
     }
 
     pub(crate) fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
@@ -283,44 +299,57 @@ impl ContextInternal {
             stride: shape,
             offset: Shape::new(0, 0, 0, 0),
         };
-        self.view_cache.checkout(view, || {
-            self.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: &view.into_bytes(),
-                usage: BufferUsages::UNIFORM,
-            })
-        })
+        let desc = BufferInitDescriptor {
+            label: None,
+            contents: &view.into_bytes(),
+            usage: BufferUsages::UNIFORM,
+        };
+        self.shape_cache
+            .checkout(view, || self.device.create_buffer_init(&desc), |_| {})
     }
 
     pub(crate) fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
-        self.view_cache.checkout(view, || {
-            self.device.create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents: &view.into_bytes(),
-                usage: BufferUsages::UNIFORM,
-            })
-        })
+        let desc = BufferInitDescriptor {
+            label: None,
+            contents: &view.into_bytes(),
+            usage: BufferUsages::UNIFORM,
+        };
+        self.shape_cache
+            .checkout(view, || self.device.create_buffer_init(&desc), |_| {})
     }
 
     pub(crate) fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
-        self.device
-            .create_buffer_init(&BufferInitDescriptor {
-                label: None,
-                contents,
-                usage,
-            })
-            .into()
+        let size = std::mem::size_of_val(contents);
+        let key = BufferKey { size, usage };
+        let desc = BufferInitDescriptor {
+            label: None,
+            contents,
+            usage,
+        };
+        self.buffer_cache.checkout(
+            key,
+            || self.device.create_buffer_init(&desc),
+            |buffer| self.queue.write_buffer(buffer, 0, contents),
+        )
     }
 
     pub(crate) fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
-        self.device
-            .create_buffer(&BufferDescriptor {
-                label: None,
-                size: size as u64,
-                usage,
-                mapped_at_creation: false,
-            })
-            .into()
+        let key = BufferKey { size, usage };
+        let desc = BufferDescriptor {
+            label: None,
+            size: size as u64,
+            usage,
+            mapped_at_creation: false,
+        };
+        self.buffer_cache
+            .checkout(key, || self.device.create_buffer(&desc), |_| {})
+    }
+
+    #[inline]
+    pub fn step_caches(&self) {
+        self.pipeline_cache.step();
+        self.shape_cache.step();
+        self.buffer_cache.step();
     }
 
     #[cfg(not(target_arch = "wasm32"))]

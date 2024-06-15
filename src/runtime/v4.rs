@@ -513,6 +513,8 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
             header: header.clone(),
         };
 
+        context.step_caches();
+
         if num_token == 0 {
             let embed_device = match &tensor.embed.u {
                 Some(_) => EmbedDevice::Gpu,

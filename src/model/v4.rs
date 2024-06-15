@@ -585,6 +585,8 @@ impl<F: Float + Hom<f16>> ModelRunInternal for Model<F> {
 
         let turbo = self.turbo(num_token);
 
+        context.step_caches();
+
         // collect batch output copy commands for later
         let mut redirect = vec![0..0; num_batch];
         let headers = input

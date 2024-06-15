@@ -163,25 +163,25 @@ impl std::fmt::Display for Activation {
 impl Macros {
     /// Define a `u32` macro `NF4_BLOCK_SIZE`.
     pub fn nf4(mut self, block_size: u32) -> Self {
-        self.push(("NF4_BLOCK_SIZE".into(), format!("{}u", block_size)));
+        self.insert("NF4_BLOCK_SIZE".into(), format!("{}u", block_size));
         self
     }
 
     /// Define a `u32` macro `NF4_BLOCK_SIZE`.
     pub fn int8(mut self, block_size: u32) -> Self {
-        self.push(("INT8_BLOCK_SIZE".into(), format!("{}u", block_size)));
+        self.insert("INT8_BLOCK_SIZE".into(), format!("{}u", block_size));
         self
     }
 
     /// Define a `f32` macro with a given name.
     pub fn f32(mut self, name: impl Into<String>, value: f32) -> Self {
-        self.push((name.into(), format!("{}", value)));
+        self.insert(name.into(), format!("{}", value));
         self
     }
 
     /// Define a `usize` macro with a given name.
     pub fn u32(mut self, name: impl Into<String>, value: u32) -> Self {
-        self.push((name.into(), format!("{}u", value)));
+        self.insert(name.into(), format!("{}u", value));
         self
     }
 
@@ -189,7 +189,7 @@ impl Macros {
     pub fn bool(mut self, name: impl Into<String>, value: bool) -> Self {
         match value {
             true => {
-                self.push((name.into(), Default::default()));
+                self.insert(name.into(), Default::default());
                 self
             }
             false => self,
@@ -203,25 +203,25 @@ impl Macros {
         prefix: Option<&'_ str>,
     ) -> Self {
         match prefix {
-            None => self.push((T::DEF.into(), Default::default())),
-            Some(prefix) => self.push((format!("{}_{}", prefix, T::DEF), Default::default())),
-        }
+            None => self.insert(T::DEF.into(), Default::default()),
+            Some(prefix) => self.insert(format!("{}_{}", prefix, T::DEF), Default::default()),
+        };
         self
     }
 
     /// Define a macro with custom display name and prefix.
     pub fn custom(mut self, value: impl std::fmt::Display, prefix: Option<&'_ str>) -> Self {
         match prefix {
-            None => self.push((format!("{}", value), Default::default())),
-            Some(prefix) => self.push((format!("{}_{}", prefix, value), Default::default())),
-        }
+            None => self.insert(format!("{}", value), Default::default()),
+            Some(prefix) => self.insert(format!("{}_{}", prefix, value), Default::default()),
+        };
         self
     }
 
     /// Add a define when `condition` is true.
     pub fn define(mut self, name: impl Into<String>, condition: bool) -> Self {
         if condition {
-            self.push((name.into(), Default::default()))
+            self.insert(name.into(), Default::default());
         }
         self
     }

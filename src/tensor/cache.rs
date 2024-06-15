@@ -5,14 +5,21 @@ use std::{
 
 use rustc_hash::FxHashMap as HashMap;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-struct CacheId;
+#[derive(Debug, Clone)]
+struct CachedItem<V> {
+    value: Arc<V>,
+    life: usize,
+}
 
-type CachedItem<V> = (Arc<V>, uid::Id<CacheId>);
+impl<V> CachedItem<V> {
+    fn ref_count(&self) -> usize {
+        Arc::strong_count(&self.value)
+    }
+}
 
 #[derive(Debug)]
 pub struct ResourceCache<K, V> {
-    map: RwLock<HashMap<K, CachedItem<V>>>,
+    map: RwLock<HashMap<K, Vec<CachedItem<V>>>>,
     #[allow(unused)]
     limit: usize,
 }
@@ -37,34 +44,58 @@ where
         }
     }
 
-    /// Checkout the item with the given key. If the item doesn't exist, `f` is called to construct it.
-    pub fn checkout(&self, key: K, miss: impl FnOnce() -> V) -> Arc<V> {
+    /// Step the cache for one frame.
+    pub fn step(&self) {
+        if self.limit == 0 {
+            return;
+        }
+
+        let mut map = self.map.write().unwrap();
+        for items in map.values_mut() {
+            items.retain(|item| match item.ref_count() {
+                0 | 1 => item.life < self.limit,
+                _ => true,
+            });
+            items.iter_mut().for_each(|item| item.life += 1);
+        }
+    }
+
+    /// Checkout the item with the given key. If the item doesn't exist, `miss` is called to construct it.
+    pub fn checkout(&self, key: K, miss: impl FnOnce() -> V, hit: impl FnOnce(&V)) -> Arc<V> {
         let map = self.map.read().unwrap();
-        let value = match map.get(&key) {
-            Some((value, _)) => value.clone(),
-            None => {
-                let value = Arc::new(miss());
+        let value = match map
+            .get(&key)
+            .and_then(|items| items.iter().find(|&item| item.ref_count() <= 1))
+        {
+            Some(CachedItem { value, .. }) => {
+                let value = value.clone();
                 drop(map);
 
+                #[cfg(feature = "trace")]
+                let _span = tracing::trace_span!("cache hit").entered();
+                hit(&value);
+                value
+            }
+            None => {
+                drop(map);
+
+                #[cfg(feature = "trace")]
+                let _span = tracing::trace_span!("cache miss").entered();
+
+                let value = Arc::new(miss());
+                let item = CachedItem {
+                    value: value.clone(),
+                    life: 0,
+                };
+
                 let mut map = self.map.write().unwrap();
-                map.insert(key, (value.clone(), uid::Id::new()));
+                match map.get_mut(&key) {
+                    Some(items) => items.push(item),
+                    None => map.extend(Some((key, vec![item]))),
+                }
                 value
             }
         };
-
-        // if self.limit > 0 {
-        //     let remove_count = map.len() - self.limit.min(map.len());
-        //     let remove = map
-        //         .iter()
-        //         .sorted_unstable_by_key(|(_, (_, id))| id.get())
-        //         .map(|(key, _)| key)
-        //         .take(remove_count)
-        //         .cloned()
-        //         .collect_vec();
-        //     for key in remove {
-        //         map.remove(&key);
-        //     }
-        // }
 
         value
     }
