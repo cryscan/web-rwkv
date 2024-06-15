@@ -133,7 +133,7 @@ impl<'a> ContextBuilder {
             queue,
             pipeline_cache: Default::default(),
             shape_cache: Default::default(),
-            buffer_cache: Default::default(),
+            buffer_cache: ResourceCache::new(2),
             #[cfg(not(target_arch = "wasm32"))]
             event,
         });
