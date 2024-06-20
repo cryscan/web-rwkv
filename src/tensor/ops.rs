@@ -740,6 +740,7 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),
@@ -833,6 +834,7 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .custom(active, Some("ACT")),
