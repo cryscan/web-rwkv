@@ -555,7 +555,7 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
             header: header.clone(),
         };
 
-        context.step_caches();
+        context.maintain();
 
         if num_token == 0 {
             let embed_device = match &tensor.embed.u {

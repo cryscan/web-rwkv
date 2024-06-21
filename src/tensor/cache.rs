@@ -44,8 +44,8 @@ where
         }
     }
 
-    /// Step the cache for one frame.
-    pub fn step(&self) {
+    /// Update cache internal counters and evict old values.
+    pub fn maintain(&self) {
         if self.limit == 0 {
             return;
         }
@@ -58,6 +58,12 @@ where
             });
             items.iter_mut().for_each(|item| item.life += 1);
         }
+    }
+
+    /// Release all values.
+    pub fn clear(&self) {
+        let mut map = self.map.write().unwrap();
+        map.clear();
     }
 
     /// Checkout the item with the given key. If the item doesn't exist, `miss` is called to construct it.

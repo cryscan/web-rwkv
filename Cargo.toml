@@ -9,7 +9,7 @@ keywords = ["deep-learning", "language", "model", "rwkv"]
 license = "MIT OR Apache-2.0"
 name = "web-rwkv"
 repository = "https://github.com/cryscan/web-rwkv"
-version = "0.8.15"
+version = "0.8.16"
 
 [dependencies]
 ahash = "0.8"
@@ -25,7 +25,7 @@ instant = { version = "0.1", features = ["inaccurate", "wasm-bindgen"] }
 itertools = "0.13"
 log = "0.4"
 regex = "1.10"
-rustc-hash = "1.1.0"
+rustc-hash = "2.0.0"
 safetensors = "0.4"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"

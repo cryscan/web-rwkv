@@ -71,6 +71,7 @@ pub struct Context(Arc<ContextInternal>);
 impl Drop for Context {
     fn drop(&mut self) {
         if Arc::strong_count(&self.0) <= 1 {
+            self.clear_buffers();
             self.queue.submit(None);
             self.device.poll(wgpu::Maintain::Wait);
         }
@@ -345,11 +346,19 @@ impl ContextInternal {
             .checkout(key, || self.device.create_buffer(&desc), |_| {})
     }
 
+    /// Maintain resource caches.
     #[inline]
-    pub fn step_caches(&self) {
-        self.pipeline_cache.step();
-        self.shape_cache.step();
-        self.buffer_cache.step();
+    pub fn maintain(&self) {
+        self.pipeline_cache.maintain();
+        self.shape_cache.maintain();
+        self.buffer_cache.maintain();
+    }
+
+    /// Clear resource caches.
+    #[inline]
+    pub fn clear_buffers(&self) {
+        self.shape_cache.clear();
+        self.buffer_cache.clear();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
