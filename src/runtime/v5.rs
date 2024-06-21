@@ -1088,7 +1088,6 @@ pub async fn read_state<R: Reader>(
     info: &ModelInfo,
     model: R,
 ) -> Result<TensorCpu<f32>> {
-    use crate::tensor::TensorInitContext;
     use TensorDimension::{Auto, Dimension};
 
     let loader = Loader {
@@ -1105,7 +1104,7 @@ pub async fn read_state<R: Reader>(
         let matrix = loader
             .load_matrix_f16(format!("blocks.{layer}.att.time_state"))
             .await?;
-        let state = TensorGpu::init(context, [head_size, info.num_head, head_size, 1]);
+        let state: TensorGpu<_, _> = context.tensor_init([head_size, info.num_head, head_size, 1]);
         let reshaped: TensorGpu<f16, _> = state.reshape(
             Dimension(info.num_emb),
             Dimension(head_size),

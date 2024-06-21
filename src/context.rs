@@ -321,17 +321,18 @@ impl ContextInternal {
 
     pub(crate) fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
         let size = std::mem::size_of_val(contents);
-        let key = BufferKey { size, usage };
+        let _key = BufferKey { size, usage };
         let desc = BufferInitDescriptor {
             label: None,
             contents,
             usage,
         };
-        self.buffer_cache.checkout(
-            key,
-            || self.device.create_buffer_init(&desc),
-            |buffer| self.queue.write_buffer(buffer, 0, contents),
-        )
+        // self.buffer_cache.checkout(
+        //     key,
+        //     || self.device.create_buffer_init(&desc),
+        //     |buffer| self.queue.write_buffer(buffer, 0, contents),
+        // )
+        self.device.create_buffer_init(&desc).into()
     }
 
     pub(crate) fn checkout_buffer(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
@@ -345,6 +346,17 @@ impl ContextInternal {
         self.buffer_cache
             .checkout(key, || self.device.create_buffer(&desc), |_| {})
     }
+
+    // pub(crate) fn checkout_buffer_uncached(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {
+    //     self.device
+    //         .create_buffer(&BufferDescriptor {
+    //             label: None,
+    //             size: size as u64,
+    //             usage,
+    //             mapped_at_creation: false,
+    //         })
+    //         .into()
+    // }
 
     /// Maintain resource caches.
     #[inline]
