@@ -123,6 +123,7 @@ pub trait Build<T> {
 pub struct ModelBuilder<R: Reader> {
     pub context: Context,
     pub model: R,
+    pub rescale: usize,
     pub lora: Vec<Lora<R>>,
     pub quant: HashMap<usize, Quant>,
     pub embed_device: EmbedDevice,
@@ -133,10 +134,22 @@ impl<R: Reader> ModelBuilder<R> {
         Self {
             context: context.clone(),
             model,
+            rescale: 6,
             lora: vec![],
             quant: Default::default(),
             embed_device: Default::default(),
         }
+    }
+
+    /// Half the layer and activation every `value` layers.
+    pub fn rescale(mut self, value: usize) -> Self {
+        self.rescale = value.max(1);
+        self
+    }
+
+    pub fn lora(mut self, value: Lora<R>) -> Self {
+        self.lora.push(value);
+        self
     }
 
     pub fn quant(mut self, value: HashMap<usize, Quant>) -> Self {
@@ -146,11 +159,6 @@ impl<R: Reader> ModelBuilder<R> {
 
     pub fn embed_device(mut self, value: EmbedDevice) -> Self {
         self.embed_device = value;
-        self
-    }
-
-    pub fn lora(mut self, value: Lora<R>) -> Self {
-        self.lora.push(value);
         self
     }
 }

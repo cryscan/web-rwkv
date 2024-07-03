@@ -31,12 +31,11 @@ use crate::{
 pub struct Model {
     pub context: Context,
     pub info: ModelInfo,
+    pub rescale: usize,
     pub tensor: ModelTensor,
 }
 
 impl Model {
-    pub const RESCALE_LAYER: usize = 6;
-
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
 }
@@ -610,7 +609,15 @@ impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
             let frame = frame.clone();
             let layer = layer.clone();
 
-            let op = build_layer(hooks, frame, layer, index, num_token, head_size)?;
+            let op = build_layer(
+                hooks,
+                frame,
+                layer,
+                index,
+                num_token,
+                head_size,
+                model.rescale,
+            )?;
             ops.push(op);
 
             if (index + 1) % (info.num_layer / super::infer::NUM_LAYER_CHUNK) == 0 {
@@ -657,6 +664,7 @@ fn build_layer<F: Float>(
     index: usize,
     num_token: usize,
     head_size: usize,
+    rescale: usize,
 ) -> Result<TensorOp> {
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let Frame { state, buffer, .. } = &frame;
@@ -884,7 +892,7 @@ fn build_layer<F: Float>(
         hook_op(Hook::PostFfn(index))?,
     ]);
 
-    if (index + 1) % Model::RESCALE_LAYER == 0 {
+    if (index + 1) % rescale == 0 {
         ops.push(TensorOp::discount(&buffer.x, 0.5, 0.0)?);
     }
 
@@ -929,6 +937,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
         let ModelBuilder {
             context,
             model,
+            rescale,
             lora,
             quant,
             embed_device,
@@ -972,7 +981,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
         let mut layers = vec![];
         for layer in 0..info.num_layer {
             let quant = quant.get(&layer).copied().unwrap_or_default();
-            let discount = 2.0_f32.powi(-((layer / Model::RESCALE_LAYER) as i32));
+            let discount = 2.0_f32.powi(-((layer / rescale) as i32));
 
             let att_layer_norm = LayerNorm {
                 w: loader
@@ -1075,6 +1084,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
             Model {
                 context,
                 info,
+                rescale,
                 tensor,
             }
         };
