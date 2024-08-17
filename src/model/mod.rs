@@ -300,6 +300,7 @@ impl<R: Reader> ModelBuilder<R> {
 /// Create a model state.
 /// - `num_batch`: The maximum number of runtime slots.
 /// - `chunk_size`: Internally, the state is split into chunks of layers, since there is a size limit on one GPU buffer (128 MB).
+///
 /// If there is only one batch, it is recommended to set `chunk_size` to `info.num_layers()`.
 pub struct StateBuilder {
     context: Context,

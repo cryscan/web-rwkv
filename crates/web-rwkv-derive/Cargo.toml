@@ -8,7 +8,7 @@ keywords = ["deep-learning", "language", "model", "rwkv"]
 license = "MIT OR Apache-2.0"
 name = "web-rwkv-derive"
 repository = "https://github.com/cryscan/web-rwkv"
-version = "0.2.4"
+version = "0.2.5"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -8,8 +8,8 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
     BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
-    DeviceDescriptor, Features, Instance, Limits, PipelineLayoutDescriptor, PowerPreference, Queue,
-    RequestAdapterOptions, ShaderModuleDescriptor,
+    DeviceDescriptor, Features, Instance, Limits, MemoryHints, PipelineLayoutDescriptor,
+    PowerPreference, Queue, RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
 use crate::tensor::{
@@ -118,6 +118,7 @@ impl<'a> ContextBuilder {
                     label: None,
                     required_features: features,
                     required_limits: limits,
+                    memory_hints: MemoryHints::Performance,
                 },
                 None,
             )
@@ -286,6 +287,7 @@ impl ContextInternal {
                         module,
                         entry_point,
                         compilation_options: Default::default(),
+                        cache: None,
                     });
                 let layout = pipeline.get_bind_group_layout(0);
                 CachedPipeline { pipeline, layout }

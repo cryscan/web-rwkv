@@ -269,7 +269,7 @@ where
     loop {
         #[cfg(not(debug_assertions))]
         terminal.draw(|frame| {
-            let size = frame.size();
+            let size = frame.area();
 
             let block = Block::default().black();
             frame.render_widget(block, size);
