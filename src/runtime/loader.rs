@@ -1,4 +1,4 @@
-use std::{borrow::Cow, future::Future};
+use std::borrow::Cow;
 
 use anyhow::Result;
 use half::f16;
@@ -28,7 +28,7 @@ pub trait Reader {
     fn names(&self) -> Vec<&str>;
     fn contains(&self, name: &str) -> bool;
     fn shape(&self, name: &str) -> Result<Vec<usize>, SafeTensorError>;
-    fn tensor(&self, name: &str) -> impl Future<Output = Result<ReaderTensor, SafeTensorError>>;
+    fn tensor(&self, name: &str) -> Result<ReaderTensor, SafeTensorError>;
 }
 
 impl ReaderSend for SafeTensors<'_> {
@@ -48,8 +48,8 @@ impl ReaderSend for SafeTensors<'_> {
     }
 
     #[inline]
-    async fn tensor(&self, name: &str) -> Result<ReaderTensor, SafeTensorError> {
-        let tensor = self.tensor(name)?;
+    fn tensor(&self, name: &str) -> Result<ReaderTensor, SafeTensorError> {
+        let tensor = SafeTensors::tensor(self, name)?;
         let shape = tensor.shape().to_vec();
         let data = tensor.data().into();
         Ok((tensor.dtype(), shape, data))
@@ -273,7 +273,7 @@ impl<R: Reader> Loader<R> {
                 continue;
             };
 
-            let Ok(tensor) = lora.data.tensor(name).await else {
+            let Ok(tensor) = lora.data.tensor(name) else {
                 continue;
             };
             let tensor = TensorCpu::<f16>::from_reader(tensor)?.transfer_into(context);
@@ -303,10 +303,10 @@ impl<R: Reader> Loader<R> {
             };
 
             let name = name.split('.').filter(|x| !x.contains("weight")).join(".");
-            let Ok(x) = lora.data.tensor(&format!("{name}.lora.0")).await else {
+            let Ok(x) = lora.data.tensor(&format!("{name}.lora.0")) else {
                 continue;
             };
-            let Ok(y) = lora.data.tensor(&format!("{name}.lora.1")).await else {
+            let Ok(y) = lora.data.tensor(&format!("{name}.lora.1")) else {
                 continue;
             };
 
@@ -332,7 +332,7 @@ impl<R: Reader> Loader<R> {
     ) -> Result<TensorGpu<f32, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
-        let tensor = self.model.tensor(name.as_ref()).await?;
+        let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| x.to_f32())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
@@ -365,7 +365,7 @@ impl<R: Reader> Loader<R> {
     ) -> Result<TensorGpu<f32, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
-        let tensor = self.model.tensor(name.as_ref()).await?;
+        let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             // .map(|x| -x.to_f32().exp())
             .map(|x| x.to_f32())
@@ -402,7 +402,7 @@ impl<R: Reader> Loader<R> {
     ) -> Result<TensorGpu<f32, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
-        let tensor = self.model.tensor(name.as_ref()).await?;
+        let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             // .map(|x| -x.to_f32().exp())
             // .map(|x| x.exp())
@@ -441,7 +441,7 @@ impl<R: Reader> Loader<R> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let lora = self.lora_vectors(name.as_ref()).await?;
-        let tensor = self.model.tensor(name.as_ref()).await?;
+        let tensor = self.model.tensor(name.as_ref())?;
         let tensor = if lora.is_empty() {
             TensorCpu::from_reader(tensor)?
                 .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
@@ -487,7 +487,7 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
     ) -> Result<TensorGpu<f16, ReadWrite>> {
         let context = &self.context;
-        let tensor = self.model.tensor(name.as_ref()).await?;
+        let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::from_reader(tensor)?.transfer_into(context);
 
         let mut ops = vec![];
@@ -519,7 +519,7 @@ impl<R: Reader> Loader<R> {
         discount: f32,
     ) -> Result<TensorGpu<f16, ReadWrite>> {
         let context = &self.context;
-        let tensor = self.model.tensor(name.as_ref()).await?;
+        let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| f16::from_f32(discount * x.to_f32()))
             .transfer_into(context);
@@ -553,7 +553,7 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
     ) -> Result<()> {
         let context = &self.context;
-        let tensor = self.model.tensor(name.as_ref()).await?;
+        let tensor = self.model.tensor(name.as_ref())?;
         let tensor = TensorCpu::from_reader(tensor)?;
         matrix.load(&tensor)?;
 
@@ -589,7 +589,7 @@ impl<R: Reader> Loader<R> {
         use TensorDimension::{Dimension, Full};
         let context = &self.context;
 
-        let tensor = self.model.tensor(name.as_ref()).await?;
+        let tensor = self.model.tensor(name.as_ref())?;
         let tensor = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| f16::from_f32(discount * x.to_f32()))
             .reshape(Full, Full, Dimension(1), Dimension(1))?;
@@ -622,7 +622,7 @@ impl<R: Reader> Loader<R> {
         let context = &self.context;
         let name = "emb.weight";
 
-        let (dt, shape, tensor) = self.model.tensor(name).await?;
+        let (dt, shape, tensor) = self.model.tensor(name)?;
         let lora = self.lora_vectors(name).await?;
 
         if lora.is_empty() {
@@ -644,7 +644,7 @@ impl<R: Reader> Loader<R> {
 
     pub async fn load_head(&self, chunk_size: usize) -> Result<Vec<TensorGpu<f16, ReadWrite>>> {
         let context = &self.context;
-        let (_, shape, tensor) = self.model.tensor("head.weight").await?;
+        let (_, shape, tensor) = self.model.tensor("head.weight")?;
         let shape = Shape::new(shape[1], shape[0], 1, 1);
         let chunks = (shape[1] + chunk_size - 1) / chunk_size;
         let data = bytemuck::cast_slice(&tensor);
