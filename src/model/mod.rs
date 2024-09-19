@@ -238,7 +238,7 @@ impl<R: Reader> ModelBuilder<R> {
         }
     }
 
-    async fn prepare(self) -> Result<PreparedModelBuilder<R>> {
+    fn prepare(self) -> Result<PreparedModelBuilder<R>> {
         let ModelBuilder {
             context,
             model,

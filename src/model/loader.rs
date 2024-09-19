@@ -259,7 +259,7 @@ impl<R: Reader> Loader<R> {
 
     /// Load all lora and blend factors about the vector with a given name.
     /// In each LoRA, only the last matched pattern is loaded.
-    async fn lora_vectors(&self, name: impl AsRef<str>) -> Result<Vec<LoraVector>> {
+    fn lora_vectors(&self, name: impl AsRef<str>) -> Result<Vec<LoraVector>> {
         let context = &self.context;
         let name = name.as_ref();
 
@@ -288,7 +288,7 @@ impl<R: Reader> Loader<R> {
 
     /// Load all lora and blend factors about the matrix with a given name.
     /// In each LoRA, only the last matched pattern is loaded.
-    async fn lora_matrices(&self, name: impl AsRef<str>) -> Result<Vec<LoraMatrix>> {
+    fn lora_matrices(&self, name: impl AsRef<str>) -> Result<Vec<LoraMatrix>> {
         let context = &self.context;
         let name = name.as_ref();
 
@@ -327,10 +327,7 @@ impl<R: Reader> Loader<R> {
         Ok(Shape::from_slice_rev(&shape)?)
     }
 
-    pub async fn load_vector_f32(
-        &self,
-        name: impl AsRef<str>,
-    ) -> Result<TensorGpu<f32, ReadWrite>> {
+    pub fn load_vector_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
@@ -340,7 +337,7 @@ impl<R: Reader> Loader<R> {
             .transfer_into(context);
 
         let mut ops = vec![];
-        for lora in self.lora_vectors(name).await? {
+        for lora in self.lora_vectors(name)? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
 
@@ -360,10 +357,7 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub async fn load_vector_exp_f32(
-        &self,
-        name: impl AsRef<str>,
-    ) -> Result<TensorGpu<f32, ReadWrite>> {
+    pub fn load_vector_exp_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
@@ -374,7 +368,7 @@ impl<R: Reader> Loader<R> {
             .transfer_into(context);
 
         let mut ops = vec![];
-        for lora in self.lora_vectors(name).await? {
+        for lora in self.lora_vectors(name)? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
 
@@ -397,7 +391,7 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub async fn load_vector_exp_exp_f32(
+    pub fn load_vector_exp_exp_f32(
         &self,
         name: impl AsRef<str>,
     ) -> Result<TensorGpu<f32, ReadWrite>> {
@@ -412,7 +406,7 @@ impl<R: Reader> Loader<R> {
             .transfer_into(context);
 
         let mut ops = vec![];
-        for lora in self.lora_vectors(name).await? {
+        for lora in self.lora_vectors(name)? {
             let factor = vec![lora.alpha, 1.0 - lora.alpha, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
 
@@ -435,13 +429,10 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub async fn load_vector_f16(
-        &self,
-        name: impl AsRef<str>,
-    ) -> Result<TensorGpu<f16, ReadWrite>> {
+    pub fn load_vector_f16(&self, name: impl AsRef<str>) -> Result<TensorGpu<f16, ReadWrite>> {
         use TensorDimension::{Auto, Dimension};
         let context = &self.context;
-        let lora = self.lora_vectors(name.as_ref()).await?;
+        let lora = self.lora_vectors(name.as_ref())?;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = if lora.is_empty() {
             TensorCpu::from_reader(tensor)?
@@ -483,16 +474,13 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub async fn load_matrix_f16(
-        &self,
-        name: impl AsRef<str>,
-    ) -> Result<TensorGpu<f16, ReadWrite>> {
+    pub fn load_matrix_f16(&self, name: impl AsRef<str>) -> Result<TensorGpu<f16, ReadWrite>> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::from_reader(tensor)?.transfer_into(context);
 
         let mut ops = vec![];
-        for lora in self.lora_matrices(name.as_ref()).await? {
+        for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend_lora(
@@ -503,7 +491,7 @@ impl<R: Reader> Loader<R> {
             )?;
             ops.push(op);
         }
-        for lora in self.lora_vectors(name.as_ref()).await? {
+        for lora in self.lora_vectors(name.as_ref())? {
             let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -514,7 +502,7 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub async fn load_matrix_f16_discount(
+    pub fn load_matrix_f16_discount(
         &self,
         name: impl AsRef<str>,
         discount: f32,
@@ -526,7 +514,7 @@ impl<R: Reader> Loader<R> {
             .transfer_into(context);
 
         let mut ops = vec![];
-        for lora in self.lora_matrices(name.as_ref()).await? {
+        for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend_lora(
@@ -537,7 +525,7 @@ impl<R: Reader> Loader<R> {
             )?;
             ops.push(op);
         }
-        for lora in self.lora_vectors(name.as_ref()).await? {
+        for lora in self.lora_vectors(name.as_ref())? {
             let factor = vec![discount * lora.alpha, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -548,7 +536,7 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub async fn load_in_place_matrix_f16(
+    pub fn load_in_place_matrix_f16(
         &self,
         matrix: &TensorGpu<f16, ReadWrite>,
         name: impl AsRef<str>,
@@ -559,7 +547,7 @@ impl<R: Reader> Loader<R> {
         matrix.load(&tensor)?;
 
         let mut ops = vec![];
-        for lora in self.lora_matrices(name.as_ref()).await? {
+        for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend_lora(
@@ -570,7 +558,7 @@ impl<R: Reader> Loader<R> {
             )?;
             ops.push(op);
         }
-        for lora in self.lora_vectors(name.as_ref()).await? {
+        for lora in self.lora_vectors(name.as_ref())? {
             let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, matrix)?;
@@ -581,7 +569,7 @@ impl<R: Reader> Loader<R> {
         Ok(())
     }
 
-    pub async fn load_in_place_matrix_f16_discount(
+    pub fn load_in_place_matrix_f16_discount(
         &self,
         matrix: &TensorGpu<f16, ReadWrite>,
         name: impl AsRef<str>,
@@ -597,7 +585,7 @@ impl<R: Reader> Loader<R> {
         matrix.load(&tensor)?;
 
         let mut ops = vec![];
-        for lora in self.lora_matrices(name.as_ref()).await? {
+        for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend_lora(
@@ -608,7 +596,7 @@ impl<R: Reader> Loader<R> {
             )?;
             ops.push(op);
         }
-        for lora in self.lora_vectors(name.as_ref()).await? {
+        for lora in self.lora_vectors(name.as_ref())? {
             let factor = vec![discount * lora.alpha, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
             let op = TensorOp::blend(&factor, &lora.tensor, matrix)?;
@@ -624,7 +612,7 @@ impl<R: Reader> Loader<R> {
         let name = "emb.weight";
 
         let (dt, shape, tensor) = self.model.tensor(name)?;
-        let lora = self.lora_vectors(name).await?;
+        let lora = self.lora_vectors(name)?;
 
         if lora.is_empty() {
             let tensor = TensorCpu::from_reader((dt, shape, tensor))?;
@@ -644,7 +632,7 @@ impl<R: Reader> Loader<R> {
         }
     }
 
-    pub async fn load_head(&self, chunk_size: usize) -> Result<Vec<TensorGpu<f16, ReadWrite>>> {
+    pub fn load_head(&self, chunk_size: usize) -> Result<Vec<TensorGpu<f16, ReadWrite>>> {
         let context = &self.context;
         let (_, shape, tensor) = self.model.tensor("head.weight")?;
         let shape = Shape::new(shape[1], shape[0], 1, 1);
@@ -662,26 +650,26 @@ impl<R: Reader> Loader<R> {
         Ok(head)
     }
 
-    pub async fn load_matrix(&self, name: String, quant: Quant) -> Result<Matrix> {
+    pub fn load_matrix(&self, name: String, quant: Quant) -> Result<Matrix> {
         let context = &self.context;
         match quant {
-            Quant::None => Ok(Matrix::Fp16(self.load_matrix_f16(name).await?)),
+            Quant::None => Ok(Matrix::Fp16(self.load_matrix_f16(name)?)),
             Quant::Int8 => {
                 let shape = self.tensor_shape(&name)?;
                 let buffer = context.tensor_init(shape);
-                self.load_in_place_matrix_f16(&buffer, &name).await?;
+                self.load_in_place_matrix_f16(&buffer, &name)?;
                 Ok(Matrix::quant_u8(&buffer)?)
             }
             Quant::NF4 => {
                 let shape = self.tensor_shape(&name)?;
                 let buffer = context.tensor_init(shape);
-                self.load_in_place_matrix_f16(&buffer, &name).await?;
+                self.load_in_place_matrix_f16(&buffer, &name)?;
                 Ok(Matrix::quant_nf4(&buffer)?)
             }
         }
     }
 
-    pub async fn load_matrix_discount(
+    pub fn load_matrix_discount(
         &self,
         name: String,
         quant: Quant,
@@ -689,21 +677,17 @@ impl<R: Reader> Loader<R> {
     ) -> Result<Matrix> {
         let context = &self.context;
         match quant {
-            Quant::None => Ok(Matrix::Fp16(
-                self.load_matrix_f16_discount(name, discount).await?,
-            )),
+            Quant::None => Ok(Matrix::Fp16(self.load_matrix_f16_discount(name, discount)?)),
             Quant::Int8 => {
                 let shape = self.tensor_shape(&name)?;
                 let buffer = context.tensor_init(shape);
-                self.load_in_place_matrix_f16_discount(&buffer, &name, discount)
-                    .await?;
+                self.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
                 Ok(Matrix::quant_u8(&buffer)?)
             }
             Quant::NF4 => {
                 let shape = self.tensor_shape(&name)?;
                 let buffer = context.tensor_init(shape);
-                self.load_in_place_matrix_f16_discount(&buffer, &name, discount)
-                    .await?;
+                self.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
                 Ok(Matrix::quant_nf4(&buffer)?)
             }
         }
