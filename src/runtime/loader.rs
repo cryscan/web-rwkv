@@ -606,7 +606,7 @@ impl<R: Reader> Loader<R> {
         Ok(())
     }
 
-    pub async fn load_embed(&self) -> Result<TensorCpu<f16>> {
+    pub fn load_embed(&self) -> Result<TensorCpu<f16>> {
         let context = &self.context;
         let name = "emb.weight";
 
@@ -626,7 +626,7 @@ impl<R: Reader> Loader<R> {
                 ops.push(op);
             }
             context.queue.submit(context.encode(&TensorOp::List(ops)));
-            Ok(tensor.back().await)
+            Ok(pollster::block_on(tensor.back()))
         }
     }
 

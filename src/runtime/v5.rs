@@ -955,7 +955,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
                 w: loader.load_vector_f16("blocks.0.ln0.weight")?,
                 b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
-            w: loader.load_embed().await?,
+            w: loader.load_embed()?,
             u: match embed_device {
                 EmbedDevice::Cpu => None,
                 EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight")?),
