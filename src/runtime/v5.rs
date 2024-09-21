@@ -952,22 +952,22 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
 
         let embed = Embed {
             layer_norm: LayerNorm {
-                w: loader.load_vector_f16("blocks.0.ln0.weight").await?,
-                b: loader.load_vector_f16("blocks.0.ln0.bias").await?,
+                w: loader.load_vector_f16("blocks.0.ln0.weight")?,
+                b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
-            w: loader.load_embed().await?,
+            w: loader.load_embed()?,
             u: match embed_device {
                 EmbedDevice::Cpu => None,
-                EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight").await?),
+                EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight")?),
             },
         };
 
         let head = Head {
             layer_norm: LayerNorm {
-                w: loader.load_vector_f16("ln_out.weight").await?,
-                b: loader.load_vector_f16("ln_out.bias").await?,
+                w: loader.load_vector_f16("ln_out.weight")?,
+                b: loader.load_vector_f16("ln_out.bias")?,
             },
-            w: Matrix::Fp16(loader.load_matrix_f16("head.weight").await?),
+            w: Matrix::Fp16(loader.load_matrix_f16("head.weight")?),
         };
 
         context.queue.submit(None);
@@ -984,28 +984,21 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
             let discount = 2.0_f32.powi(-((layer / rescale) as i32));
 
             let att_layer_norm = LayerNorm {
-                w: loader
-                    .load_vector_f16(format!("blocks.{layer}.ln1.weight"))
-                    .await?,
-                b: loader
-                    .load_vector_f16(format!("blocks.{layer}.ln1.bias"))
-                    .await?,
+                w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
+                b: loader.load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
             };
 
             let att = format!("blocks.{layer}.att");
-            let time_decay = loader
-                .load_vector_exp_exp_f32(format!("{att}.time_decay"))
-                .await?;
-            let time_first = loader.load_vector_f32(format!("{att}.time_first")).await?;
-            let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k")).await?;
-            let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v")).await?;
-            let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r")).await?;
-            let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g")).await?;
+            let time_decay = loader.load_vector_exp_exp_f32(format!("{att}.time_decay"))?;
+            let time_first = loader.load_vector_f32(format!("{att}.time_first"))?;
+            let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k"))?;
+            let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v"))?;
+            let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r"))?;
+            let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g"))?;
 
             let group_norm = LayerNorm {
                 w: loader
-                    .load_vector_f16(format!("{att}.ln_x.weight"))
-                    .await?
+                    .load_vector_f16(format!("{att}.ln_x.weight"))?
                     .reshape(
                         TensorDimension::Auto,
                         TensorDimension::Dimension(info.num_head),
@@ -1013,8 +1006,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
                         TensorDimension::Dimension(1),
                     )?,
                 b: loader
-                    .load_vector_f16(format!("{att}.ln_x.bias"))
-                    .await?
+                    .load_vector_f16(format!("{att}.ln_x.bias"))?
                     .reshape(
                         TensorDimension::Auto,
                         TensorDimension::Dimension(info.num_head),
@@ -1030,33 +1022,29 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
                 time_mix_v,
                 time_mix_r,
                 time_mix_g,
-                w_k: load_matrix(format!("{att}.key.weight"), quant).await?,
-                w_v: load_matrix(format!("{att}.value.weight"), quant).await?,
-                w_r: load_matrix(format!("{att}.receptance.weight"), quant).await?,
-                w_g: load_matrix(format!("{att}.gate.weight"), quant).await?,
-                w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount).await?,
+                w_k: load_matrix(format!("{att}.key.weight"), quant)?,
+                w_v: load_matrix(format!("{att}.value.weight"), quant)?,
+                w_r: load_matrix(format!("{att}.receptance.weight"), quant)?,
+                w_g: load_matrix(format!("{att}.gate.weight"), quant)?,
+                w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount)?,
                 group_norm,
             };
 
             let ffn_layer_norm = LayerNorm {
-                w: loader
-                    .load_vector_f16(format!("blocks.{layer}.ln2.weight"))
-                    .await?,
-                b: loader
-                    .load_vector_f16(format!("blocks.{layer}.ln2.bias"))
-                    .await?,
+                w: loader.load_vector_f16(format!("blocks.{layer}.ln2.weight"))?,
+                b: loader.load_vector_f16(format!("blocks.{layer}.ln2.bias"))?,
             };
 
             let ffn = format!("blocks.{layer}.ffn");
-            let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k")).await?;
-            let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r")).await?;
+            let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
+            let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r"))?;
 
             let ffn = Ffn {
                 time_mix_k,
                 time_mix_r,
-                w_r: load_matrix(format!("{ffn}.receptance.weight"), quant).await?,
-                w_k: load_matrix(format!("{ffn}.key.weight"), quant).await?,
-                w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount).await?,
+                w_r: load_matrix(format!("{ffn}.receptance.weight"), quant)?,
+                w_k: load_matrix(format!("{ffn}.key.weight"), quant)?,
+                w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount)?,
             };
 
             context.queue.submit(None);
@@ -1111,9 +1099,7 @@ pub async fn read_state<R: Reader>(
 
     let mut ops = vec![];
     for layer in 0..info.num_layer {
-        let matrix = loader
-            .load_matrix_f16(format!("blocks.{layer}.att.time_state"))
-            .await?;
+        let matrix = loader.load_matrix_f16(format!("blocks.{layer}.att.time_state"))?;
         let state: TensorGpu<_, _> = context.tensor_init([head_size, info.num_head, head_size, 1]);
         let reshaped: TensorGpu<f16, _> = state.reshape(
             Dimension(info.num_emb),
