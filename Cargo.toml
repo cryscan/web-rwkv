@@ -38,7 +38,6 @@ trait-variant = "0.1"
 uid = "0.1"
 wasm-bindgen = "0.2"
 wgpu = "22.1.0"
-pollster = "0.3"
 
 [dependencies.web-rwkv-derive]
 path = "crates/web-rwkv-derive"
@@ -47,7 +46,7 @@ version = "0.2.5"
 [dependencies.tokio]
 default-features = false
 features = ["macros", "rt", "sync", "time"]
-version = "1.37"
+version = "1.40"
 
 [dev-dependencies]
 cbor4ii = { version = "0.3.2", features = ["half-f16", "serde1"] }

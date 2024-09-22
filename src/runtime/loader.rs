@@ -607,27 +607,9 @@ impl<R: Reader> Loader<R> {
     }
 
     pub fn load_embed(&self) -> Result<TensorCpu<f16>> {
-        let context = &self.context;
-        let name = "emb.weight";
-
-        let (dt, shape, tensor) = self.model.tensor(name)?;
-        let lora = self.lora_vectors(name)?;
-
-        if lora.is_empty() {
-            let tensor = TensorCpu::from_reader((dt, shape, tensor))?;
-            Ok(tensor)
-        } else {
-            let tensor = TensorCpu::from_reader((dt, shape, tensor))?.transfer_into(context);
-            let mut ops = vec![];
-            for lora in lora {
-                let factor = vec![lora.alpha, 1.0, 0.0, 0.0];
-                let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-                let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
-                ops.push(op);
-            }
-            context.queue.submit(context.encode(&TensorOp::List(ops)));
-            Ok(pollster::block_on(tensor.back()))
-        }
+        let (dt, shape, tensor) = self.model.tensor("emb.weight")?;
+        let tensor = TensorCpu::from_reader((dt, shape, tensor))?;
+        Ok(tensor)
     }
 
     pub fn load_head(&self, chunk_size: usize) -> Result<Vec<TensorGpu<f16, ReadWrite>>> {
