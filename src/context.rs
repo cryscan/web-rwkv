@@ -285,7 +285,7 @@ impl ContextInternal {
                         label: Some(name),
                         layout: layout.as_ref(),
                         module,
-                        entry_point,
+                        entry_point: Some(entry_point),
                         compilation_options: Default::default(),
                         cache: None,
                     });

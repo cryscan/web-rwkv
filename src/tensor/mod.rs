@@ -477,6 +477,14 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     pub fn back_in_place(&self) -> TensorCpu<T> {
         use crate::context::ContextEvent;
 
+        if self.is_empty() {
+            return TensorCpu {
+                shape: self.shape,
+                data: Arc::new([]),
+                phantom: PhantomData,
+            };
+        }
+
         let context = &self.context;
         let size = self.buffer.size();
         let buffer = context.checkout_buffer(
@@ -510,6 +518,14 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     pub async fn back(&self) -> TensorCpu<T> {
         use crate::context::ContextEvent;
 
+        if self.is_empty() {
+            return TensorCpu {
+                shape: self.shape,
+                data: Arc::new([]),
+                phantom: PhantomData,
+            };
+        }
+
         let context = &self.context;
         let size = self.buffer.size();
         let buffer = context.checkout_buffer(
@@ -541,6 +557,14 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
     #[cfg(target_arch = "wasm32")]
     pub async fn back(self) -> TensorCpu<T> {
+        if self.is_empty() {
+            return TensorCpu {
+                shape: self.shape,
+                data: Arc::new([]),
+                phantom: PhantomData,
+            };
+        }
+
         let context = &self.context;
         let size = self.buffer.size();
         let buffer = context.checkout_buffer(
