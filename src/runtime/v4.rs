@@ -9,7 +9,7 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect},
+    infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
     model::{AsAny, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
     Dispatcher, Job,
@@ -337,10 +337,10 @@ pub struct InferJob {
 }
 
 impl Job for InferJob {
-    type Input = InferChunk;
+    type Input = InferInput;
     type Output = InferOutput;
 
-    fn load(self, input: &Self::Input) -> Result<Self> {
+    fn load(self, input: &InferChunk) -> Result<Self> {
         if input.num_token() == 0 {
             return Ok(self);
         }

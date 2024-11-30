@@ -1,6 +1,6 @@
-use std::future::Future;
+use std::{future::Future, marker::PhantomData};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 pub mod infer;
 pub mod loader;
@@ -17,13 +17,23 @@ pub trait JobInfo: Send + Clone + 'static {
     fn check(&self, info: &Self) -> bool;
 }
 
+pub trait JobInput: Send + 'static {
+    /// One chunk of the whole input at a step.
+    type Chunk: Send + 'static;
+
+    /// Advance the input for a step.
+    fn step(&mut self);
+    /// The current step's chunk to feed into the job.
+    fn chunk(&self) -> Self::Chunk;
+}
+
 /// A [`Job`] to be executed on GPU.
 pub trait Job: Sized + Send + 'static {
-    type Input;
+    type Input: JobInput;
     type Output;
 
     /// Load the data from CPU to GPU.
-    fn load(self, input: &Self::Input) -> Result<Self>;
+    fn load(self, input: &<<Self as Job>::Input as JobInput>::Chunk) -> Result<Self>;
     /// Submit the job to GPU and execute it immediately.
     fn submit(&mut self);
     /// Wait for the job to finish and read the data back.
@@ -44,16 +54,6 @@ struct Submission<I, O> {
     sender: flume::Sender<(I, O)>,
 }
 
-pub trait JobInput: Send + 'static {
-    /// One chunk of the whole input at a step.
-    type Chunk: Send + 'static;
-
-    /// Advance the input for a step.
-    fn step(&mut self);
-    /// The current step's chunk to feed into the job.
-    fn chunk(&self) -> Self::Chunk;
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 pub struct TokioRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
@@ -62,16 +62,13 @@ pub struct TokioRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
 #[allow(clippy::type_complexity)]
 impl<I, O, T, F> TokioRuntime<I, O>
 where
-    T: JobInfo,
-    F: Iterator<Item = T> + Send + 'static,
     I: JobInput,
     O: Send + 'static,
+    T: JobInfo,
+    F: Iterator<Item = T> + Send + 'static,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(model: impl Dispatcher<J, Info = T>) -> Self
-    where
-        J: Job<Input = I::Chunk, Output = O>,
-    {
+    pub async fn new<J: Job<Input = I, Output = O>>(model: impl Dispatcher<J, Info = T>) -> Self {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let handle = tokio::spawn(Self::run(model, receiver));
         tokio::spawn(async move {
@@ -83,13 +80,10 @@ where
         Self(sender)
     }
 
-    async fn run<J>(
+    async fn run<J: Job<Input = I, Output = O>>(
         model: impl Dispatcher<J, Info = T>,
         mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
-    ) -> Result<()>
-    where
-        J: Job<Input = I::Chunk, Output = O>,
-    {
+    ) -> Result<()> {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
         let mut iter: Option<F> = None;
         let mut predict: usize = 0;
@@ -125,7 +119,7 @@ where
                     iter = Some((&input).into_iter());
                     predict = 2;
                 }
-                let iter = iter.as_mut().expect("iter should be assigned");
+                let iter = iter.as_mut().unwrap();
 
                 for info in iter.take(predict) {
                     #[cfg(feature = "trace")]
@@ -188,5 +182,41 @@ where
     }
 }
 
-// #[derive(Debug, Clone)]
-// pub struct SimpleRuntime<I, O>(flume::Sender<Submission<I, O>>);
+#[derive(Debug, Clone)]
+pub struct SimpleRuntime<M, J, I, O> {
+    model: M,
+    _phantom: PhantomData<(J, I, O)>,
+}
+
+impl<I, O, J, M, T, F> SimpleRuntime<M, J, I, O>
+where
+    I: JobInput,
+    O: Send + 'static,
+    J: Job<Input = I, Output = O>,
+    M: Dispatcher<J, Info = T>,
+    T: JobInfo,
+    F: Iterator<Item = T> + Send + 'static,
+    for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
+{
+    pub fn new(model: M) -> Self {
+        Self {
+            model,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub async fn infer(&self, mut input: I) -> Result<(I, O)> {
+        let Some(info) = (&input).into_iter().next() else {
+            bail!("input iterator exhausted")
+        };
+        let chunk = input.chunk();
+
+        let mut job = self.model.dispatch(info)?.load(&chunk)?;
+        job.submit();
+
+        let output = job.back().await?;
+        input.step();
+
+        Ok((input, output))
+    }
+}
