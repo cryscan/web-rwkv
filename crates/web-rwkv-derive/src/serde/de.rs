@@ -2568,7 +2568,7 @@ fn effective_style(variant: &Variant) -> Style {
 
 struct DeImplGenerics<'a>(&'a Parameters);
 
-impl<'a> ToTokens for DeImplGenerics<'a> {
+impl ToTokens for DeImplGenerics<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let mut generics = self.0.generics.clone();
         if let Some(de_lifetime) = self.0.borrowed.de_lifetime_param() {
@@ -2606,7 +2606,7 @@ fn de_type_generics_to_tokens(
     ty_generics.to_tokens(tokens);
 }
 
-impl<'a> ToTokens for DeTypeGenerics<'a> {
+impl ToTokens for DeTypeGenerics<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         de_type_generics_to_tokens(self.0.generics.clone(), &self.0.borrowed, tokens);
     }
