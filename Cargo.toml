@@ -53,6 +53,7 @@ wgpu = "23.0.0"
 
 [dependencies.web-rwkv-derive]
 path = "crates/web-rwkv-derive"
+version = "0.9"
 
 [dependencies.tokio]
 default-features = false
