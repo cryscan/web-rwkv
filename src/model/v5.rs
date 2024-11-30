@@ -20,6 +20,7 @@ use crate::{
         kind::ReadWrite,
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp},
+        serialization::Seed,
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView,
         TensorReshape, TensorShape,
@@ -27,6 +28,7 @@ use crate::{
 };
 
 #[derive(Debug, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Model<F: Float> {
     context: Context,
     info: ModelInfo,
@@ -41,6 +43,7 @@ pub struct Model<F: Float> {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct ModelTensor {
     pub embed: Embed,
     pub head: Head,
@@ -48,12 +51,14 @@ pub struct ModelTensor {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct LayerNorm {
     pub w: TensorGpu<f16, ReadWrite>,
     pub b: TensorGpu<f16, ReadWrite>,
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Att {
     pub time_decay: TensorGpu<f32, ReadWrite>,
     pub time_first: TensorGpu<f32, ReadWrite>,
@@ -73,6 +78,7 @@ pub struct Att {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Ffn {
     pub time_mix_k: TensorGpu<f16, ReadWrite>,
     pub time_mix_r: TensorGpu<f16, ReadWrite>,
@@ -83,6 +89,7 @@ pub struct Ffn {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Layer {
     pub att_layer_norm: LayerNorm,
     pub ffn_layer_norm: LayerNorm,
@@ -91,6 +98,7 @@ pub struct Layer {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Embed {
     pub layer_norm: LayerNorm,
     pub w: TensorCpu<f16>,
@@ -98,6 +106,7 @@ pub struct Embed {
 }
 
 #[derive(Debug, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Head {
     pub layer_norm: LayerNorm,
     pub w: Matrix,

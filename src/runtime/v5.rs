@@ -12,7 +12,7 @@ use super::{
     infer::{InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
     model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
-    Job, JobBuilder,
+    Dispatcher, Job,
 };
 use crate::{
     context::Context,
@@ -21,6 +21,7 @@ use crate::{
         kind::ReadWrite,
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp},
+        serialization::Seed,
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
         TensorReshape, TensorShape, TensorStack,
@@ -28,6 +29,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Model {
     pub context: Context,
     pub info: ModelInfo,
@@ -41,6 +43,7 @@ impl Model {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct ModelTensor {
     pub embed: Embed,
     pub head: Head,
@@ -48,12 +51,14 @@ pub struct ModelTensor {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct LayerNorm {
     pub w: TensorGpu<f16, ReadWrite>,
     pub b: TensorGpu<f16, ReadWrite>,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Att {
     pub time_decay: TensorGpu<f32, ReadWrite>,
     pub time_first: TensorGpu<f32, ReadWrite>,
@@ -73,6 +78,7 @@ pub struct Att {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Ffn {
     pub time_mix_k: TensorGpu<f16, ReadWrite>,
     pub time_mix_r: TensorGpu<f16, ReadWrite>,
@@ -83,6 +89,7 @@ pub struct Ffn {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Layer {
     pub att_layer_norm: LayerNorm,
     pub ffn_layer_norm: LayerNorm,
@@ -91,6 +98,7 @@ pub struct Layer {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Embed {
     pub layer_norm: LayerNorm,
     pub w: TensorCpu<f16>,
@@ -98,12 +106,14 @@ pub struct Embed {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Head {
     pub layer_norm: LayerNorm,
     pub w: Matrix,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct State {
     pub context: Context,
     pub info: ModelInfo,
@@ -351,7 +361,6 @@ pub struct InferJob {
 }
 
 impl Job for InferJob {
-    type Info = InferInfo;
     type Input = InferChunk;
     type Output = InferOutput;
 
@@ -500,10 +509,10 @@ fn hook_op<F: Float>(
     }
 }
 
-impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
+impl<F: Float> Dispatcher<InferJob> for ModelRuntime<F> {
     type Info = InferInfo;
 
-    fn build(&self, seed: Self::Info) -> Result<InferJob> {
+    fn dispatch(&self, seed: Self::Info) -> Result<InferJob> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;

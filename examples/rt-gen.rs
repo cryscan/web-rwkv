@@ -23,7 +23,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
-        v4, v5, v6, JobRuntime,
+        v4, v5, v6, TokioRuntime,
     },
     tokenizer::Tokenizer,
 };
@@ -175,17 +175,17 @@ async fn main() -> Result<()> {
         ModelVersion::V4 => {
             let model = Build::<v4::Model>::build(builder).await?;
             let builder = v4::ModelRuntime::<f16>::new(model, 1);
-            JobRuntime::new(builder).await
+            TokioRuntime::new(builder).await
         }
         ModelVersion::V5 => {
             let model = Build::<v5::Model>::build(builder).await?;
             let builder = v5::ModelRuntime::<f16>::new(model, 1);
-            JobRuntime::new(builder).await
+            TokioRuntime::new(builder).await
         }
         ModelVersion::V6 => {
             let model = Build::<v6::Model>::build(builder).await?;
             let builder = v6::ModelRuntime::<f16>::new(model, 1);
-            JobRuntime::new(builder).await
+            TokioRuntime::new(builder).await
         }
     };
 

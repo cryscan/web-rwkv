@@ -83,13 +83,13 @@ impl Serialize for Context {
     }
 }
 
-pub struct Seed<'a, C, T> {
-    pub context: &'a C,
-    _phantom: PhantomData<T>,
+pub struct Seed<'a, Context, Product> {
+    pub context: &'a Context,
+    _phantom: PhantomData<Product>,
 }
 
-impl<'a, C, T> Seed<'a, C, T> {
-    pub fn new(context: &'a C) -> Self {
+impl<'a, Context, Product> Seed<'a, Context, Product> {
+    pub fn new(context: &'a Context) -> Self {
         Self {
             context,
             _phantom: PhantomData,
@@ -100,11 +100,10 @@ impl<'a, C, T> Seed<'a, C, T> {
 impl<'de> DeserializeSeed<'de> for Seed<'de, Context, Context> {
     type Value = Context;
 
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    fn deserialize<D>(self, _deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
-        <PhantomData<Context> as Deserialize<'de>>::deserialize(deserializer)?;
         Ok(self.context.clone())
     }
 }

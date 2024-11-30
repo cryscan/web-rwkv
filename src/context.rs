@@ -56,9 +56,9 @@ pub struct ContextInternal {
     pub device: Device,
     pub queue: Queue,
 
-    pipeline_cache: ResourceCache<PipelineKey, CachedPipeline>,
-    shape_cache: ResourceCache<View, Buffer>,
-    buffer_cache: ResourceCache<BufferKey, Buffer>,
+    pipelines: ResourceCache<PipelineKey, CachedPipeline>,
+    shapes: ResourceCache<View, Buffer>,
+    buffers: ResourceCache<BufferKey, Buffer>,
 
     #[cfg(not(target_arch = "wasm32"))]
     event: flume::Sender<ContextEvent>,
@@ -133,9 +133,9 @@ impl<'a> ContextBuilder {
             adapter,
             device,
             queue,
-            pipeline_cache: Default::default(),
-            shape_cache: Default::default(),
-            buffer_cache: ResourceCache::new(2),
+            pipelines: Default::default(),
+            shapes: Default::default(),
+            buffers: ResourceCache::new(2),
             #[cfg(not(target_arch = "wasm32"))]
             event,
         });
@@ -251,7 +251,7 @@ impl ContextInternal {
         let entry_point = entry_point.as_ref();
         let key = PipelineKey::new(name.into(), entry_point.into(), macros.clone());
 
-        self.pipeline_cache.checkout(
+        self.pipelines.checkout(
             key,
             || {
                 use gpp::{process_str, Context};
@@ -307,7 +307,7 @@ impl ContextInternal {
             contents: &view.into_bytes(),
             usage: BufferUsages::UNIFORM,
         };
-        self.shape_cache
+        self.shapes
             .checkout(view, || self.device.create_buffer_init(&desc), |_| {})
     }
 
@@ -317,7 +317,7 @@ impl ContextInternal {
             contents: &view.into_bytes(),
             usage: BufferUsages::UNIFORM,
         };
-        self.shape_cache
+        self.shapes
             .checkout(view, || self.device.create_buffer_init(&desc), |_| {})
     }
 
@@ -345,7 +345,7 @@ impl ContextInternal {
             usage,
             mapped_at_creation: false,
         };
-        self.buffer_cache
+        self.buffers
             .checkout(key, || self.device.create_buffer(&desc), |_| {})
     }
 
@@ -363,16 +363,16 @@ impl ContextInternal {
     /// Maintain resource caches.
     #[inline]
     pub fn maintain(&self) {
-        self.pipeline_cache.maintain();
-        self.shape_cache.maintain();
-        self.buffer_cache.maintain();
+        self.pipelines.maintain();
+        self.shapes.maintain();
+        self.buffers.maintain();
     }
 
     /// Clear resource caches.
     #[inline]
     pub fn clear_buffers(&self) {
-        self.shape_cache.clear();
-        self.buffer_cache.clear();
+        self.shapes.clear();
+        self.buffers.clear();
     }
 
     #[cfg(not(target_arch = "wasm32"))]

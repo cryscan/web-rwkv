@@ -23,7 +23,6 @@ use crate::{
 pub type ReaderTensor<'a> = (Dtype, Vec<usize>, Cow<'a, [u8]>);
 
 /// Interface accessing a safetensors data blob.
-#[trait_variant::make(ReaderSend: Send)]
 pub trait Reader {
     fn names(&self) -> Vec<&str>;
     fn contains(&self, name: &str) -> bool;
@@ -31,7 +30,7 @@ pub trait Reader {
     fn tensor(&self, name: &str) -> Result<ReaderTensor, SafeTensorError>;
 }
 
-impl ReaderSend for SafeTensors<'_> {
+impl Reader for SafeTensors<'_> {
     #[inline]
     fn names(&self) -> Vec<&str> {
         self.names().into_iter().map(AsRef::as_ref).collect()

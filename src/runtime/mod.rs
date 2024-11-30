@@ -19,7 +19,6 @@ pub trait JobInfo: Send + Clone + 'static {
 
 /// A [`Job`] to be executed on GPU.
 pub trait Job: Sized + Send + 'static {
-    type Info: JobInfo;
     type Input;
     type Output;
 
@@ -31,12 +30,12 @@ pub trait Job: Sized + Send + 'static {
     fn back(self) -> impl Future<Output = Result<Self::Output>> + Send;
 }
 
-pub trait JobBuilder<J: Job>: Send + Clone + 'static {
+pub trait Dispatcher<J: Job>: Send + Clone + 'static {
     type Info;
 
     /// Build a [`Job`] from the given info.
     /// This usually involves creating a list of GPU commands (but not actually execution).
-    fn build(&self, info: Self::Info) -> Result<J>;
+    fn dispatch(&self, info: Self::Info) -> Result<J>;
 }
 
 #[derive(Debug)]
@@ -56,10 +55,10 @@ pub trait JobInput: Send + 'static {
 }
 
 #[derive(Debug, Clone)]
-pub struct JobRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
+pub struct TokioRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
 
 #[allow(clippy::type_complexity)]
-impl<I, O, T, F> JobRuntime<I, O>
+impl<I, O, T, F> TokioRuntime<I, O>
 where
     T: JobInfo,
     F: Iterator<Item = T> + Send + 'static,
@@ -67,12 +66,12 @@ where
     O: Send + 'static,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(builder: impl JobBuilder<J, Info = T>) -> Self
+    pub async fn new<J>(model: impl Dispatcher<J, Info = T>) -> Self
     where
-        J: Job<Info = T, Input = I::Chunk, Output = O>,
+        J: Job<Input = I::Chunk, Output = O>,
     {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
-        let handle = tokio::spawn(Self::run(builder, receiver));
+        let handle = tokio::spawn(Self::run(model, receiver));
         tokio::spawn(async move {
             match handle.await {
                 Ok(_) => {}
@@ -83,11 +82,11 @@ where
     }
 
     async fn run<J>(
-        builder: impl JobBuilder<J, Info = T>,
+        model: impl Dispatcher<J, Info = T>,
         mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
     ) -> Result<()>
     where
-        J: Job<Info = T, Input = I::Chunk, Output = O>,
+        J: Job<Input = I::Chunk, Output = O>,
     {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
         let mut iter: Option<F> = None;
@@ -137,8 +136,8 @@ where
                     );
 
                     let key = info.clone();
-                    let builder = builder.clone();
-                    let handle = tokio::task::spawn_blocking(move || builder.build(key));
+                    let model = model.clone();
+                    let handle = tokio::task::spawn_blocking(move || model.dispatch(key));
                     queue.push((info.clone(), handle));
                 }
 

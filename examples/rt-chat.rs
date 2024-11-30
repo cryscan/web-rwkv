@@ -23,7 +23,7 @@ use web_rwkv::{
             State,
         },
         softmax::softmax_one,
-        v4, v5, v6, JobRuntime,
+        v4, v5, v6, TokioRuntime,
     },
     tensor::{TensorCpu, TensorInit, TensorShape},
     tokenizer::Tokenizer,
@@ -263,19 +263,19 @@ async fn main() -> Result<()> {
             let model = Build::<v4::Model>::build(builder).await?;
             let builder = v4::ModelRuntime::<f16>::new(model, 1);
             let state = builder.state();
-            (JobRuntime::new(builder).await, Box::new(state))
+            (TokioRuntime::new(builder).await, Box::new(state))
         }
         ModelVersion::V5 => {
             let model = Build::<v5::Model>::build(builder).await?;
             let builder = v5::ModelRuntime::<f16>::new(model, 1);
             let state = builder.state();
-            (JobRuntime::new(builder).await, Box::new(state))
+            (TokioRuntime::new(builder).await, Box::new(state))
         }
         ModelVersion::V6 => {
             let model = Build::<v6::Model>::build(builder).await?;
             let builder = v6::ModelRuntime::<f16>::new(model, 1);
             let state = builder.state();
-            (JobRuntime::new(builder).await, Box::new(state))
+            (TokioRuntime::new(builder).await, Box::new(state))
         }
     };
 
