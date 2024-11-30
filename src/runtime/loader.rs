@@ -615,7 +615,7 @@ impl<R: Reader> Loader<R> {
         let context = &self.context;
         let (_, shape, tensor) = self.model.tensor("head.weight")?;
         let shape = Shape::new(shape[1], shape[0], 1, 1);
-        let chunks = (shape[1] + chunk_size - 1) / chunk_size;
+        let chunks = shape[1].div_ceil(chunk_size);
         let data = bytemuck::cast_slice(&tensor);
 
         let head = (0..chunks)

@@ -1,7 +1,10 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use anyhow::Result;
+#[cfg(not(target_arch = "wasm32"))]
 use futures::future::BoxFuture;
+#[cfg(target_arch = "wasm32")]
+use futures::future::LocalBoxFuture;
 use half::f16;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -134,7 +137,7 @@ impl State {
         context.queue.submit(Some(encoder.finish()));
 
         let mut backed = Vec::with_capacity(tensors.len());
-        for tensor in tensors.into_iter() {
+        for tensor in tensors {
             backed.push(tensor.back().await);
         }
         TensorCpu::stack(backed)
@@ -182,7 +185,13 @@ impl super::model::State for State {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>> {
+        Box::pin(self.back(batch))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn back(&self, batch: usize) -> LocalBoxFuture<Result<TensorCpu<f32>, TensorError>> {
         Box::pin(self.back(batch))
     }
 

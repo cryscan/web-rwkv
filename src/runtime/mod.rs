@@ -12,14 +12,14 @@ pub mod v6;
 
 // const MAX_QUEUE_SIZE: usize = 2;
 
-pub trait JobInfo: Send + Clone + 'static {
+pub trait JobInfo: Clone {
     /// Check if the info are compatible.
     fn check(&self, info: &Self) -> bool;
 }
 
-pub trait JobInput: Send + 'static {
+pub trait JobInput {
     /// One chunk of the whole input at a step.
-    type Chunk: Send + 'static;
+    type Chunk;
 
     /// Advance the input for a step.
     fn step(&mut self);
@@ -28,7 +28,7 @@ pub trait JobInput: Send + 'static {
 }
 
 /// A [`Job`] to be executed on GPU.
-pub trait Job: Sized + Send + 'static {
+pub trait Job: Sized {
     type Input: JobInput;
     type Output;
 
@@ -36,11 +36,15 @@ pub trait Job: Sized + Send + 'static {
     fn load(self, input: &<<Self as Job>::Input as JobInput>::Chunk) -> Result<Self>;
     /// Submit the job to GPU and execute it immediately.
     fn submit(&mut self);
+    #[cfg(not(target_arch = "wasm32"))]
     /// Wait for the job to finish and read the data back.
     fn back(self) -> impl Future<Output = Result<Self::Output>> + Send;
+    #[cfg(target_arch = "wasm32")]
+    /// Wait for the job to finish and read the data back.
+    fn back(self) -> impl Future<Output = Result<Self::Output>>;
 }
 
-pub trait Dispatcher<J: Job>: Send + Clone + 'static {
+pub trait Dispatcher<J: Job> {
     type Info;
 
     /// Build a [`Job`] from the given info.
@@ -48,10 +52,11 @@ pub trait Dispatcher<J: Job>: Send + Clone + 'static {
     fn dispatch(&self, info: Self::Info) -> Result<J>;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct Submission<I, O> {
     input: I,
-    sender: flume::Sender<(I, O)>,
+    sender: tokio::sync::oneshot::Sender<(I, O)>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -62,13 +67,17 @@ pub struct TokioRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
 #[allow(clippy::type_complexity)]
 impl<I, O, T, F> TokioRuntime<I, O>
 where
-    I: JobInput,
+    I: JobInput + Send + 'static,
     O: Send + 'static,
-    T: JobInfo,
+    T: JobInfo + Send + 'static,
     F: Iterator<Item = T> + Send + 'static,
+    <I as JobInput>::Chunk: Send,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J: Job<Input = I, Output = O>>(model: impl Dispatcher<J, Info = T>) -> Self {
+    pub async fn new<J>(model: impl Dispatcher<J, Info = T> + Send + Clone + 'static) -> Self
+    where
+        J: Job<Input = I, Output = O> + Send + 'static,
+    {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let handle = tokio::spawn(Self::run(model, receiver));
         tokio::spawn(async move {
@@ -80,10 +89,13 @@ where
         Self(sender)
     }
 
-    async fn run<J: Job<Input = I, Output = O>>(
-        model: impl Dispatcher<J, Info = T>,
+    async fn run<J>(
+        model: impl Dispatcher<J, Info = T> + Send + Clone + 'static,
         mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        J: Job<Input = I, Output = O> + Send + 'static,
+    {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
         let mut iter: Option<F> = None;
         let mut predict: usize = 0;
@@ -153,7 +165,7 @@ where
             async fn back<J: Job, I: JobInput>(
                 job: J,
                 mut input: I,
-                sender: flume::Sender<(I, J::Output)>,
+                sender: tokio::sync::oneshot::Sender<(I, J::Output)>,
             ) -> Result<()> {
                 let output = job.back().await?;
                 input.step();
@@ -172,13 +184,10 @@ where
     /// Perform (partial) inference and return the remaining input and (perhaps partial) output.
     /// The amount of input processed during one call is bound by the input chunk size.
     pub async fn infer(&self, input: I) -> (I, O) {
-        let (sender, receiver) = flume::bounded(1);
+        let (sender, receiver) = tokio::sync::oneshot::channel();
         let submission = Submission { input, sender };
         let _ = self.0.send(submission).await;
-        receiver
-            .recv_async()
-            .await
-            .expect("receive infer output error")
+        receiver.await.expect("receive infer output error")
     }
 }
 

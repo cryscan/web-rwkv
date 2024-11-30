@@ -93,7 +93,7 @@ pub enum CreateEnvironmentError {
     RequestDeviceFailed,
 }
 
-impl<'a> ContextBuilder {
+impl ContextBuilder {
     pub fn new(adapter: Adapter) -> Self {
         let features = Features::empty();
         #[cfg(feature = "subgroup-ops")]
@@ -395,7 +395,7 @@ impl ContextInternal {
             let map = slice.get_mapped_range();
             let len = map.len();
             let size = std::mem::size_of::<u32>();
-            let data = vec![0u32; (len + size - 1) / size].into_boxed_slice();
+            let data = vec![0u32; len.div_ceil(size)].into_boxed_slice();
             unsafe {
                 let data = Box::leak(data);
                 let data: &mut [u8] = bytemuck::cast_slice_mut(data);

@@ -245,9 +245,7 @@ where
         "The Space Needle is located in downtown",
         "人们发现",
     ];
-    let mut prompts = prompts
-        .to_vec()
-        .repeat((batch + prompts.len() - 1) / prompts.len())[..batch]
+    let mut prompts = prompts.to_vec().repeat(batch.div_ceil(prompts.len()))[..batch]
         .iter()
         .map(|str| String::from_str(str).unwrap())
         .collect_vec();

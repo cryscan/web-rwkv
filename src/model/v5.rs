@@ -260,7 +260,7 @@ impl Build<ModelState> for StateBuilder {
             num_batch,
             chunk_size,
         } = self;
-        let num_chunk = (info.num_layer + chunk_size - 1) / chunk_size;
+        let num_chunk = info.num_layer.div_ceil(chunk_size);
         let head_size = info.num_emb / info.num_head;
         let state = (0..num_chunk)
             .map(|_| {

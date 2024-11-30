@@ -251,7 +251,7 @@ impl TensorOp {
 
     #[inline]
     fn block_count(count: u32, block_size: u32) -> u32 {
-        (count + block_size - 1) / block_size
+        count.div_ceil(block_size)
     }
 
     #[inline]
