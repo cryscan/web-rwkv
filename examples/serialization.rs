@@ -17,6 +17,8 @@ use tokio::{
     fs::File,
     io::{AsyncReadExt, BufReader},
 };
+#[cfg(feature = "trace")]
+use tracing_subscriber::layer::SubscriberExt;
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
