@@ -202,6 +202,7 @@ impl RenameAllRules {
 
 /// Represents struct or enum attribute information.
 pub struct Container {
+    seed: syn::Path,
     context: syn::Path,
     name: Name,
     transparent: bool,
@@ -285,6 +286,7 @@ impl Identifier {
 impl Container {
     /// Extract out the `#[serde(...)]` attributes from an item.
     pub fn from_ast(cx: &Ctxt, item: &syn::DeriveInput) -> Self {
+        let mut seed = Attr::none(cx, SEED);
         let mut context = Attr::none(cx, CONTEXT);
         let mut ser_name = Attr::none(cx, RENAME);
         let mut de_name = Attr::none(cx, RENAME);
@@ -311,7 +313,7 @@ impl Container {
         let mut non_exhaustive = false;
 
         for attr in &item.attrs {
-            if attr.path() != SERDE {
+            if attr.path() != SERDE_SEED {
                 non_exhaustive |=
                     matches!(&attr.meta, syn::Meta::Path(path) if path == NON_EXHAUSTIVE);
                 continue;
@@ -328,6 +330,11 @@ impl Container {
                     // #[serde(context = "path")]
                     let path = parse_lit_into_path(cx, CONTEXT, &meta)?;
                     context.set_opt(&meta.path, path);
+                }
+                else if meta.path == SEED {
+                    // #[serde(seed = "path")]
+                    let path = parse_lit_into_path(cx, SEED, &meta)?;
+                    seed.set_opt(&meta.path, path);
                 }
                 else if meta.path == RENAME {
                     // #[serde(rename = "foo")]
@@ -572,13 +579,13 @@ impl Container {
             }
         }
 
-        let context = context.get().unwrap_or(
-            syn::LitStr::new("crate::context::Context", Span::call_site())
-                .parse()
-                .expect("default context path"),
-        );
+        let seed = seed.get().expect("must have container attribute \"seed\"");
+        let context = context
+            .get()
+            .expect("must have container attribute \"context\"");
 
         Container {
+            seed,
             context,
             name: Name::from_attrs(unraw(&item.ident), ser_name, de_name, None),
             transparent: transparent.get(),
@@ -606,6 +613,10 @@ impl Container {
             expecting: expecting.get(),
             non_exhaustive,
         }
+    }
+
+    pub fn seed(&self) -> &syn::Path {
+        &self.seed
     }
 
     pub fn context(&self) -> &syn::Path {
@@ -843,7 +854,7 @@ impl Variant {
         let mut untagged = BoolAttr::none(cx, UNTAGGED);
 
         for attr in &variant.attrs {
-            if attr.path() != SERDE {
+            if attr.path() != SERDE_SEED {
                 continue;
             }
 
@@ -1131,7 +1142,7 @@ impl Field {
         }
 
         for attr in &field.attrs {
-            if attr.path() != SERDE {
+            if attr.path() != SERDE_SEED {
                 continue;
             }
 

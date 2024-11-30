@@ -475,6 +475,8 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
 impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn back_in_place(&self) -> TensorCpu<T> {
+        use crate::context::ContextEvent;
+
         if self.is_empty() {
             return TensorCpu {
                 shape: self.shape,
@@ -495,9 +497,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         context.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let _ = context
-            .event()
-            .send(crate::context::ContextEvent { buffer, sender });
+        let _ = context.event().send(ContextEvent { buffer, sender });
         let data = receiver.blocking_recv().unwrap();
         let data = unsafe {
             let data = Box::leak(data);

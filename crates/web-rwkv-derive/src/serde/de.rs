@@ -39,12 +39,13 @@ pub fn expand_derive_deserialize(input: &mut syn::DeriveInput) -> syn::Result<To
     let body = Stmts(deserialize_body(&cont, &params));
     let delife = params.borrowed.de_lifetime();
     let serde = cont.attrs.serde_path();
+    let seed = &params.seed;
     let context = cont.attrs.context();
 
     let impl_block = {
         quote! {
             #[automatically_derived]
-            impl #de_impl_generics #serde::de::DeserializeSeed<#delife> for crate::tensor::serialization::Seed<#delife, #context, #ident #ty_generics> #where_clause {
+            impl #de_impl_generics #serde::de::DeserializeSeed<#delife> for #seed<#delife, #context, #ident #ty_generics> #where_clause {
                 type Value = #ident #ty_generics;
 
                 fn deserialize<__D>(self, __deserializer: __D) -> #serde::__private::Result<Self::Value, __D::Error>
@@ -111,7 +112,10 @@ struct Parameters {
     /// Generics including any explicit and inferred bounds for the impl.
     generics: syn::Generics,
 
-    /// The context type of deserialization.
+    /// The seed type for deserialization seed.
+    seed: syn::Path,
+
+    /// The context type for deserialization seed.
     context: syn::Path,
 
     /// Lifetimes borrowed from the deserializer. These will become bounds on
@@ -133,6 +137,7 @@ impl Parameters {
         let this_value = this::this_value(cont);
         let borrowed = borrowed_lifetimes(cont);
         let generics = build_generics(cont, &borrowed);
+        let seed = cont.attrs.seed().clone();
         let context = cont.attrs.context().clone();
         let has_getter = cont.data.has_getter();
         let is_packed = cont.attrs.is_packed();
@@ -143,6 +148,7 @@ impl Parameters {
             this_value,
             generics,
             borrowed,
+            seed,
             context,
             has_getter,
             is_packed,
@@ -554,19 +560,21 @@ fn deserialize_seq(
                 None => {
                     let field_ty = field.ty;
                     let span = field.original.span();
+                    let seed = &params.seed;
                     let context = &params.context;
                     let func =
-                        quote_spanned!(span=> _serde::de::SeqAccess::next_element_seed::<crate::tensor::serialization::Seed<#context, #field_ty>>);
-                    quote!(#func(&mut __seq, crate::tensor::serialization::Seed::new(self.context))?)
+                        quote_spanned!(span=> _serde::de::SeqAccess::next_element_seed::<#seed<#context, #field_ty>>);
+                    quote!(#func(&mut __seq, #seed::new(self.context))?)
                 }
                 Some(path) => {
                     let (wrapper, wrapper_ty) = wrap_deserialize_field_with(params, field.ty, path);
+                    let seed = &params.seed;
                     let context = &params.context;
                     quote!({
                         #wrapper
                         _serde::__private::Option::map(
-                            _serde::de::SeqAccess::next_element_seed::<crate::tensor::serialization::Seed<#context, #wrapper_ty>>(
-                                &mut __seq, crate::tensor::serialization::Seed::new(self.context))?,
+                            _serde::de::SeqAccess::next_element_seed::<#seed<#context, #wrapper_ty>>(
+                                &mut __seq, #seed::new(self.context))?,
                             |__wrap| __wrap.value)
                     })
                 }
@@ -1628,20 +1636,22 @@ fn deserialize_externally_tagged_newtype_variant(
         None => {
             let field_ty = field.ty;
             let span = field.original.span();
+            let seed = &params.seed;
             let context = &params.context;
-            let func = quote_spanned!(span=> _serde::de::VariantAccess::newtype_variant_seed::<crate::tensor::serialization::Seed<#context, #field_ty>>);
+            let func = quote_spanned!(span=> _serde::de::VariantAccess::newtype_variant_seed::<#seed<#context, #field_ty>>);
             quote_expr! {
-                _serde::__private::Result::map(#func(__variant, crate::tensor::serialization::Seed::new(self.context)), #this_value::#variant_ident)
+                _serde::__private::Result::map(#func(__variant, #seed::new(self.context)), #this_value::#variant_ident)
             }
         }
         Some(path) => {
             let (wrapper, wrapper_ty) = wrap_deserialize_field_with(params, field.ty, path);
+            let seed = &params.seed;
             let context = &params.context;
             quote_block! {
                 #wrapper
                 _serde::__private::Result::map(
-                    _serde::de::VariantAccess::newtype_variant::<crate::tensor::serialization::Seed<#context, #wrapper_ty>>(
-                        __variant, crate::tensor::serialization::Seed::new(self.context)),
+                    _serde::de::VariantAccess::newtype_variant::<#seed<#context, #wrapper_ty>>(
+                        __variant, #seed::new(self.context)),
                     |__wrapper| #this_value::#variant_ident(__wrapper.value))
             }
         }
@@ -2192,19 +2202,21 @@ fn deserialize_map(
                 None => {
                     let field_ty = field.ty;
                     let span = field.original.span();
+                    let seed = &params.seed;
                     let context = &params.context;
                     let func =
-                        quote_spanned!(span=> _serde::de::MapAccess::next_value_seed::<crate::tensor::serialization::Seed<#context, #field_ty>>);
+                        quote_spanned!(span=> _serde::de::MapAccess::next_value_seed::<#seed<#context, #field_ty>>);
                     quote! {
-                        #func(&mut __map, crate::tensor::serialization::Seed::new(self.context))?
+                        #func(&mut __map, #seed::new(self.context))?
                     }
                 }
                 Some(path) => {
                     let (wrapper, wrapper_ty) = wrap_deserialize_field_with(params, field.ty, path);
+                    let seed = &params.seed;
                     let context = &params.context;
                     quote!({
                         #wrapper
-                        match _serde::de::MapAccess::next_value_seed::<crate::tensor::serialization::Seed<#context, #wrapper_ty>>(&mut __map, crate::tensor::serialization::Seed::new(self.context)) {
+                        match _serde::de::MapAccess::next_value_seed::<#seed<#context, #wrapper_ty>>(&mut __map, #seed::new(self.context)) {
                             _serde::__private::Ok(__wrapper) => __wrapper.value,
                             _serde::__private::Err(__err) => {
                                 return _serde::__private::Err(__err);
@@ -2556,7 +2568,7 @@ fn effective_style(variant: &Variant) -> Style {
 
 struct DeImplGenerics<'a>(&'a Parameters);
 
-impl<'a> ToTokens for DeImplGenerics<'a> {
+impl ToTokens for DeImplGenerics<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let mut generics = self.0.generics.clone();
         if let Some(de_lifetime) = self.0.borrowed.de_lifetime_param() {
@@ -2594,7 +2606,7 @@ fn de_type_generics_to_tokens(
     ty_generics.to_tokens(tokens);
 }
 
-impl<'a> ToTokens for DeTypeGenerics<'a> {
+impl ToTokens for DeTypeGenerics<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         de_type_generics_to_tokens(self.0.generics.clone(), &self.0.borrowed, tokens);
     }

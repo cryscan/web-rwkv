@@ -53,31 +53,31 @@ It *does not* provide the following:
 ### Performance Test
 The test generates 500 tokens and measure the time cost.
 ```bash
-$ cargo run --release --example rt-gen
+$ cargo run --release --example gen
 ```
 
 ### Chat Demo
 To chat with the model, run
 ```bash
-$ cargo run --release --example rt-chat
+$ cargo run --release --example chat
 ```
 
 In this demo, type `+` to retry last round's generation; type `-` to exit.
 
 - To specify the location of your safetensors model, use 
    ```bash
-   $ cargo run --release --example rt-chat -- --model /path/to/model
+   $ cargo run --release --example chat -- --model /path/to/model
    ```
 
 - To load custom prompts for chat, use 
    ```bash
-   $ cargo run --release --example rt-chat -- --prompt /path/to/prompt
+   $ cargo run --release --example chat -- --prompt /path/to/prompt
    ```
    See [`assets/prompt.json`](./assets/prompt.json) for details.
 
 - To specify layer quantization, use `--quant <LAYERS>` or `--quant-nf4 <LAYERS>` to quantize the first `<LAYERS>` layers. For example, use 
   ```bash
-  $ cargo run --release --example rt-chat -- --quant 32
+  $ cargo run --release --example chat -- --quant 32
   ```
   to quantize all 32 layers.
 
@@ -88,7 +88,7 @@ In this demo, type `+` to retry last round's generation; type `-` to exit.
 ### Batched Inference
 This demo showcases generation of 4 batches of text with various lengths simultaneously.
 ```bash
-$ cargo run --release --example rt-batch
+$ cargo run --release --example batch
 ```
 
 ### Inspector

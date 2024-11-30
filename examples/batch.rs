@@ -1,10 +1,4 @@
-use std::{
-    convert::Infallible,
-    fs::File,
-    io::{BufReader, Read},
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
@@ -26,17 +20,23 @@ use ratatui::{
     Terminal,
 };
 use safetensors::SafeTensors;
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, BufReader},
+};
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
-    model::{
+    runtime::{
+        infer::{InferInput, InferInputBatch},
         loader::{Loader, Lora},
-        v4, v5, v6, Build, BuildFuture, ContextAutoLimits, Model, ModelBuilder, ModelInfo,
-        ModelInput, ModelOutput, ModelState, ModelVersion, Quant, StateBuilder,
+        model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
+        softmax::softmax,
+        v4, v5, v6, TokioRuntime,
     },
     tokenizer::Tokenizer,
 };
 
-fn sample(probs: Vec<f32>, _top_p: f32) -> u16 {
+fn sample(probs: &[f32], _top_p: f32) -> u16 {
     probs
         .iter()
         .enumerate()
@@ -75,67 +75,15 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
         .auto_limits(info)
         .build()
         .await?;
-    println!("{:#?}", context.adapter.get_info());
     Ok(context)
 }
 
-fn load_tokenizer() -> Result<Tokenizer> {
-    let file = File::open("assets/rwkv_vocab_v20230424.json")?;
+async fn load_tokenizer() -> Result<Tokenizer> {
+    let file = File::open("assets/rwkv_vocab_v20230424.json").await?;
     let mut reader = BufReader::new(file);
     let mut contents = String::new();
-    reader.read_to_string(&mut contents)?;
+    reader.read_to_string(&mut contents).await?;
     Ok(Tokenizer::new(&contents)?)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn load_model<'a, M, S>(
-    context: &Context,
-    data: &'a [u8],
-    lora: Option<&'a [u8]>,
-    quant: usize,
-    quant_nf4: usize,
-    embed_device: Option<EmbedDevice>,
-    turbo: bool,
-    token_chunk_size: usize,
-    batch: usize,
-) -> Result<(M, S)>
-where
-    M: Model<State = S>,
-    S: ModelState,
-    ModelBuilder<SafeTensors<'a>>: BuildFuture<M, Error = anyhow::Error>,
-    StateBuilder: Build<S, Error = Infallible>,
-{
-    let quant = (0..quant)
-        .map(|layer| (layer, Quant::Int8))
-        .chain((0..quant_nf4).map(|layer| (layer, Quant::NF4)))
-        .collect();
-    let model = SafeTensors::deserialize(data)?;
-    let model = ModelBuilder::new(context, model)
-        .quant(quant)
-        .turbo(turbo)
-        .token_chunk_size(token_chunk_size)
-        .embed_device(embed_device.unwrap_or_default().into());
-    let model: M = match lora {
-        Some(lora) => {
-            let data = SafeTensors::deserialize(lora)?;
-            model
-                .lora(Lora {
-                    data,
-                    blend: Default::default(),
-                })
-                .build()
-                .await?
-        }
-        None => model.build().await?,
-    };
-
-    // The model state should keep the same batch as input.
-    // [`BackedState::repeat`] is helpful if you want to create batch of states from the same input.
-    let state = StateBuilder::new(context, model.info())
-        .with_num_batch(batch)
-        .with_chunk_size(4)
-        .build()?;
-    Ok((model, state))
 }
 
 #[cfg(not(debug_assertions))]
@@ -153,89 +101,114 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) 
     Ok(terminal.show_cursor()?)
 }
 
-async fn run(cli: Cli) -> Result<()> {
-    let tokenizer = load_tokenizer()?;
-    let model = cli.model.unwrap_or_else(|| {
-        std::fs::read_dir("assets/models")
-            .unwrap()
-            .filter_map(|x| x.ok())
-            .find(|x| x.path().extension().is_some_and(|x| x == "st"))
-            .unwrap()
-            .path()
-    });
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum EmbedDevice {
+    #[default]
+    Cpu,
+    Gpu,
+}
 
-    let file = File::open(model)?;
-    let data = unsafe { Mmap::map(&file)? };
-
-    let model = SafeTensors::deserialize(&data)?;
-    let info = Loader::info(&model)?;
-    println!("{:#?}", info);
-
-    let lora = match cli.lora {
-        Some(lora) => {
-            let file = File::open(lora)?;
-            let data = unsafe { Mmap::map(&file)? };
-            Some(data)
-        }
-        None => None,
-    };
-    let lora = lora.as_deref();
-
-    let context = create_context(&info, cli.adapter).await?;
-    match info.version {
-        ModelVersion::V4 => {
-            let (model, state) = load_model(
-                &context,
-                &data,
-                lora,
-                cli.quant,
-                cli.quant_nf4,
-                cli.embed_device,
-                cli.turbo,
-                cli.token_chunk_size,
-                cli.batch,
-            )
-            .await?;
-            run_internal::<v4::Model<f16>, _>(model, state, tokenizer, cli.batch).await
-        }
-        ModelVersion::V5 => {
-            let (model, state) = load_model(
-                &context,
-                &data,
-                lora,
-                cli.quant,
-                cli.quant_nf4,
-                cli.embed_device,
-                cli.turbo,
-                cli.token_chunk_size,
-                cli.batch,
-            )
-            .await?;
-            run_internal::<v5::Model<f16>, _>(model, state, tokenizer, cli.batch).await
-        }
-        ModelVersion::V6 => {
-            let (model, state) = load_model(
-                &context,
-                &data,
-                lora,
-                cli.quant,
-                cli.quant_nf4,
-                cli.embed_device,
-                cli.turbo,
-                cli.token_chunk_size,
-                cli.batch,
-            )
-            .await?;
-            run_internal::<v6::Model<f16>, _>(model, state, tokenizer, cli.batch).await
+impl From<EmbedDevice> for web_rwkv::runtime::model::EmbedDevice {
+    fn from(value: EmbedDevice) -> Self {
+        match value {
+            EmbedDevice::Cpu => Self::Cpu,
+            EmbedDevice::Gpu => Self::Gpu,
         }
     }
 }
 
-async fn run_internal<M, S>(model: M, state: S, tokenizer: Tokenizer, batch: usize) -> Result<()>
-where
-    S: ModelState,
-    M: Model<State = S>,
-{
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    #[arg(short, long, value_name = "FILE")]
+    model: PathBuf,
+    #[arg(short, long, value_name = "FILE")]
+    lora: Option<PathBuf>,
+    #[arg(short, long, value_name = "LAYERS", default_value_t = 0)]
+    quant: usize,
+    #[arg(long, value_name = "LAYERS", default_value_t = 0)]
+    quant_nf4: usize,
+    #[arg(short, long, action)]
+    turbo: bool,
+    #[arg(short, long)]
+    embed_device: Option<EmbedDevice>,
+    #[arg(long, default_value_t = 128)]
+    token_chunk_size: usize,
+    #[arg(short, long, default_value_t = 4)]
+    batch: usize,
+    #[arg(short, long, action)]
+    adapter: bool,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Warn)
+        .with_module_level("web_rwkv", log::LevelFilter::Info)
+        .with_module_level("batch", log::LevelFilter::Info)
+        .init()?;
+    let cli = Cli::parse();
+    let batch = cli.batch;
+
+    let tokenizer = load_tokenizer().await?;
+
+    let file = File::open(cli.model).await?;
+    let data = unsafe { Mmap::map(&file)? };
+
+    let model = SafeTensors::deserialize(&data)?;
+    let info = Loader::info(&model)?;
+    log::info!("{:#?}", info);
+
+    let context = create_context(&info, cli.adapter).await?;
+    log::info!("{:#?}", context.adapter.get_info());
+
+    let quant = (0..cli.quant)
+        .map(|layer| (layer, Quant::Int8))
+        .chain((0..cli.quant_nf4).map(|layer| (layer, Quant::NF4)))
+        .collect();
+    let embed_device = cli.embed_device.unwrap_or(EmbedDevice::Cpu).into();
+    let lora = match cli.lora {
+        Some(path) => {
+            let file = File::open(path).await?;
+            let mut reader = BufReader::new(file);
+            let mut data = vec![];
+            reader.read_to_end(&mut data).await?;
+            Some(data)
+        }
+        None => None,
+    };
+
+    let builder = ModelBuilder::new(&context, model)
+        .embed_device(embed_device)
+        .quant(quant);
+    let builder = match &lora {
+        Some(data) => {
+            let data = SafeTensors::deserialize(data)?;
+            let blend = Default::default();
+            let lora = Lora { data, blend };
+            builder.lora(lora)
+        }
+        None => builder,
+    };
+
+    let runtime = match info.version {
+        ModelVersion::V4 => {
+            let model = builder.build_v4().await?;
+            let bundle = v4::Bundle::<f16>::new(model, cli.batch);
+            TokioRuntime::new(bundle).await
+        }
+        ModelVersion::V5 => {
+            let model = builder.build_v5().await?;
+            let bundle = v5::Bundle::<f16>::new(model, cli.batch);
+            TokioRuntime::new(bundle).await
+        }
+        ModelVersion::V6 => {
+            let model = builder.build_v6().await?;
+            let bundle = v6::Bundle::<f16>::new(model, cli.batch);
+            TokioRuntime::new(bundle).await
+        }
+    };
+
     #[cfg(not(debug_assertions))]
     let mut terminal = setup_terminal()?;
 
@@ -245,9 +218,7 @@ where
         "The Space Needle is located in downtown",
         "人们发现",
     ];
-    let mut prompts = prompts
-        .to_vec()
-        .repeat((batch + prompts.len() - 1) / prompts.len())[..batch]
+    let mut prompts = prompts.to_vec().repeat(batch.div_ceil(prompts.len()))[..batch]
         .iter()
         .map(|str| String::from_str(str).unwrap())
         .collect_vec();
@@ -256,16 +227,21 @@ where
         .iter()
         .map(|prompt| tokenizer.encode(prompt.as_bytes()).unwrap())
         .collect_vec();
-    let mut tokens = tokens
-        .into_iter()
-        .map(|tokens| ModelInput {
-            tokens,
-            ..Default::default()
-        })
-        .collect();
+
+    let mut inference = InferInput::new(
+        tokens
+            .into_iter()
+            .map(|tokens| InferInputBatch {
+                tokens,
+                ..Default::default()
+            })
+            .collect(),
+        cli.token_chunk_size,
+    );
 
     let mut num_token =
         [100usize, 400, 200, 300].to_vec().repeat((batch + 3) / 4)[..batch].to_vec();
+
     loop {
         #[cfg(not(debug_assertions))]
         terminal.draw(|frame| {
@@ -315,22 +291,24 @@ where
             println!("{index}: {prompt}");
         }
 
-        let logits = model.run(&mut tokens, &state).await?;
-        let probs = model.softmax(logits).await?;
-        for (index, probs) in probs.iter().enumerate().filter_map(|(index, x)| match x {
-            ModelOutput::Full(x) => Some((index, x.last()?)),
-            ModelOutput::Last(x) => Some((index, x)),
-            _ => None,
-        }) {
+        let input = inference.clone();
+        let (input, output) = runtime.infer(input).await?;
+        inference = input;
+
+        let output = output.iter().map(|batch| batch.0.clone()).collect_vec();
+        let output = softmax(&context, output).await?;
+        for (index, batch) in output.iter().enumerate() {
+            if batch.size() == 0 {
+                continue;
+            }
             if num_token[index] > 0 {
-                let token = sample(probs.to_vec(), 0.5);
+                let batch = batch.clone().to_vec();
+                let token = sample(&batch, 0.5);
                 let decoded = tokenizer.decode(&[token])?;
                 let word = String::from_utf8_lossy(&decoded);
-                tokens[index].tokens = vec![token];
+                inference.batches[index].tokens = vec![token];
                 prompts[index].push_str(&word);
                 num_token[index] -= 1;
-            } else {
-                tokens[index].tokens = vec![];
             }
         }
 
@@ -343,49 +321,4 @@ where
     restore_terminal(&mut terminal)?;
 
     Ok(())
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum EmbedDevice {
-    #[default]
-    Cpu,
-    Gpu,
-}
-
-impl From<EmbedDevice> for web_rwkv::model::EmbedDevice {
-    fn from(value: EmbedDevice) -> Self {
-        match value {
-            EmbedDevice::Cpu => Self::Cpu,
-            EmbedDevice::Gpu => Self::Gpu,
-        }
-    }
-}
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    #[arg(short, long, value_name = "FILE")]
-    model: Option<PathBuf>,
-    #[arg(short, long, value_name = "FILE")]
-    lora: Option<PathBuf>,
-    #[arg(short, long, value_name = "LAYERS", default_value_t = 0)]
-    quant: usize,
-    #[arg(long, value_name = "LAYERS", default_value_t = 0)]
-    quant_nf4: usize,
-    #[arg(short, long)]
-    embed_device: Option<EmbedDevice>,
-    #[arg(short, long, action)]
-    turbo: bool,
-    #[arg(long, default_value_t = 128)]
-    token_chunk_size: usize,
-    #[arg(short, long, default_value_t = 4)]
-    batch: usize,
-    #[arg(short, long, action)]
-    adapter: bool,
-}
-
-#[tokio::main]
-async fn main() {
-    let cli = Cli::parse();
-    run(cli).await.unwrap();
 }

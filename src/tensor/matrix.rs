@@ -4,10 +4,12 @@ use web_rwkv_derive::DeserializeSeed;
 
 use super::{ops::Activation, TensorCpu, TensorInit, TensorInto};
 use crate::{
+    context::Context,
     num::Float,
     tensor::{
         kind::{ReadWrite, Uniform},
         ops::TensorOp,
+        serialization::Seed,
         shape::Shape,
         TensorError, TensorGpu, TensorGpuView, TensorShape,
     },
@@ -43,6 +45,7 @@ impl Default for Nf4Quant {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub enum Matrix {
     Fp16(TensorGpu<f16, ReadWrite>),
     Int8 {

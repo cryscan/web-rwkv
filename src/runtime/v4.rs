@@ -1,7 +1,10 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 use anyhow::Result;
+#[cfg(not(target_arch = "wasm32"))]
 use futures::future::BoxFuture;
+#[cfg(target_arch = "wasm32")]
+use futures::future::LocalBoxFuture;
 use half::f16;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -9,10 +12,10 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect},
+    infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
-    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
-    Job, JobBuilder,
+    model::{AsAny, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
+    Dispatcher, Job,
 };
 use crate::{
     context::Context,
@@ -21,6 +24,7 @@ use crate::{
         kind::ReadWrite,
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp},
+        serialization::Seed,
         shape::Shape,
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
         TensorShape, TensorStack,
@@ -28,6 +32,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Model {
     pub context: Context,
     pub info: ModelInfo,
@@ -41,6 +46,7 @@ impl Model {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct ModelTensor {
     pub embed: Embed,
     pub head: Head,
@@ -48,12 +54,14 @@ pub struct ModelTensor {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct LayerNorm {
     pub w: TensorGpu<f16, ReadWrite>,
     pub b: TensorGpu<f16, ReadWrite>,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Att {
     pub time_decay: TensorGpu<f32, ReadWrite>,
     pub time_first: TensorGpu<f32, ReadWrite>,
@@ -69,6 +77,7 @@ pub struct Att {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Ffn {
     pub time_mix_k: TensorGpu<f16, ReadWrite>,
     pub time_mix_r: TensorGpu<f16, ReadWrite>,
@@ -79,6 +88,7 @@ pub struct Ffn {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Layer {
     pub att_layer_norm: LayerNorm,
     pub ffn_layer_norm: LayerNorm,
@@ -87,6 +97,7 @@ pub struct Layer {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Embed {
     pub layer_norm: LayerNorm,
     pub w: TensorCpu<f16>,
@@ -94,12 +105,14 @@ pub struct Embed {
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Head {
     pub layer_norm: LayerNorm,
     pub w: Matrix,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct State {
     pub context: Context,
     pub info: ModelInfo,
@@ -168,7 +181,13 @@ impl super::model::State for State {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>> {
+        Box::pin(self.back(batch))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn back(&self, batch: usize) -> LocalBoxFuture<Result<TensorCpu<f32>, TensorError>> {
         Box::pin(self.back(batch))
     }
 
@@ -327,11 +346,10 @@ pub struct InferJob {
 }
 
 impl Job for InferJob {
-    type Info = InferInfo;
-    type Input = InferChunk;
+    type Input = InferInput;
     type Output = InferOutput;
 
-    fn load(self, input: &Self::Input) -> Result<Self> {
+    fn load(self, input: &InferChunk) -> Result<Self> {
         if input.num_token() == 0 {
             return Ok(self);
         }
@@ -408,14 +426,14 @@ pub type HookFn<F> = Box<dyn Fn(Frame<F>) -> Result<TensorOp, TensorError> + Sen
 pub type HookMap<F> = HashMap<Hook, HookFn<F>>;
 
 #[derive(Clone)]
-pub struct ModelRuntime<F: Float> {
+pub struct Bundle<F: Float> {
     model: Model,
     state: State,
     hooks: Arc<HookMap<F>>,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> super::model::ModelRuntime for ModelRuntime<F> {
+impl<F: Float> super::model::Bundle for Bundle<F> {
     #[inline]
     fn info(&self) -> ModelInfo {
         self.model.info.clone()
@@ -432,7 +450,7 @@ impl<F: Float> super::model::ModelRuntime for ModelRuntime<F> {
     }
 }
 
-impl<F: Float> ModelRuntime<F> {
+impl<F: Float> Bundle<F> {
     pub fn new(model: Model, num_batch: usize) -> Self {
         let context = model.context.clone();
         let info = model.info.clone();
@@ -489,10 +507,10 @@ fn hook_op<F: Float>(
     }
 }
 
-impl<F: Float> JobBuilder<InferJob> for ModelRuntime<F> {
+impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
     type Info = InferInfo;
 
-    fn build(&self, seed: Self::Info) -> Result<InferJob> {
+    fn dispatch(&self, seed: Self::Info) -> Result<InferJob> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
@@ -852,8 +870,8 @@ fn build_header<F: Float>(
     Ok(TensorOp::List(ops))
 }
 
-impl<R: Reader> Build<Model> for ModelBuilder<R> {
-    async fn build(self) -> Result<Model> {
+impl<R: Reader> ModelBuilder<R> {
+    pub async fn build_v4(self) -> Result<Model> {
         let ModelBuilder {
             context,
             model,
@@ -861,6 +879,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
             lora,
             quant,
             embed_device,
+            ..
         } = self;
 
         let info = Loader::info(&model)?;

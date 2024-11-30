@@ -83,13 +83,13 @@ impl Serialize for Context {
     }
 }
 
-pub struct Seed<'a, C, T> {
-    pub context: &'a C,
-    _phantom: PhantomData<T>,
+pub struct Seed<'a, Context, Product> {
+    pub context: &'a Context,
+    _phantom: PhantomData<Product>,
 }
 
-impl<'a, C, T> Seed<'a, C, T> {
-    pub fn new(context: &'a C) -> Self {
+impl<'a, Context, Product> Seed<'a, Context, Product> {
+    pub fn new(context: &'a Context) -> Self {
         Self {
             context,
             _phantom: PhantomData,

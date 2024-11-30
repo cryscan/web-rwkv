@@ -1,6 +1,10 @@
-use std::future::Future;
+use std::{future::Future, marker::PhantomData};
 
 use anyhow::Result;
+#[cfg(not(target_arch = "wasm32"))]
+use futures::future::BoxFuture;
+#[cfg(target_arch = "wasm32")]
+use futures::future::LocalBoxFuture;
 
 pub mod infer;
 pub mod loader;
@@ -12,42 +16,14 @@ pub mod v6;
 
 // const MAX_QUEUE_SIZE: usize = 2;
 
-pub trait JobInfo: Send + Clone + 'static {
+pub trait JobInfo: Clone {
     /// Check if the info are compatible.
     fn check(&self, info: &Self) -> bool;
 }
 
-/// A [`Job`] to be executed on GPU.
-pub trait Job: Sized + Send + 'static {
-    type Info: JobInfo;
-    type Input;
-    type Output;
-
-    /// Load the data from CPU to GPU.
-    fn load(self, input: &Self::Input) -> Result<Self>;
-    /// Submit the job to GPU and execute it immediately.
-    fn submit(&mut self);
-    /// Wait for the job to finish and read the data back.
-    fn back(self) -> impl Future<Output = Result<Self::Output>> + Send;
-}
-
-pub trait JobBuilder<J: Job>: Send + Clone + 'static {
-    type Info;
-
-    /// Build a [`Job`] from the given info.
-    /// This usually involves creating a list of GPU commands (but not actually execution).
-    fn build(&self, info: Self::Info) -> Result<J>;
-}
-
-#[derive(Debug)]
-struct Submission<I, O> {
-    input: I,
-    sender: tokio::sync::oneshot::Sender<(I, O)>,
-}
-
-pub trait JobInput: Send + 'static {
+pub trait JobInput {
     /// One chunk of the whole input at a step.
-    type Chunk: Send + 'static;
+    type Chunk;
 
     /// Advance the input for a step.
     fn step(&mut self);
@@ -55,24 +31,59 @@ pub trait JobInput: Send + 'static {
     fn chunk(&self) -> Self::Chunk;
 }
 
-#[derive(Debug, Clone)]
-pub struct JobRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
+/// A [`Job`] to be executed on GPU.
+pub trait Job: Sized {
+    type Input: JobInput;
+    type Output;
 
+    /// Load the data from CPU to GPU.
+    fn load(self, input: &<<Self as Job>::Input as JobInput>::Chunk) -> Result<Self>;
+    /// Submit the job to GPU and execute it immediately.
+    fn submit(&mut self);
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Wait for the job to finish and read the data back.
+    fn back(self) -> impl Future<Output = Result<Self::Output>> + Send;
+    #[cfg(target_arch = "wasm32")]
+    /// Wait for the job to finish and read the data back.
+    fn back(self) -> impl Future<Output = Result<Self::Output>>;
+}
+
+pub trait Dispatcher<J: Job> {
+    type Info;
+
+    /// Build a [`Job`] from the given info.
+    /// This usually involves creating a list of GPU commands (but not actually execution).
+    fn dispatch(&self, info: Self::Info) -> Result<J>;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+struct Submission<I, O> {
+    input: I,
+    sender: tokio::sync::oneshot::Sender<Result<(I, O)>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone)]
+pub struct TokioRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
+
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::type_complexity)]
-impl<I, O, T, F> JobRuntime<I, O>
+impl<I, O, T, F> TokioRuntime<I, O>
 where
-    T: JobInfo,
-    F: Iterator<Item = T> + Send + 'static,
-    I: JobInput,
+    I: JobInput + Send + 'static,
     O: Send + 'static,
+    T: JobInfo + Send + 'static,
+    F: Iterator<Item = T> + Send + 'static,
+    <I as JobInput>::Chunk: Send,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(builder: impl JobBuilder<J, Info = T>) -> Self
+    pub async fn new<J>(model: impl Dispatcher<J, Info = T> + Send + Clone + 'static) -> Self
     where
-        J: Job<Info = T, Input = I::Chunk, Output = O>,
+        J: Job<Input = I, Output = O> + Send + 'static,
     {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
-        let handle = tokio::spawn(Self::run(builder, receiver));
+        let handle = tokio::spawn(Self::run(model, receiver));
         tokio::spawn(async move {
             match handle.await {
                 Ok(_) => {}
@@ -83,27 +94,27 @@ where
     }
 
     async fn run<J>(
-        builder: impl JobBuilder<J, Info = T>,
+        model: impl Dispatcher<J, Info = T> + Send + Clone + 'static,
         mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
-    ) -> Result<()>
-    where
-        J: Job<Info = T, Input = I::Chunk, Output = O>,
+    ) where
+        J: Job<Input = I, Output = O> + Send + 'static,
     {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
         let mut iter: Option<F> = None;
         let mut predict: usize = 0;
 
-        while let Some(Submission { input, sender }) = receiver.recv().await {
+        'main: while let Some(Submission { input, sender }) = receiver.recv().await {
             let Some(info) = (&input).into_iter().next() else {
-                continue;
+                let _ = sender.send(Err(anyhow::anyhow!("input iterator exhausted")));
+                continue 'main;
             };
 
             let chunk = input.chunk();
 
-            let mut job = loop {
+            let job = loop {
                 let mut candidates = vec![];
                 let mut remain = vec![];
-                for (key, handle) in queue.drain(..) {
+                for (key, handle) in queue {
                     match (candidates.is_empty(), info.check(&key)) {
                         (true, false) => handle.abort(),
                         (false, false) => remain.push((key, handle)),
@@ -124,7 +135,7 @@ where
                     iter = Some((&input).into_iter());
                     predict = 2;
                 }
-                let iter = iter.as_mut().expect("iter should be assigned");
+                let iter = iter.as_mut().unwrap();
 
                 for info in iter.take(predict) {
                     #[cfg(feature = "trace")]
@@ -137,8 +148,8 @@ where
                     );
 
                     let key = info.clone();
-                    let builder = builder.clone();
-                    let handle = tokio::task::spawn_blocking(move || builder.build(key));
+                    let model = model.clone();
+                    let handle = tokio::task::spawn_blocking(move || model.dispatch(key));
                     queue.push((info.clone(), handle));
                 }
 
@@ -150,20 +161,38 @@ where
                         .collect();
                     std::mem::swap(&mut queue, &mut remain);
                     queue.append(&mut remain);
-                    break job??;
+
+                    break match job {
+                        Ok(Ok(job)) => job,
+                        Ok(Err(error)) => {
+                            let _ = sender.send(Err(error));
+                            continue 'main;
+                        }
+                        Err(error) => {
+                            let _ = sender.send(Err(error.into()));
+                            continue 'main;
+                        }
+                    };
                 }
             }
-            .load(&chunk)?;
+            .load(&chunk);
+
+            let mut job = match job {
+                Ok(job) => job,
+                Err(error) => {
+                    let _ = sender.send(Err(error));
+                    continue 'main;
+                }
+            };
 
             async fn back<J: Job, I: JobInput>(
                 job: J,
                 mut input: I,
-                sender: tokio::sync::oneshot::Sender<(I, J::Output)>,
-            ) -> Result<()> {
-                let output = job.back().await?;
+                sender: tokio::sync::oneshot::Sender<Result<(I, J::Output)>>,
+            ) {
+                let output = job.back().await;
                 input.step();
-                let _ = sender.send((input, output));
-                Ok(())
+                let _ = sender.send(output.map(|output| (input, output)));
             }
 
             #[cfg(feature = "trace")]
@@ -171,15 +200,117 @@ where
             job.submit();
             tokio::spawn(back(job, input, sender));
         }
-        Ok(())
     }
 
     /// Perform (partial) inference and return the remaining input and (perhaps partial) output.
     /// The amount of input processed during one call is bound by the input chunk size.
-    pub async fn infer(&self, input: I) -> (I, O) {
+    pub async fn infer(&self, input: I) -> Result<(I, O)> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let submission = Submission { input, sender };
         let _ = self.0.send(submission).await;
         receiver.await.expect("receive infer output error")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SimpleRuntime<M, J, I, O> {
+    model: M,
+    _phantom: PhantomData<(J, I, O)>,
+}
+
+impl<I, O, J, M, T, F> SimpleRuntime<M, J, I, O>
+where
+    I: JobInput,
+    O: Send + 'static,
+    J: Job<Input = I, Output = O>,
+    M: Dispatcher<J, Info = T>,
+    T: JobInfo,
+    F: Iterator<Item = T> + Send + 'static,
+    for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
+{
+    pub fn new(model: M) -> Self {
+        Self {
+            model,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub async fn infer(&self, mut input: I) -> Result<(I, O)> {
+        let Some(info) = (&input).into_iter().next() else {
+            anyhow::bail!("input iterator exhausted")
+        };
+        let chunk = input.chunk();
+
+        let mut job = self.model.dispatch(info)?.load(&chunk)?;
+        job.submit();
+
+        let output = job.back().await?;
+        input.step();
+
+        Ok((input, output))
+    }
+}
+
+pub trait Runtime {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>>;
+
+    #[cfg(target_arch = "wasm32")]
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>>;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::type_complexity)]
+impl Runtime for TokioRuntime<infer::InferInput, infer::InferOutput> {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+        Box::pin(self.infer(input))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+        Box::pin(self.infer(input))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::type_complexity)]
+impl<M, J> Runtime for SimpleRuntime<M, J, infer::InferInput, infer::InferOutput>
+where
+    J: Job<Input = infer::InferInput, Output = infer::InferOutput> + Send + Sync,
+    M: Dispatcher<J, Info = infer::InferInfo> + Send + Sync,
+{
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+        Box::pin(self.infer(input))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::type_complexity)]
+impl<M, J> Runtime for SimpleRuntime<M, J, infer::InferInput, infer::InferOutput>
+where
+    J: Job<Input = infer::InferInput, Output = infer::InferOutput>,
+    M: Dispatcher<J, Info = infer::InferInfo>,
+{
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+        Box::pin(self.infer(input))
     }
 }

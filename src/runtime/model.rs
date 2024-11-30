@@ -1,7 +1,10 @@
-use std::{any::Any, collections::HashMap, future::Future};
+use std::{any::Any, collections::HashMap};
 
 use anyhow::Result;
+#[cfg(not(target_arch = "wasm32"))]
 use futures::future::BoxFuture;
+#[cfg(target_arch = "wasm32")]
+use futures::future::LocalBoxFuture;
 use half::f16;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -79,7 +82,11 @@ pub trait State {
     /// Load a batch of the state from CPU to GPU.
     fn load(&self, tensor: TensorCpu<f32>, batch: usize) -> Result<(), TensorError>;
     /// Read back a batch of the state from GPU to CPU.
+    #[cfg(not(target_arch = "wasm32"))]
     fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>>;
+    /// Read back a batch of the state from GPU to CPU.
+    #[cfg(target_arch = "wasm32")]
+    fn back(&self, batch: usize) -> LocalBoxFuture<Result<TensorCpu<f32>, TensorError>>;
     /// Write into the state from a GPU tensor.
     fn write(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError>;
     /// Read the state out into a GPU tensor.
@@ -88,10 +95,21 @@ pub trait State {
     fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError>;
 }
 
-pub trait ModelRuntime {
+pub trait Bundle {
+    /// The model info.
     fn info(&self) -> ModelInfo;
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Get the state from the bundle.
     fn state(&self) -> impl State + AsAny + Send + Sync + 'static;
+    #[cfg(target_arch = "wasm32")]
+    /// Get the state from the bundle.
+    fn state(&self) -> impl State + AsAny + 'static;
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Get the model from the bundle.
     fn model(&self) -> impl Serialize + Send + Sync + 'static;
+    #[cfg(target_arch = "wasm32")]
+    /// Get the model from the bundle.
+    fn model(&self) -> impl Serialize + 'static;
 }
 
 /// Quantization of a layer.
@@ -114,10 +132,6 @@ pub enum EmbedDevice {
     #[default]
     Cpu,
     Gpu,
-}
-
-pub trait Build<T> {
-    fn build(self) -> impl Future<Output = Result<T>>;
 }
 
 pub struct ModelBuilder<R: Reader> {
