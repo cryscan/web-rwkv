@@ -1,6 +1,10 @@
 use std::{future::Future, marker::PhantomData};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::Result;
+#[cfg(not(target_arch = "wasm32"))]
+use futures::future::BoxFuture;
+#[cfg(target_arch = "wasm32")]
+use futures::future::LocalBoxFuture;
 
 pub mod infer;
 pub mod loader;
@@ -101,7 +105,7 @@ where
 
         'main: while let Some(Submission { input, sender }) = receiver.recv().await {
             let Some(info) = (&input).into_iter().next() else {
-                let _ = sender.send(Err(anyhow!("input iterator exhausted")));
+                let _ = sender.send(Err(anyhow::anyhow!("input iterator exhausted")));
                 continue 'main;
             };
 
@@ -233,7 +237,7 @@ where
 
     pub async fn infer(&self, mut input: I) -> Result<(I, O)> {
         let Some(info) = (&input).into_iter().next() else {
-            bail!("input iterator exhausted")
+            anyhow::bail!("input iterator exhausted")
         };
         let chunk = input.chunk();
 
@@ -244,5 +248,69 @@ where
         input.step();
 
         Ok((input, output))
+    }
+}
+
+pub trait Runtime {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>>;
+
+    #[cfg(target_arch = "wasm32")]
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>>;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::type_complexity)]
+impl Runtime for TokioRuntime<infer::InferInput, infer::InferOutput> {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+        Box::pin(self.infer(input))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+        Box::pin(self.infer(input))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::type_complexity)]
+impl<M, J> Runtime for SimpleRuntime<M, J, infer::InferInput, infer::InferOutput>
+where
+    J: Job<Input = infer::InferInput, Output = infer::InferOutput> + Send + Sync,
+    M: Dispatcher<J, Info = infer::InferInfo> + Send + Sync,
+{
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+        Box::pin(self.infer(input))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::type_complexity)]
+impl<M, J> Runtime for SimpleRuntime<M, J, infer::InferInput, infer::InferOutput>
+where
+    J: Job<Input = infer::InferInput, Output = infer::InferOutput>,
+    M: Dispatcher<J, Info = infer::InferInfo>,
+{
+    fn infer(
+        &self,
+        input: infer::InferInput,
+    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+        Box::pin(self.infer(input))
     }
 }
