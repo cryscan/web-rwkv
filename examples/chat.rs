@@ -210,7 +210,7 @@ async fn main() -> Result<()> {
     simple_logger::SimpleLogger::new()
         .with_level(log::LevelFilter::Warn)
         .with_module_level("web_rwkv", log::LevelFilter::Info)
-        .with_module_level("rt_chat", log::LevelFilter::Info)
+        .with_module_level("chat", log::LevelFilter::Info)
         .init()?;
     let cli = Cli::parse();
 

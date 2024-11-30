@@ -100,10 +100,11 @@ impl<'a, Context, Product> Seed<'a, Context, Product> {
 impl<'de> DeserializeSeed<'de> for Seed<'de, Context, Context> {
     type Value = Context;
 
-    fn deserialize<D>(self, _deserializer: D) -> Result<Self::Value, D::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
+        <PhantomData<Context> as Deserialize<'de>>::deserialize(deserializer)?;
         Ok(self.context.clone())
     }
 }

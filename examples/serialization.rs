@@ -1,21 +1,22 @@
-use std::{io::Write, path::PathBuf};
-
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
-use instant::{Duration, Instant};
 #[cfg(not(debug_assertions))]
 use itertools::Itertools;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
+use serde::{de::DeserializeSeed, Serialize};
+use std::{
+    io::Write,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, BufReader},
 };
-#[cfg(feature = "trace")]
-use tracing_subscriber::layer::SubscriberExt;
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
@@ -25,7 +26,9 @@ use web_rwkv::{
         softmax::softmax_one,
         v4, v5, v6, TokioRuntime,
     },
+    tensor::serialization::Seed,
     tokenizer::Tokenizer,
+    wgpu,
 };
 
 fn sample(probs: &[f32], _top_p: f32) -> u16 {
@@ -105,12 +108,14 @@ struct Cli {
     quant: usize,
     #[arg(long, value_name = "LAYERS", default_value_t = 0)]
     quant_nf4: usize,
-    #[arg(short, long, action)]
-    turbo: bool,
     #[arg(short, long)]
     embed_device: Option<EmbedDevice>,
-    #[arg(long, default_value_t = 128)]
+    #[arg(short, long, action)]
+    turbo: bool,
+    #[arg(long, default_value_t = 32)]
     token_chunk_size: usize,
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
     #[arg(short, long, action)]
     adapter: bool,
 }
@@ -120,7 +125,7 @@ async fn main() -> Result<()> {
     simple_logger::SimpleLogger::new()
         .with_level(log::LevelFilter::Warn)
         .with_module_level("web_rwkv", log::LevelFilter::Info)
-        .with_module_level("gen", log::LevelFilter::Info)
+        .with_module_level("serialization", log::LevelFilter::Info)
         .init()?;
     #[cfg(feature = "trace")]
     {
@@ -173,23 +178,31 @@ async fn main() -> Result<()> {
 
     let runtime = match info.version {
         ModelVersion::V4 => {
+            let context = context.clone();
             let model = builder.build_v4().await?;
+            let f = move || serde::<v4::Model>(cli.output, &context, model);
+            let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v4::Bundle::<f16>::new(model, 1);
             TokioRuntime::new(bundle).await
         }
         ModelVersion::V5 => {
+            let context = context.clone();
             let model = builder.build_v5().await?;
+            let f = move || serde::<v5::Model>(cli.output, &context, model);
+            let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v5::Bundle::<f16>::new(model, 1);
             TokioRuntime::new(bundle).await
         }
         ModelVersion::V6 => {
+            let context = context.clone();
             let model = builder.build_v6().await?;
+            let f = move || serde::<v6::Model>(cli.output, &context, model);
+            let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v6::Bundle::<f16>::new(model, 1);
             TokioRuntime::new(bundle).await
         }
     };
 
-    // const PROMPT: &str = "User: Hi!\n\nAssistant: Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\nUser: Hi!\n\nAssistant:";
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
     let prompt_len = tokens.len();
@@ -249,4 +262,47 @@ async fn main() -> Result<()> {
     );
 
     Ok(())
+}
+
+fn serde<M>(output: Option<PathBuf>, context: &Context, model: M) -> Result<M>
+where
+    M: Serialize,
+    for<'de> Seed<'de, Context, M>: DeserializeSeed<'de, Value = M>,
+{
+    struct FileWriter(std::fs::File);
+
+    impl cbor4ii::core::enc::Write for FileWriter {
+        type Error = std::io::Error;
+
+        fn push(&mut self, input: &[u8]) -> Result<(), Self::Error> {
+            self.0.write_all(input)
+        }
+    }
+
+    if let Some(output) = output {
+        let file = FileWriter(std::fs::File::open(output)?);
+        let mut serializer = cbor4ii::serde::Serializer::new(file);
+
+        model.serialize(&mut serializer)?;
+
+        return Ok(model);
+    }
+
+    log::info!("serializing model...");
+    let buf = cbor4ii::serde::to_vec(vec![], &model)?;
+    log::info!(
+        "serialized buffer size: {} ({} MB)",
+        buf.len(),
+        buf.len() / (1 << 20)
+    );
+    drop(model);
+
+    let reader = cbor4ii::core::utils::SliceReader::new(&buf);
+    let mut deserializer = cbor4ii::serde::Deserializer::new(reader);
+    let seed = Seed::<Context, M>::new(context);
+
+    log::info!("deserializing model...");
+    let model: M = seed.deserialize(&mut deserializer)?;
+
+    Ok(model)
 }
