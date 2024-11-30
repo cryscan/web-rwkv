@@ -206,7 +206,7 @@ async fn main() -> Result<()> {
     let num_token = 500;
     for _ in 0..num_token {
         let input = prompt.clone();
-        let (input, output) = runtime.infer(input).await;
+        let (input, output) = runtime.infer(input).await?;
         prompt = input;
 
         let output = output[0].0.clone();

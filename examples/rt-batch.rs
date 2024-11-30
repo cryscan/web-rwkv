@@ -292,7 +292,7 @@ async fn main() -> Result<()> {
         }
 
         let input = inference.clone();
-        let (input, output) = runtime.infer(input).await;
+        let (input, output) = runtime.infer(input).await?;
         inference = input;
 
         let output = output.iter().map(|batch| batch.0.clone()).collect_vec();

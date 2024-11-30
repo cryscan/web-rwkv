@@ -1,6 +1,6 @@
 use std::{future::Future, marker::PhantomData};
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 
 pub mod infer;
 pub mod loader;
@@ -56,7 +56,7 @@ pub trait Dispatcher<J: Job> {
 #[derive(Debug)]
 struct Submission<I, O> {
     input: I,
-    sender: tokio::sync::oneshot::Sender<(I, O)>,
+    sender: tokio::sync::oneshot::Sender<Result<(I, O)>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -92,22 +92,22 @@ where
     async fn run<J>(
         model: impl Dispatcher<J, Info = T> + Send + Clone + 'static,
         mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
-    ) -> Result<()>
-    where
+    ) where
         J: Job<Input = I, Output = O> + Send + 'static,
     {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
         let mut iter: Option<F> = None;
         let mut predict: usize = 0;
 
-        while let Some(Submission { input, sender }) = receiver.recv().await {
+        'main: while let Some(Submission { input, sender }) = receiver.recv().await {
             let Some(info) = (&input).into_iter().next() else {
-                continue;
+                let _ = sender.send(Err(anyhow!("input iterator exhausted")));
+                continue 'main;
             };
 
             let chunk = input.chunk();
 
-            let mut job = loop {
+            let job = loop {
                 let mut candidates = vec![];
                 let mut remain = vec![];
                 for (key, handle) in queue {
@@ -157,20 +157,38 @@ where
                         .collect();
                     std::mem::swap(&mut queue, &mut remain);
                     queue.append(&mut remain);
-                    break job??;
+
+                    break match job {
+                        Ok(Ok(job)) => job,
+                        Ok(Err(error)) => {
+                            let _ = sender.send(Err(error));
+                            continue 'main;
+                        }
+                        Err(error) => {
+                            let _ = sender.send(Err(error.into()));
+                            continue 'main;
+                        }
+                    };
                 }
             }
-            .load(&chunk)?;
+            .load(&chunk);
+
+            let mut job = match job {
+                Ok(job) => job,
+                Err(error) => {
+                    let _ = sender.send(Err(error));
+                    continue 'main;
+                }
+            };
 
             async fn back<J: Job, I: JobInput>(
                 job: J,
                 mut input: I,
-                sender: tokio::sync::oneshot::Sender<(I, J::Output)>,
-            ) -> Result<()> {
-                let output = job.back().await?;
+                sender: tokio::sync::oneshot::Sender<Result<(I, J::Output)>>,
+            ) {
+                let output = job.back().await;
                 input.step();
-                let _ = sender.send((input, output));
-                Ok(())
+                let _ = sender.send(output.map(|output| (input, output)));
             }
 
             #[cfg(feature = "trace")]
@@ -178,12 +196,11 @@ where
             job.submit();
             tokio::spawn(back(job, input, sender));
         }
-        Ok(())
     }
 
     /// Perform (partial) inference and return the remaining input and (perhaps partial) output.
     /// The amount of input processed during one call is bound by the input chunk size.
-    pub async fn infer(&self, input: I) -> (I, O) {
+    pub async fn infer(&self, input: I) -> Result<(I, O)> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let submission = Submission { input, sender };
         let _ = self.0.send(submission).await;

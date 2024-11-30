@@ -290,7 +290,7 @@ async fn main() -> Result<()> {
 
     loop {
         let input = inference.clone();
-        let (input, output) = runtime.infer(input).await;
+        let (input, output) = runtime.infer(input).await?;
         inference = input;
 
         if output[0].size() > 0 {
@@ -346,7 +346,7 @@ async fn main() -> Result<()> {
 
         loop {
             let input = inference.clone();
-            let (input, output) = runtime.infer(input).await;
+            let (input, output) = runtime.infer(input).await?;
             inference = input;
 
             let output = output[0].0.clone();
