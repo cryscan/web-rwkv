@@ -73,7 +73,7 @@ simple_logger = { version = "5.0.0", features = ["stderr"] }
 tokio = { version = "1.41", features = ["full"] }
 
 [features]
-default = ["subgroup-ops", "tokio", "vanilla"]
+default = ["subgroup-ops", "tokio"]
 native = ["subgroup-ops", "tokio"]
 web = []
 
@@ -83,34 +83,3 @@ subgroup-ops = []
 tokio = ["dep:tokio"]
 ## Enables performance tracing.
 trace = ["tracing", "tracing-subscriber", "tracing-tracy"]
-## Enables `vanilla` API.
-vanilla = []
-
-[[example]]
-name = "gen"
-required-features = ["vanilla"]
-
-[[example]]
-name = "chat"
-required-features = ["vanilla"]
-
-[[example]]
-name = "batch"
-required-features = ["vanilla"]
-
-[[example]]
-name = "inspector"
-required-features = ["vanilla"]
-
-[[example]]
-name = "serialization"
-required-features = ["vanilla"]
-
-[[example]]
-name = "rt-gen"
-
-[[example]]
-name = "rt-chat"
-
-[[example]]
-name = "rt-batch"
