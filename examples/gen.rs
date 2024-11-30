@@ -187,6 +187,7 @@ async fn main() -> Result<()> {
             let bundle = v6::Bundle::<f16>::new(model, 1);
             TokioRuntime::new(bundle).await
         }
+        ModelVersion::V7 => todo!(),
     };
 
     // const PROMPT: &str = "User: Hi!\n\nAssistant: Hello! I'm your AI assistant. I'm here to help you with various tasks, such as answering questions, brainstorming ideas, drafting emails, writing code, providing advice, and much more.\n\nUser: Hi!\n\nAssistant:";

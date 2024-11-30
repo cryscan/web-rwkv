@@ -203,6 +203,7 @@ async fn main() -> Result<()> {
             let bundle = v6::Bundle::<f16>::new(model, 1);
             TokioRuntime::new(bundle).await
         }
+        ModelVersion::V7 => todo!(),
     };
 
     const PROMPT: &str = include_str!("prompt.md");

@@ -24,6 +24,7 @@ pub enum ModelVersion {
     V4,
     V5,
     V6,
+    V7,
 }
 
 #[wasm_bindgen]

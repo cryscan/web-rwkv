@@ -274,6 +274,7 @@ async fn main() -> Result<()> {
             let state = builder.state();
             (TokioRuntime::new(builder).await, Box::new(state))
         }
+        ModelVersion::V7 => todo!(),
     };
 
     // run initial prompt
