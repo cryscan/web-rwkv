@@ -11,7 +11,7 @@ use wgpu::CommandBuffer;
 use super::{
     infer::{InferChunk, InferInfo, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
-    model::{AsAny, Build, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
+    model::{AsAny, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
     Dispatcher, Job,
 };
 use crate::{
@@ -470,14 +470,14 @@ pub type HookFn<F> = Box<dyn Fn(Frame<F>) -> Result<TensorOp, TensorError> + Sen
 pub type HookMap<F> = HashMap<Hook, HookFn<F>>;
 
 #[derive(Clone)]
-pub struct ModelRuntime<F: Float> {
+pub struct Bundle<F: Float> {
     model: Model,
     state: State,
     hooks: Arc<HookMap<F>>,
     phantom: PhantomData<F>,
 }
 
-impl<F: Float> ModelRuntime<F> {
+impl<F: Float> Bundle<F> {
     pub fn new(model: Model, num_batch: usize) -> Self {
         let context = model.context.clone();
         let info = model.info.clone();
@@ -507,7 +507,7 @@ impl<F: Float> ModelRuntime<F> {
     }
 }
 
-impl<F: Float> super::model::ModelRuntime for ModelRuntime<F> {
+impl<F: Float> super::model::Bundle for Bundle<F> {
     #[inline]
     fn info(&self) -> ModelInfo {
         self.model.info.clone()
@@ -539,7 +539,7 @@ fn hook_op<F: Float>(
     }
 }
 
-impl<F: Float> Dispatcher<InferJob> for ModelRuntime<F> {
+impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
     type Info = InferInfo;
 
     fn dispatch(&self, seed: Self::Info) -> Result<InferJob> {
@@ -1007,8 +1007,8 @@ fn build_header<F: Float>(
     Ok(TensorOp::List(ops))
 }
 
-impl<R: Reader> Build<Model> for ModelBuilder<R> {
-    async fn build(self) -> Result<Model> {
+impl<R: Reader> ModelBuilder<R> {
+    pub async fn build_v6(self) -> Result<Model> {
         let ModelBuilder {
             context,
             model,
@@ -1016,6 +1016,7 @@ impl<R: Reader> Build<Model> for ModelBuilder<R> {
             lora,
             quant,
             embed_device,
+            ..
         } = self;
 
         let info = Loader::info(&model)?;

@@ -41,7 +41,7 @@ pub trait Dispatcher<J: Job>: Send + Clone + 'static {
 #[derive(Debug)]
 struct Submission<I, O> {
     input: I,
-    sender: tokio::sync::oneshot::Sender<(I, O)>,
+    sender: flume::Sender<(I, O)>,
 }
 
 pub trait JobInput: Send + 'static {
@@ -54,9 +54,11 @@ pub trait JobInput: Send + 'static {
     fn chunk(&self) -> Self::Chunk;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 pub struct TokioRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
 
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::type_complexity)]
 impl<I, O, T, F> TokioRuntime<I, O>
 where
@@ -102,7 +104,7 @@ where
             let mut job = loop {
                 let mut candidates = vec![];
                 let mut remain = vec![];
-                for (key, handle) in queue.drain(..) {
+                for (key, handle) in queue {
                     match (candidates.is_empty(), info.check(&key)) {
                         (true, false) => handle.abort(),
                         (false, false) => remain.push((key, handle)),
@@ -157,7 +159,7 @@ where
             async fn back<J: Job, I: JobInput>(
                 job: J,
                 mut input: I,
-                sender: tokio::sync::oneshot::Sender<(I, J::Output)>,
+                sender: flume::Sender<(I, J::Output)>,
             ) -> Result<()> {
                 let output = job.back().await?;
                 input.step();
@@ -176,9 +178,15 @@ where
     /// Perform (partial) inference and return the remaining input and (perhaps partial) output.
     /// The amount of input processed during one call is bound by the input chunk size.
     pub async fn infer(&self, input: I) -> (I, O) {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let (sender, receiver) = flume::bounded(1);
         let submission = Submission { input, sender };
         let _ = self.0.send(submission).await;
-        receiver.await.expect("receive infer output error")
+        receiver
+            .recv_async()
+            .await
+            .expect("receive infer output error")
     }
 }
+
+// #[derive(Debug, Clone)]
+// pub struct SimpleRuntime<I, O>(flume::Sender<Submission<I, O>>);

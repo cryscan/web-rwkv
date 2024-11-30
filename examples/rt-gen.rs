@@ -21,7 +21,7 @@ use web_rwkv::{
     runtime::{
         infer::{InferInput, InferInputBatch, InferOption},
         loader::{Loader, Lora},
-        model::{Build, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
+        model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
         v4, v5, v6, TokioRuntime,
     },
@@ -173,19 +173,19 @@ async fn main() -> Result<()> {
 
     let runtime = match info.version {
         ModelVersion::V4 => {
-            let model = Build::<v4::Model>::build(builder).await?;
-            let builder = v4::ModelRuntime::<f16>::new(model, 1);
-            TokioRuntime::new(builder).await
+            let model = builder.build_v4().await?;
+            let bundle = v4::Bundle::<f16>::new(model, 1);
+            TokioRuntime::new(bundle).await
         }
         ModelVersion::V5 => {
-            let model = Build::<v5::Model>::build(builder).await?;
-            let builder = v5::ModelRuntime::<f16>::new(model, 1);
-            TokioRuntime::new(builder).await
+            let model = builder.build_v5().await?;
+            let bundle = v5::Bundle::<f16>::new(model, 1);
+            TokioRuntime::new(bundle).await
         }
         ModelVersion::V6 => {
-            let model = Build::<v6::Model>::build(builder).await?;
-            let builder = v6::ModelRuntime::<f16>::new(model, 1);
-            TokioRuntime::new(builder).await
+            let model = builder.build_v6().await?;
+            let bundle = v6::Bundle::<f16>::new(model, 1);
+            TokioRuntime::new(bundle).await
         }
     };
 

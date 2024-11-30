@@ -1,4 +1,4 @@
-use std::{any::Any, collections::HashMap, future::Future};
+use std::{any::Any, collections::HashMap};
 
 use anyhow::Result;
 use futures::future::BoxFuture;
@@ -88,7 +88,7 @@ pub trait State {
     fn embed(&self, layer: usize, backed: TensorCpu<f32>) -> Result<TensorCpu<f32>, TensorError>;
 }
 
-pub trait ModelRuntime {
+pub trait Bundle {
     fn info(&self) -> ModelInfo;
     fn state(&self) -> impl State + AsAny + Send + Sync + 'static;
     fn model(&self) -> impl Serialize + Send + Sync + 'static;
@@ -114,10 +114,6 @@ pub enum EmbedDevice {
     #[default]
     Cpu,
     Gpu,
-}
-
-pub trait Build<T> {
-    fn build(self) -> impl Future<Output = Result<T>>;
 }
 
 pub struct ModelBuilder<R: Reader> {

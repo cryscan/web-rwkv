@@ -38,7 +38,6 @@ pub mod context;
 #[cfg(feature = "vanilla")]
 pub mod model;
 pub mod num;
-#[cfg(feature = "runtime")]
 pub mod runtime;
 pub mod tensor;
 pub mod tokenizer;
