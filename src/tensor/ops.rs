@@ -318,8 +318,8 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [index, token, batch, _] = *output.shape();
-            let [_, vocab, _, _] = *input.shape();
+            let [index, token, batch, _] = output.shape().into();
+            let [_, vocab, _, _] = input.shape().into();
             tokens.check_shape([token, batch, 1, 1])?;
             input.check_shape([index, vocab, 1, 1])?;
             output.check_shape([index, token, batch, 1])?;
@@ -384,7 +384,7 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [index, token, batch, _] = *x.shape();
+            let [index, token, batch, _] = x.shape().into();
             x.check_shape([index, token, batch, 1])?;
             w.check_shape([index, 1, 1, 1])?;
             b.check_shape([index, 1, 1, 1])?;
@@ -446,7 +446,7 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 32;
 
         let shape = {
-            let [index, head, token, _] = *x.shape();
+            let [index, head, token, _] = x.shape().into();
             x.check_shape([index, head, token, 1])?;
             w.check_shape([index, head, 1, 1])?;
             b.check_shape([index, head, 1, 1])?;
@@ -560,7 +560,7 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [index, token, batch, _] = *x.shape();
+            let [index, token, batch, _] = x.shape().into();
             x.check_shape([index, token, batch, 1])?;
             w.check_shape([index, 1, 1, 1])?;
             b.check_shape([index, 1, 1, 1])?;
@@ -635,8 +635,8 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [m, n, b, _] = *output.shape();
-            let [k, _, _, _] = *input.shape();
+            let [m, n, b, _] = output.shape().into();
+            let [k, _, _, _] = input.shape().into();
             matrix.check_shape([k, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
             output.check_shape([m, n, b, 1])?;
@@ -722,8 +722,8 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [m, n, b, _] = *output.shape();
-            let [k, _, _, _] = *input.shape();
+            let [m, n, b, _] = output.shape().into();
+            let [k, _, _, _] = input.shape().into();
             minmax.check_shape([(k << 1) / Self::INT8_BLOCK_SIZE as usize, m, b, 1])?;
             matrix.check_shape([k, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
@@ -816,8 +816,8 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [m, n, b, _] = *output.shape();
-            let [k, _, _, _] = *input.shape();
+            let [m, n, b, _] = output.shape().into();
+            let [k, _, _, _] = input.shape().into();
             absmax.check_shape([k / Self::NF4_BLOCK_SIZE as usize, m, b, 1])?;
             matrix.check_shape([k >> 1, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
@@ -914,8 +914,8 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 8;
 
         let shape = {
-            let [m, n, b, _] = *output.shape();
-            let [k, _, _, _] = *input.shape();
+            let [m, n, b, _] = output.shape().into();
+            let [k, _, _, _] = input.shape().into();
             matrix.check_shape([k, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
             output.check_shape([m, n, b, 1])?;
@@ -993,8 +993,8 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 8;
 
         let shape = {
-            let [m, n, b, _] = *output.shape();
-            let [k, _, _, _] = *input.shape();
+            let [m, n, b, _] = output.shape().into();
+            let [k, _, _, _] = input.shape().into();
             minmax.check_shape([(k << 1) / Self::INT8_BLOCK_SIZE as usize, m, b, 1])?;
             matrix.check_shape([k, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
@@ -1078,8 +1078,8 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 8;
 
         let shape = {
-            let [m, n, b, _] = *output.shape();
-            let [k, _, _, _] = *input.shape();
+            let [m, n, b, _] = output.shape().into();
+            let [k, _, _, _] = input.shape().into();
             absmax.check_shape([k / Self::NF4_BLOCK_SIZE as usize, m, b, 1])?;
             matrix.check_shape([k >> 1, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
@@ -1160,7 +1160,7 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [index, token, batch, _] = *output.shape();
+            let [index, token, batch, _] = output.shape().into();
             input
                 .check_shape([index, 1, batch, 1])
                 .or(input.check_shape([index, token, batch, 1]))?;
@@ -1223,7 +1223,7 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [index, token, batch, _] = *output.shape();
+            let [index, token, batch, _] = output.shape().into();
             input
                 .check_shape([index, 1, batch, 1])
                 .or(input.check_shape([index, token, batch, 1]))?;
@@ -1287,8 +1287,8 @@ impl TensorOp {
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
-            let [index, token, count, _] = *output.shape();
-            let [_, head, batch, _] = *state.shape();
+            let [index, token, count, _] = output.shape().into();
+            let [_, head, batch, _] = state.shape().into();
             input
                 .check_shape([index, token, 1, 1])
                 .or(input.check_shape([index, token, count, 1]))?;

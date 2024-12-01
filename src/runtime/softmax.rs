@@ -12,7 +12,7 @@ pub async fn softmax_one<T: Float>(
         return Ok(input);
     }
 
-    let tensor: TensorGpu<_, _> = input.transfer_into(context);
+    let tensor: TensorGpu<_, _> = input.to(context);
     let op = TensorOp::softmax(&tensor)?;
     context.queue.submit(context.encode(&op));
 
@@ -28,7 +28,7 @@ pub async fn softmax<T: Float>(
     let mut ops = Vec::with_capacity(input.len());
 
     for input in input.into_iter() {
-        let tensor: TensorGpu<_, _> = input.transfer_into(context);
+        let tensor: TensorGpu<_, _> = input.to(context);
         if tensor.size() > 0 {
             ops.push(TensorOp::softmax(&tensor)?);
         }

@@ -142,7 +142,7 @@ impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de>
     {
         let context = &self.context;
         let tensor: TensorCpu<T> = Deserialize::deserialize(deserializer)?;
-        Ok(tensor.transfer_into(context))
+        Ok(tensor.to(context))
     }
 }
 

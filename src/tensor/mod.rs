@@ -1,6 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
+use shape::ShapedIndex;
 use thiserror::Error;
 use web_rwkv_derive::JsError;
 use wgpu::{BindingResource, Buffer, BufferBinding, BufferUsages};
@@ -203,7 +204,7 @@ pub trait TensorInit<T: Scalar>: Sized {
 }
 
 pub trait TensorInto<Into> {
-    fn transfer_into(self, context: &Context) -> Into;
+    fn to(self, context: &Context) -> Into;
 }
 
 pub trait TensorShape: Sized {
@@ -341,7 +342,7 @@ impl<T: Scalar> TensorInitContext<T> for TensorCpu<T> {
 }
 
 impl<T: Scalar> TensorInto<TensorCpu<T>> for TensorCpu<T> {
-    fn transfer_into(self, _: &Context) -> Self {
+    fn to(self, _: &Context) -> Self {
         self
     }
 }
@@ -383,7 +384,7 @@ impl<T: Scalar, K: Kind> TensorInitContext<T> for TensorGpu<T, K> {
         data: impl Into<Arc<[T]>>,
     ) -> Result<Self, TensorError> {
         let tensor: TensorCpu<T> = TensorInit::from_data(shape, data)?;
-        Ok(tensor.transfer_into(context))
+        Ok(tensor.to(context))
     }
 
     fn init(context: &Context, shape: impl Into<Shape>) -> Self {
@@ -405,7 +406,7 @@ impl<T: Scalar, K: Kind> TensorInitContext<T> for TensorGpu<T, K> {
 }
 
 impl<T: Scalar, K: Kind> TensorInto<TensorGpu<T, K>> for TensorCpu<T> {
-    fn transfer_into(self, context: &Context) -> TensorGpu<T, K> {
+    fn to(self, context: &Context) -> TensorGpu<T, K> {
         let Tensor { shape, data, .. } = self;
         let context = context.clone();
         let meta = context.checkout_shape_uniform(shape);
@@ -425,10 +426,10 @@ impl<T: Scalar, K: Kind> TensorInto<TensorGpu<T, K>> for TensorCpu<T> {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<T: Scalar> TensorInto<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
-    fn transfer_into(self, context: &Context) -> Self {
+    fn to(self, context: &Context) -> Self {
         match context {
             context if context == &self.context => self,
-            _ => self.back_in_place().transfer_into(context),
+            _ => self.back_in_place().to(context),
         }
     }
 }
@@ -652,11 +653,11 @@ impl<T: Scalar> From<TensorCpu<T>> for Vec<T> {
     }
 }
 
-impl<T: Scalar> std::ops::Index<(usize, usize, usize, usize)> for TensorCpu<T> {
+impl<T: Scalar, S: Into<ShapedIndex>> std::ops::Index<S> for TensorCpu<T> {
     type Output = T;
 
-    fn index(&self, (x, y, z, w): (usize, usize, usize, usize)) -> &Self::Output {
-        &self.data[self.shape.shape_index(Shape::new(x, y, z, w))]
+    fn index(&self, index: S) -> &Self::Output {
+        &self.data[self.shape.linear_index(index)]
     }
 }
 
@@ -665,7 +666,31 @@ impl<T: Scalar> TensorCpu<T> {
     pub fn map<U: Scalar>(self, f: impl FnMut(&T) -> U) -> TensorCpu<U> {
         let Self { shape, data, .. } = self;
         let data = data.iter().map(f).collect_vec();
-        TensorInit::from_data(shape, data).expect("this never happens")
+        TensorInit::from_data(shape, data).unwrap()
+    }
+
+    /// Pad each dimension to multiples with zeros.
+    pub fn pad(self, multiples: impl Into<Shape>) -> Self {
+        // let shape = Shape::new(
+        //     self.shape[0].next_multiple_of(64),
+        //     self.shape[1].next_multiple_of(64),
+        //     self.shape[2].next_multiple_of(64),
+        //     self.shape[3].next_multiple_of(64),
+        // );
+
+        let multiples: Shape = multiples.into();
+
+        let mut shape = self.shape;
+        for (axis, multiple) in multiples.iter().enumerate() {
+            shape[axis] = shape[axis].next_multiple_of(multiple);
+        }
+
+        let mut data = vec![T::zero(); shape.len()];
+        for index in self.shape.cartesian_product() {
+            let value = self[index];
+            data[shape.linear_index(index)] = value;
+        }
+        TensorInit::from_data(shape, data).unwrap()
     }
 
     /// Repeat the tensor along a given axis.
@@ -726,7 +751,7 @@ impl<T: Scalar> TensorCpu<T> {
 
     /// Split the tensor along the batch axis.
     pub fn split(self, axis: usize) -> Result<Vec<Self>, TensorError> {
-        if self.shape.iter().skip(axis + 1).any(|&dim| dim > 1) {
+        if self.shape.iter().skip(axis + 1).any(|dim| dim > 1) {
             return Err(TensorError::SplitInvalid(axis));
         }
 
@@ -749,10 +774,10 @@ impl<T: Scalar> TensorCpu<T> {
         w: impl TensorAxis,
     ) -> Result<Self, TensorError> {
         let slice = (x, y, z, w);
-        let (start, end) = slice.shape_bounds(self.shape)?;
-        let shape = end - start;
+        let (start, end) = slice.shaped_bounds(self.shape)?;
+        let shape = (end - start).into();
 
-        let (start, end) = slice.bounds(self.shape)?;
+        let (start, end) = slice.linear_bounds(self.shape)?;
         let data = self.data[start..end].into();
 
         Ok(Self {
@@ -770,10 +795,10 @@ impl<T: Scalar> TensorCpu<T> {
         w: impl TensorAxis,
     ) -> Result<Self, TensorError> {
         let slice = (x, y, z, w);
-        let (start, end) = slice.shape_bounds(self.shape)?;
-        let shape = end - start;
+        let (start, end) = slice.shaped_bounds(self.shape)?;
+        let shape = (end - start).into();
 
-        let (start, end) = slice.bounds(self.shape)?;
+        let (start, end) = slice.linear_bounds(self.shape)?;
         let data = self.data[start..end].into();
 
         Ok(Self {
@@ -857,11 +882,11 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
         w: impl TensorAxis,
     ) -> Result<TensorGpuView<'_, T>, TensorError> {
         let slice = (x, y, z, w);
-        let (start, end) = slice.shape_bounds(self.shape)?;
+        let (start, end) = slice.shaped_bounds(self.shape)?;
         let view = View {
             stride: self.shape,
-            offset: start,
-            shape: end - start,
+            offset: start.into(),
+            shape: (end - start).into(),
         };
         let meta = self.context.checkout_view_uniform(view);
         let id = uid::Id::new();
@@ -971,7 +996,7 @@ impl Context {
         TensorCpu<T>: TensorInto<Tensor>,
     {
         let tensor: TensorCpu<T> = TensorInit::init(shape);
-        tensor.transfer_into(self)
+        tensor.to(self)
     }
 
     #[inline]
@@ -982,7 +1007,7 @@ impl Context {
         let shape = shape.into();
         let data = vec![T::one(); shape.len()];
         let tensor: TensorCpu<T> = TensorInit::from_data(shape, data).unwrap();
-        tensor.transfer_into(self)
+        tensor.to(self)
     }
 
     #[inline]
@@ -1024,9 +1049,22 @@ mod tests {
     use crate::tensor::{TensorCpu, TensorInit, TensorShape};
 
     #[test]
+    fn test_pad_64() -> Result<()> {
+        let shape = Shape::new(133, 256, 1, 1);
+        let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
+        let x = TensorCpu::from_data(shape, x)?.pad([64, 64, 1, 1]);
+
+        assert_eq!(x.shape(), Shape::new(192, 256, 1, 1));
+        assert_eq!(x[(132, 255, 0, 0)], (shape.len() - 1) as f32);
+        assert_eq!(x[(133, 255, 0, 0)], 0.0);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_repeat() -> Result<()> {
         let shape = Shape::new(5, 1, 2, 1);
-        let x: Vec<_> = (0..10).map(|x| x as f32).collect();
+        let x: Vec<_> = (0..shape.len()).map(|x| x as f32).collect();
         let x = TensorCpu::from_data(shape, x)?;
 
         let y = x.clone().repeat(1, 3);

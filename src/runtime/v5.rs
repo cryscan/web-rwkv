@@ -974,10 +974,10 @@ impl<R: Reader> ModelBuilder<R> {
                 w: loader.load_vector_f16("blocks.0.ln0.weight")?,
                 b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
-            w: loader.load_embed()?,
+            w: loader.load_matrix_f16_padded_cpu("emb.weight")?,
             u: match embed_device {
                 EmbedDevice::Cpu => None,
-                EmbedDevice::Gpu => Some(loader.load_matrix_f16("emb.weight")?),
+                EmbedDevice::Gpu => Some(loader.load_matrix_f16_padded("emb.weight")?),
             },
         };
 

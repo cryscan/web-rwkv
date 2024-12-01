@@ -20,6 +20,9 @@ use crate::{
     },
 };
 
+pub const PAD_VEC: [usize; 4] = [256, 1, 1, 1];
+pub const PAD_MAT: [usize; 4] = [256, 8, 1, 1];
+
 pub type ReaderTensor<'a> = (Dtype, Vec<usize>, Cow<'a, [u8]>);
 
 /// Interface accessing a safetensors data blob.
@@ -275,7 +278,7 @@ impl<R: Reader> Loader<R> {
             let Ok(tensor) = lora.data.tensor(name) else {
                 continue;
             };
-            let tensor = TensorCpu::<f16>::from_reader(tensor)?.transfer_into(context);
+            let tensor = TensorCpu::from_reader(tensor)?.to(context);
             let alpha = blend.alpha;
             vectors.push(LoraVector { tensor, alpha });
 
@@ -311,8 +314,8 @@ impl<R: Reader> Loader<R> {
 
             let rank = x.1[1];
             let alpha = blend.alpha;
-            let x = TensorCpu::from_reader(x)?.transfer_into(context);
-            let y = TensorCpu::from_reader(y)?.transfer_into(context);
+            let x = TensorCpu::from_reader(x)?.to(context);
+            let y = TensorCpu::from_reader(y)?.to(context);
             matrices.push(LoraMatrix { x, y, rank, alpha });
 
             log::info!("matrix (LoRA) {name}, alpha: {alpha}, rank: {rank}");
@@ -332,7 +335,7 @@ impl<R: Reader> Loader<R> {
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| x.to_f32())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-            .transfer_into(context);
+            .to(context);
 
         let mut ops = vec![];
         for lora in self.lora_vectors(name)? {
@@ -363,7 +366,7 @@ impl<R: Reader> Loader<R> {
             // .map(|x| -x.to_f32().exp())
             .map(|x| x.to_f32())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-            .transfer_into(context);
+            .to(context);
 
         let mut ops = vec![];
         for lora in self.lora_vectors(name)? {
@@ -401,7 +404,7 @@ impl<R: Reader> Loader<R> {
             // .map(|x| x.exp())
             .map(|x| x.to_f32())
             .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-            .transfer_into(context);
+            .to(context);
 
         let mut ops = vec![];
         for lora in self.lora_vectors(name)? {
@@ -435,12 +438,12 @@ impl<R: Reader> Loader<R> {
         let tensor = if lora.is_empty() {
             TensorCpu::from_reader(tensor)?
                 .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-                .transfer_into(context)
+                .to(context)
         } else {
             let tensor_f32: TensorGpu<f32, _> = TensorCpu::<f16>::from_reader(tensor)?
                 .map(|x| x.to_f32())
                 .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
-                .transfer_into(context);
+                .to(context);
             let tensor_f16: TensorGpu<f16, _> = context.tensor_init(tensor_f32.shape());
 
             let mut ops = vec![];
@@ -475,7 +478,7 @@ impl<R: Reader> Loader<R> {
     pub fn load_matrix_f16(&self, name: impl AsRef<str>) -> Result<TensorGpu<f16, ReadWrite>> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
-        let tensor: TensorGpu<_, _> = TensorCpu::from_reader(tensor)?.transfer_into(context);
+        let tensor: TensorGpu<_, _> = TensorCpu::from_reader(tensor)?.to(context);
 
         let mut ops = vec![];
         for lora in self.lora_matrices(name.as_ref())? {
@@ -509,7 +512,7 @@ impl<R: Reader> Loader<R> {
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| f16::from_f32(discount * x.to_f32()))
-            .transfer_into(context);
+            .to(context);
 
         let mut ops = vec![];
         for lora in self.lora_matrices(name.as_ref())? {
@@ -605,29 +608,41 @@ impl<R: Reader> Loader<R> {
         Ok(())
     }
 
-    pub fn load_embed(&self) -> Result<TensorCpu<f16>> {
-        let (dt, shape, tensor) = self.model.tensor("emb.weight")?;
-        let tensor = TensorCpu::from_reader((dt, shape, tensor))?;
+    pub fn load_matrix_f16_padded_cpu(&self, name: impl AsRef<str>) -> Result<TensorCpu<f16>> {
+        let (dt, shape, tensor) = self.model.tensor(name.as_ref())?;
+        let tensor = TensorCpu::from_reader((dt, shape, tensor))?.pad(PAD_MAT);
         Ok(tensor)
     }
 
-    pub fn load_head(&self, chunk_size: usize) -> Result<Vec<TensorGpu<f16, ReadWrite>>> {
+    pub fn load_matrix_f16_padded(
+        &self,
+        name: impl AsRef<str>,
+    ) -> Result<TensorGpu<f16, ReadWrite>> {
         let context = &self.context;
-        let (_, shape, tensor) = self.model.tensor("head.weight")?;
-        let shape = Shape::new(shape[1], shape[0], 1, 1);
-        let chunks = shape[1].div_ceil(chunk_size);
-        let data = bytemuck::cast_slice(&tensor);
-
-        let head = (0..chunks)
-            .map(|chunk| {
-                let real_chunk_size = ((chunk + 1) * chunk_size).min(shape[1]) - chunk * chunk_size;
-                let start = (chunk * chunk_size) * shape[0];
-                let end = start + real_chunk_size * shape[0];
-                context.tensor_from_data([shape[0], real_chunk_size, 1, 1], &data[start..end])
-            })
-            .try_collect()?;
-        Ok(head)
+        let (dt, shape, tensor) = self.model.tensor(name.as_ref())?;
+        let tensor = TensorCpu::from_reader((dt, shape, tensor))?
+            .pad(PAD_MAT)
+            .to(context);
+        Ok(tensor)
     }
+
+    // pub fn load_head(&self, chunk_size: usize) -> Result<Vec<TensorGpu<f16, ReadWrite>>> {
+    //     let context = &self.context;
+    //     let (_, shape, tensor) = self.model.tensor("head.weight")?;
+    //     let shape = Shape::new(shape[1], shape[0], 1, 1);
+    //     let chunks = shape[1].div_ceil(chunk_size);
+    //     let data = bytemuck::cast_slice(&tensor);
+
+    //     let head = (0..chunks)
+    //         .map(|chunk| {
+    //             let real_chunk_size = ((chunk + 1) * chunk_size).min(shape[1]) - chunk * chunk_size;
+    //             let start = (chunk * chunk_size) * shape[0];
+    //             let end = start + real_chunk_size * shape[0];
+    //             context.tensor_from_data([shape[0], real_chunk_size, 1, 1], &data[start..end])
+    //         })
+    //         .try_collect()?;
+    //     Ok(head)
+    // }
 
     pub fn load_matrix(&self, name: String, quant: Quant) -> Result<Matrix> {
         let context = &self.context;

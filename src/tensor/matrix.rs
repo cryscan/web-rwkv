@@ -135,7 +135,7 @@ impl Matrix {
             shape[3],
         );
 
-        let q = Nf4Quant::default().0.transfer_into(context);
+        let q = Nf4Quant::default().0.to(context);
         let w = context.tensor_init(matrix_shape);
         let m = context.tensor_init(absmax_shape);
 
