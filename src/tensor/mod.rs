@@ -436,7 +436,7 @@ impl<T: Scalar> TensorInto<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> 
 
 #[cfg(target_arch = "wasm32")]
 impl<T: Scalar> TensorInto<TensorGpu<T, ReadWrite>> for TensorGpu<T, ReadWrite> {
-    fn transfer_into(self, _: &Context) -> Self {
+    fn to(self, _: &Context) -> Self {
         self
     }
 }
