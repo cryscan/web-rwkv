@@ -150,16 +150,6 @@ pub enum Activation {
     Tanh,
 }
 
-impl std::fmt::Display for Activation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Activation::None => write!(f, "NONE"),
-            Activation::SquaredRelu => write!(f, "SQUARED_RELU"),
-            Activation::Tanh => write!(f, "TANH"),
-        }
-    }
-}
-
 impl Macros {
     /// Define a `u32` macro `NF4_BLOCK_SIZE`.
     pub fn nf4(mut self, block_size: u32) -> Self {
@@ -194,6 +184,16 @@ impl Macros {
             }
             false => self,
         }
+    }
+
+    pub fn activate(mut self, name: impl Into<String>, value: Activation) -> Self {
+        let name = name.into();
+        match value {
+            Activation::None => self.insert(name, "".into()),
+            Activation::SquaredRelu => self.insert(name, "squared_relu".into()),
+            Activation::Tanh => self.insert(name, "tanh".into()),
+        };
+        self
     }
 
     /// Define the macro specifies input/output tensor data type.
@@ -654,7 +654,7 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
@@ -667,7 +667,7 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -743,7 +743,7 @@ impl TensorOp {
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
@@ -757,7 +757,7 @@ impl TensorOp {
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -837,7 +837,7 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
@@ -851,7 +851,7 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -932,7 +932,7 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1013,7 +1013,7 @@ impl TensorOp {
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1098,7 +1098,7 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .custom(active, Some("ACT")),
+                .activate("ACT", active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,

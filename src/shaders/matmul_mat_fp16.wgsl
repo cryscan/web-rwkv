@@ -124,18 +124,10 @@ fn matmul(in: Input) {
     }
 
     if all(u < vec2<u32>(ra.y, rb.y)) {
-#ifdef ACT_SQUARED_RELU
-        local_sum[0] = squared_relu(local_sum[0]);
-        local_sum[1] = squared_relu(local_sum[1]);
-        local_sum[2] = squared_relu(local_sum[2]);
-        local_sum[3] = squared_relu(local_sum[3]);
-#endif
-#ifdef ACT_TANH
-        local_sum[0] = tanh(local_sum[0]);
-        local_sum[1] = tanh(local_sum[1]);
-        local_sum[2] = tanh(local_sum[2]);
-        local_sum[3] = tanh(local_sum[3]);
-#endif
+        local_sum[0] = ACT(local_sum[0]);
+        local_sum[1] = ACT(local_sum[1]);
+        local_sum[2] = ACT(local_sum[2]);
+        local_sum[3] = ACT(local_sum[3]);
 #ifdef OUT_FP16
         output[compute_index(destination, in.uid.z, u.y + 0u, in.uid.x)] = pack4x16float(local_sum[0]);
         output[compute_index(destination, in.uid.z, u.y + 1u, in.uid.x)] = pack4x16float(local_sum[1]);

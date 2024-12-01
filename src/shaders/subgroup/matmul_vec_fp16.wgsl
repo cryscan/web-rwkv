@@ -120,13 +120,7 @@ fn matmul(
 
     if index == 0u {
         let btc = compute_index(destination, batch, token, channel);
-        var out = sketch[0];
-#ifdef ACT_SQUARED_RELU
-        out = squared_relu(out);
-#endif
-#ifdef ACT_TANH
-        out = tanh(out);
-#endif
+        let out = ACT(sketch[0]);
 #ifdef OUT_FP16
         output[btc] = pack4x16float(out);
 #else
