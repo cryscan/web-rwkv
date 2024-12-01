@@ -60,7 +60,7 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
 }
 
 async fn load_tokenizer() -> Result<Tokenizer> {
-    let file = File::open("assets/rwkv_vocab_v20230424.json").await?;
+    let file = File::open("assets/vocab/rwkv_vocab_v20230424.json").await?;
     let mut reader = BufReader::new(file);
     let mut contents = String::new();
     reader.read_to_string(&mut contents).await?;

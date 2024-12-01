@@ -8,11 +8,7 @@ use itertools::Itertools;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
 use serde::{de::DeserializeSeed, Serialize};
-use std::{
-    io::Write,
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::{io::Write, path::PathBuf};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, BufReader},
@@ -76,7 +72,7 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
 }
 
 async fn load_tokenizer() -> Result<Tokenizer> {
-    let file = File::open("assets/rwkv_vocab_v20230424.json").await?;
+    let file = File::open("assets/vocab/rwkv_vocab_v20230424.json").await?;
     let mut reader = BufReader::new(file);
     let mut contents = String::new();
     reader.read_to_string(&mut contents).await?;
@@ -208,16 +204,11 @@ async fn main() -> Result<()> {
 
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
-    let prompt_len = tokens.len();
     let prompt = InferInputBatch {
         tokens,
         option: InferOption::Last,
     };
     let mut prompt = InferInput::new(vec![prompt], cli.token_chunk_size);
-
-    let mut read = false;
-    let mut instant = Instant::now();
-    let mut prefill = Duration::ZERO;
 
     let num_token = 500;
     for _ in 0..num_token {
@@ -227,13 +218,6 @@ async fn main() -> Result<()> {
 
         let output = output[0].0.clone();
         if output.size() > 0 {
-            if !read {
-                print!("\n{}", PROMPT);
-                prefill = instant.elapsed();
-                instant = Instant::now();
-                read = true;
-            }
-
             let output = softmax_one(&context, output).await?;
             let output = output.to_vec();
             let token = sample(&output, 0.0);
@@ -248,21 +232,6 @@ async fn main() -> Result<()> {
             std::io::stdout().flush().unwrap();
         }
     }
-    print!("\n\n");
-
-    let duration = instant.elapsed();
-    log::info!(
-        "Prefill:\t{} tokens,\t{} mills,\t{} tps",
-        prompt_len,
-        prefill.as_millis(),
-        prompt_len as f64 / prefill.as_secs_f64()
-    );
-    log::info!(
-        "Generation:\t{} tokens,\t{} mills,\t{} tps",
-        num_token,
-        duration.as_millis(),
-        num_token as f64 / duration.as_secs_f64()
-    );
 
     Ok(())
 }
