@@ -293,7 +293,7 @@ pub struct Header<F: Float> {
 impl<F: Float> Header<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_header: usize) -> Self {
         let head_shape = Shape::new(info.num_emb, num_header, 1, 1);
-        let output_shape = Shape::new(info.num_vocab, num_header, 1, 1);
+        let output_shape = Shape::new(info.num_vocab_padded(), num_header, 1, 1);
 
         Self {
             head_x: context.tensor_init(head_shape),

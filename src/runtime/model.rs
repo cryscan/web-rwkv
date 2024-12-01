@@ -63,7 +63,11 @@ impl ModelInfo {
 
     /// The head and embed's size.
     pub fn head_buffer_size(&self) -> usize {
-        self.num_emb * self.num_vocab * f16::size()
+        self.num_emb * self.num_vocab_padded() * f16::size()
+    }
+
+    pub fn num_vocab_padded(&self) -> usize {
+        self.num_vocab.next_multiple_of(8)
     }
 }
 
@@ -158,7 +162,10 @@ impl<R: Reader> ModelBuilder<R> {
 
     /// Half the layer and activation every `value` layers.
     pub fn rescale(mut self, value: usize) -> Self {
-        self.rescale = value.max(1);
+        self.rescale = match value {
+            0 => usize::MAX,
+            x => x,
+        };
         self
     }
 

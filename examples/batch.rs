@@ -1,3 +1,5 @@
+//! This example shows that we can run multiple inferences of different length at the same time.
+
 use std::{path::PathBuf, str::FromStr};
 
 use anyhow::Result;
@@ -128,8 +130,6 @@ struct Cli {
     quant: usize,
     #[arg(long, value_name = "LAYERS", default_value_t = 0)]
     quant_nf4: usize,
-    #[arg(short, long, action)]
-    turbo: bool,
     #[arg(short, long)]
     embed_device: Option<EmbedDevice>,
     #[arg(long, default_value_t = 128)]

@@ -1,3 +1,6 @@
+//! This example shows how to read-back and load model states to archive
+//! session management (e.g., retrying) in a conversational application.
+
 use std::{io::Write, path::PathBuf};
 
 use anyhow::Result;
@@ -277,6 +280,8 @@ async fn main() -> Result<()> {
         ModelVersion::V7 => todo!(),
     };
 
+    println!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting\n\n------------");
+
     // run initial prompt
     let prompt = load_prompt(cli.prompt).await?;
     let mut inference = InferInput::new(
@@ -286,8 +291,6 @@ async fn main() -> Result<()> {
         }],
         cli.token_chunk_size,
     );
-
-    println!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting\n\n------------");
 
     loop {
         let input = inference.clone();
@@ -308,6 +311,7 @@ async fn main() -> Result<()> {
     let mut last_user_text = String::from("Hi!");
     let mut last_tokens = vec![];
 
+    // main conversation loop
     loop {
         let mut model_text = String::new();
         let mut user_text = String::new();
@@ -323,6 +327,7 @@ async fn main() -> Result<()> {
         match user_text.as_str() {
             "-" => break,
             "+" => {
+                // retry: reset the prompt and state to the last turn
                 user_text.clone_from(&last_user_text);
                 inference.batches[0] = InferInputBatch {
                     tokens: last_tokens.clone(),
@@ -345,6 +350,7 @@ async fn main() -> Result<()> {
             .tokens
             .append(&mut tokenizer.encode(prompt.as_bytes())?);
 
+        // inference loop: read the user prompt and generate until the stop token "\n\n"
         loop {
             let input = inference.clone();
             let (input, output) = runtime.infer(input).await?;
@@ -358,7 +364,7 @@ async fn main() -> Result<()> {
             }
 
             let output = output.to_vec();
-            assert_eq!(output.len(), info.num_vocab);
+            assert_eq!(output.len(), info.num_vocab_padded());
 
             let output = TensorCpu::from_data(shape, output)?;
             let output = softmax_one(&context, output).await?;

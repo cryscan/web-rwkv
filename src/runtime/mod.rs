@@ -78,12 +78,12 @@ where
     <I as JobInput>::Chunk: Send,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(model: impl Dispatcher<J, Info = T> + Send + Clone + 'static) -> Self
+    pub async fn new<J>(bundle: impl Dispatcher<J, Info = T> + Send + Clone + 'static) -> Self
     where
         J: Job<Input = I, Output = O> + Send + 'static,
     {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
-        let handle = tokio::spawn(Self::run(model, receiver));
+        let handle = tokio::spawn(Self::run(bundle, receiver));
         tokio::spawn(async move {
             match handle.await {
                 Ok(_) => {}
