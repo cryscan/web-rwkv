@@ -615,7 +615,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
             let frame = frame.clone();
             let layer = layer.clone();
 
-            let op = build_layer(hooks, frame, layer, index, num_token, model.rescale)?;
+            let op = dispatch_layer(hooks, frame, layer, index, num_token, model.rescale)?;
             ops.push(op);
 
             if (index + 1) % (info.num_layer / super::infer::NUM_LAYER_CHUNK) == 0 {
@@ -631,7 +631,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
             let frame = frame.clone();
             let head = model.tensor.head.clone();
 
-            let op = build_header(hooks, frame, head, head_x, num_header, head_ops)?;
+            let op = dispatch_header(hooks, frame, head, head_x, num_header, head_ops)?;
             ops.push(op);
         }
 
@@ -655,7 +655,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_layer<F: Float>(
+fn dispatch_layer<F: Float>(
     hooks: Arc<HookMap<F>>,
     frame: Frame<F>,
     layer: Layer,
@@ -837,7 +837,7 @@ fn build_layer<F: Float>(
     Ok(TensorOp::List(ops))
 }
 
-fn build_header<F: Float>(
+fn dispatch_header<F: Float>(
     hooks: Arc<HookMap<F>>,
     frame: Frame<F>,
     head: Head,
