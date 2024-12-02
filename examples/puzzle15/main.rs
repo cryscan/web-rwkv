@@ -1,3 +1,17 @@
+//! This example demonstrates RWKV V6 "Finch"'s ability to model routines like deep first search.
+//! It uses a specialized RWKV model, "rwkv-puzzle15.st" for solving the 15-puzzle.
+//!
+//! ## Notes
+//! The model used here is slightly different from the official RWKV structure, namely doing
+//! ```python
+//! k = k * torch.clamp(w, max=0).exp()  # added this line
+//! ```
+//! before the time-mix block.
+//! Check Jellyfish's [repo](https://github.com/Jellyfish042/RWKV-15Puzzle) for details.
+//!
+//! Here in this example, we demonstrates how to use hooks to register custom operations into
+//! the model's computation.
+
 use std::{io::Write, path::PathBuf};
 
 use anyhow::Result;
@@ -90,18 +104,17 @@ async fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
+/// We need to slightly modify the model structure using hooks.
 fn make_hooks<F: Float>(info: &ModelInfo) -> Result<v6::HookMap<F>> {
     let mut hooks = v6::HookMap::new();
 
     for layer in 0..info.num_layer {
+        // add a custom operation before time-mix for each layer
         hooks.insert(
             v6::Hook::PreAttTimeDecayActivate(layer),
             Box::new(move |frame: v6::Frame<F>| {
-                let ops = vec![TensorOp::mul_exp(
-                    &frame.buffer.time_decay,
-                    &frame.buffer.att_k,
-                )?];
-                Ok(TensorOp::List(ops))
+                let op = TensorOp::mul_exp(&frame.buffer.time_decay, &frame.buffer.att_k)?;
+                Ok(TensorOp::List(vec![op]))
             }),
         );
     }

@@ -6,7 +6,7 @@ use web_rwkv::{
 };
 
 pub trait TensorOpExt: Sized {
-    /// Multiply `input` to exponential of `output`.
+    /// Multiply exponential of `input` to `output`.
     /// - `input` shape: `[C, 1, B]` or `[C, T, B]`.
     /// - `output` shape: `[C, T, B]`.
     fn mul_exp<'a, 'b, F0: Float, F1: Float>(
