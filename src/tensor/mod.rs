@@ -872,6 +872,12 @@ impl<F: Float> TensorGpuView<'_, F> {
     }
 }
 
+impl<'a, T: Scalar> From<&'a TensorGpu<T, ReadWrite>> for TensorGpuView<'a, T> {
+    fn from(value: &'a TensorGpu<T, ReadWrite>) -> Self {
+        value.view(.., .., .., ..).unwrap()
+    }
+}
+
 impl<T: Scalar> TensorGpu<T, ReadWrite> {
     /// Create a view for the tensor.
     pub fn view(

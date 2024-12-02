@@ -60,10 +60,10 @@ pub enum Matrix {
 }
 
 impl Matrix {
-    pub fn matmul_vec_op(
+    pub fn matmul_vec_op<'a, 'b, F0: Float, F1: Float>(
         &self,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
@@ -73,29 +73,23 @@ impl Matrix {
         }
     }
 
-    pub fn matmul_mat_op(
+    pub fn matmul_mat_op<'a, 'b, F0: Float, F1: Float>(
         &self,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => {
-                TensorOp::matmul_mat_fp16(matrix.view(.., .., .., ..)?, input, output, active)
-            }
-            Matrix::Int8 { w, m } => {
-                TensorOp::matmul_mat_int8(w.view(.., .., .., ..)?, m, input, output, active)
-            }
-            Matrix::NF4 { w, q, m } => {
-                TensorOp::matmul_mat_nf4(w.view(.., .., .., ..)?, q, m, input, output, active)
-            }
+            Matrix::Fp16(matrix) => TensorOp::matmul_mat_fp16(matrix, input, output, active),
+            Matrix::Int8 { w, m } => TensorOp::matmul_mat_int8(w, m, input, output, active),
+            Matrix::NF4 { w, q, m } => TensorOp::matmul_mat_nf4(w, q, m, input, output, active),
         }
     }
 
-    pub fn matmul_op(
+    pub fn matmul_op<'a, 'b, F0: Float, F1: Float>(
         &self,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
         turbo: bool,
     ) -> Result<TensorOp, TensorError> {

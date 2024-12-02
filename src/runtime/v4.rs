@@ -193,10 +193,7 @@ impl super::model::State for State {
 
     fn write(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError> {
         tensor.check_shape([self.info.num_emb, self.info.num_layer * 5, 1, 1])?;
-        let op = TensorOp::blit(
-            tensor.view(.., .., .., ..)?,
-            self.data.view(.., .., batch, ..)?,
-        )?;
+        let op = TensorOp::blit(&tensor, self.data.view(.., .., batch, ..)?)?;
         self.context.queue.submit(self.context.encode(&op));
         Ok(())
     }
@@ -204,10 +201,7 @@ impl super::model::State for State {
     fn read(&self, batch: usize) -> Result<TensorGpu<f32, ReadWrite>, TensorError> {
         let shape = [self.info.num_emb, self.info.num_layer * 5, 1, 1];
         let tensor: TensorGpu<_, _> = self.context.tensor_init(shape);
-        let op = TensorOp::blit(
-            self.data.view(.., .., batch, ..)?,
-            tensor.view(.., .., .., ..)?,
-        )?;
+        let op = TensorOp::blit(self.data.view(.., .., batch, ..)?, &tensor)?;
         self.context.queue.submit(self.context.encode(&op));
         Ok(tensor)
     }
@@ -598,10 +592,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
                     &buffer.input,
                     Model::LN_EPS,
                 )?,
-                TensorOp::blit(
-                    buffer.input.view(.., .., .., ..)?,
-                    buffer.x.view(.., .., .., ..)?,
-                )?,
+                TensorOp::blit(&buffer.input, &buffer.x)?,
                 hook_op(Hook::PostEmbedLayerNorm)?,
             ]);
             embed_device
@@ -669,10 +660,7 @@ fn dispatch_layer<F: Float>(
     let mut ops = vec![];
 
     ops.append(&mut vec![
-        TensorOp::blit(
-            buffer.x.view(.., .., .., ..)?,
-            buffer.att_x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::blit(&buffer.x, &buffer.att_x)?,
         hook_op(Hook::PreAtt(index))?,
         TensorOp::layer_norm(
             &layer.att_layer_norm.w,
@@ -684,7 +672,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreAttTokenShift(index))?,
         TensorOp::token_shift(
             &buffer.cursors,
-            layer.att.time_mix_k.view(.., .., .., ..)?,
+            &layer.att.time_mix_k,
             state.att(index)?,
             &buffer.att_x,
             &buffer.att_kx,
@@ -692,7 +680,7 @@ fn dispatch_layer<F: Float>(
         )?,
         TensorOp::token_shift(
             &buffer.cursors,
-            layer.att.time_mix_v.view(.., .., .., ..)?,
+            &layer.att.time_mix_v,
             state.att(index)?,
             &buffer.att_x,
             &buffer.att_vx,
@@ -700,7 +688,7 @@ fn dispatch_layer<F: Float>(
         )?,
         TensorOp::token_shift(
             &buffer.cursors,
-            layer.att.time_mix_r.view(.., .., .., ..)?,
+            &layer.att.time_mix_r,
             state.att(index)?,
             &buffer.att_x,
             &buffer.att_rx,
@@ -709,29 +697,26 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostAttTokenShift(index))?,
         hook_op(Hook::PreAttLinear(index))?,
         layer.att.w_k.matmul_op(
-            buffer.att_kx.view(.., .., .., ..)?,
-            buffer.att_k.view(.., .., .., ..)?,
+            &buffer.att_kx,
+            &buffer.att_k,
             Activation::None,
             turbo(num_token),
         )?,
         layer.att.w_v.matmul_op(
-            buffer.att_vx.view(.., .., .., ..)?,
-            buffer.att_v.view(.., .., .., ..)?,
+            &buffer.att_vx,
+            &buffer.att_v,
             Activation::None,
             turbo(num_token),
         )?,
         layer.att.w_r.matmul_op(
-            buffer.att_rx.view(.., .., .., ..)?,
-            buffer.att_r.view(.., .., .., ..)?,
+            &buffer.att_rx,
+            &buffer.att_r,
             Activation::None,
             turbo(num_token),
         )?,
         hook_op(Hook::PostAttLinear(index))?,
         hook_op(Hook::PreAttTimeMix(index))?,
-        TensorOp::blit(
-            buffer.att_x.view(.., .., .., ..)?,
-            buffer.aux_x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::blit(&buffer.att_x, &buffer.aux_x)?,
         TensorOp::time_mix_v4(
             &buffer.cursors,
             &layer.att.time_decay,
@@ -742,31 +727,22 @@ fn dispatch_layer<F: Float>(
             &buffer.att_r,
             &buffer.aux_x,
         )?,
-        TensorOp::blit(
-            buffer.aux_x.view(.., .., .., ..)?,
-            buffer.att_x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::blit(&buffer.aux_x, &buffer.att_x)?,
         hook_op(Hook::PostAttTimeMix(index))?,
         hook_op(Hook::PreAttOut(index))?,
         layer.att.w_o.matmul_op(
-            buffer.att_x.view(.., .., .., ..)?,
-            buffer.att_o.view(.., .., .., ..)?,
+            &buffer.att_x,
+            &buffer.att_o,
             Activation::None,
             turbo(num_token),
         )?,
         hook_op(Hook::PostAttOut(index))?,
-        TensorOp::add(
-            buffer.att_o.view(.., .., .., ..)?,
-            buffer.x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::add(&buffer.att_o, &buffer.x)?,
         hook_op(Hook::PostAtt(index))?,
     ]);
 
     ops.append(&mut vec![
-        TensorOp::blit(
-            buffer.x.view(.., .., .., ..)?,
-            buffer.ffn_x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::blit(&buffer.x, &buffer.ffn_x)?,
         hook_op(Hook::PreFfn(index))?,
         TensorOp::layer_norm(
             &layer.ffn_layer_norm.w,
@@ -778,7 +754,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreFfnTokenShift(index))?,
         TensorOp::token_shift(
             &buffer.cursors,
-            layer.ffn.time_mix_k.view(.., .., .., ..)?,
+            &layer.ffn.time_mix_k,
             state.ffn(index)?,
             &buffer.ffn_x,
             &buffer.ffn_kx,
@@ -786,7 +762,7 @@ fn dispatch_layer<F: Float>(
         )?,
         TensorOp::token_shift(
             &buffer.cursors,
-            layer.ffn.time_mix_r.view(.., .., .., ..)?,
+            &layer.ffn.time_mix_r,
             state.ffn(index)?,
             &buffer.ffn_x,
             &buffer.ffn_rx,
@@ -795,21 +771,21 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostFfnTokenShift(index))?,
         hook_op(Hook::PreFfnLinear(index))?,
         layer.ffn.w_k.matmul_op(
-            buffer.ffn_kx.view(.., .., .., ..)?,
-            buffer.ffn_k.view(.., .., .., ..)?,
+            &buffer.ffn_kx,
+            &buffer.ffn_k,
             Activation::SquaredRelu,
             turbo(num_token),
         )?,
         hook_op(Hook::PostFfnActivate(index))?,
         layer.ffn.w_v.matmul_op(
-            buffer.ffn_k.view(.., .., .., ..)?,
-            buffer.ffn_v.view(.., .., .., ..)?,
+            &buffer.ffn_k,
+            &buffer.ffn_v,
             Activation::None,
             turbo(num_token),
         )?,
         layer.ffn.w_r.matmul_op(
-            buffer.ffn_rx.view(.., .., .., ..)?,
-            buffer.ffn_r.view(.., .., .., ..)?,
+            &buffer.ffn_rx,
+            &buffer.ffn_r,
             Activation::None,
             turbo(num_token),
         )?,
@@ -823,10 +799,7 @@ fn dispatch_layer<F: Float>(
             &buffer.ffn_x,
         )?,
         hook_op(Hook::PostFfnChannelMix(index))?,
-        TensorOp::add(
-            buffer.ffn_x.view(.., .., .., ..)?,
-            buffer.x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::add(&buffer.ffn_x, &buffer.x)?,
         hook_op(Hook::PostFfn(index))?,
     ]);
 

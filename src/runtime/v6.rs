@@ -640,10 +640,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
                     &buffer.input,
                     Model::LN_EPS,
                 )?,
-                TensorOp::blit(
-                    buffer.input.view(.., .., .., ..)?,
-                    buffer.x.view(.., .., .., ..)?,
-                )?,
+                TensorOp::blit(&buffer.input, &buffer.x)?,
                 hook_op(Hook::PostEmbedLayerNorm)?,
             ]);
             embed_device
@@ -761,10 +758,7 @@ fn dispatch_layer<F: Float>(
     let mut ops = vec![];
 
     ops.append(&mut vec![
-        TensorOp::blit(
-            buffer.x.view(.., .., .., ..)?,
-            buffer.att_x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::blit(&buffer.x, &buffer.att_x)?,
         hook_op(Hook::PreAtt(index))?,
         TensorOp::layer_norm(
             &layer.att_layer_norm.w,
@@ -776,7 +770,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreAttTokenShift(index))?,
         TensorOp::token_shift(
             &buffer.cursors,
-            layer.att.time_mix_x.view(.., .., .., ..)?,
+            &layer.att.time_mix_x,
             state.att(index)?,
             &buffer.att_x,
             &buffer.att_xx,
@@ -785,31 +779,25 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostAttTokenShift(index))?,
         hook_op(Hook::PreAttTokenShiftAdapt(index))?,
         layer.att.time_mix_w1.matmul_op(
-            buffer.att_xx.view(.., .., .., ..)?,
-            time_mix_x.view(.., .., .., ..)?,
+            &buffer.att_xx,
+            &time_mix_x,
             Activation::Tanh,
             turbo(num_token),
         )?,
-        TensorOp::transpose(
-            buffer.time_mix_x.view(.., .., .., ..)?,
-            buffer.time_mix_t.view(.., .., .., ..)?,
-        )?,
+        TensorOp::transpose(&buffer.time_mix_x, &buffer.time_mix_t)?,
         hook_op(Hook::PostAttTokenShiftAdaptActivate(index))?,
         layer.att.time_mix_w2.matmul_op(
-            buffer.time_mix_t.view(.., .., .., ..)?,
-            buffer.time_mix.view(.., .., .., ..)?,
+            &buffer.time_mix_t,
+            &buffer.time_mix,
             Activation::None,
             turbo(num_token),
         )?,
         hook_op(Hook::PostAttTokenShiftAdapt(index))?,
-        TensorOp::add(
-            layer.att.time_mix.view(.., .., .., ..)?,
-            buffer.time_mix.view(.., .., .., ..)?,
-        )?,
+        TensorOp::add(&layer.att.time_mix, &buffer.time_mix)?,
         hook_op(Hook::PreAttGatedTokenShift(index))?,
         TensorOp::token_shift(
             &buffer.cursors,
-            buffer.time_mix.view(.., .., .., ..)?,
+            &buffer.time_mix,
             state.att(index)?,
             &buffer.att_x,
             &buffer.att_sx,
@@ -819,25 +807,25 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreAttLinear(index))?,
         layer.att.w_k.matmul_op(
             buffer.att_sx.view(.., .., 1, ..)?,
-            buffer.att_k.view(.., .., .., ..)?,
+            &buffer.att_k,
             Activation::None,
             turbo(num_token),
         )?,
         layer.att.w_v.matmul_op(
             buffer.att_sx.view(.., .., 2, ..)?,
-            buffer.att_v.view(.., .., .., ..)?,
+            &buffer.att_v,
             Activation::None,
             turbo(num_token),
         )?,
         layer.att.w_r.matmul_op(
             buffer.att_sx.view(.., .., 3, ..)?,
-            buffer.att_r.view(.., .., .., ..)?,
+            &buffer.att_r,
             Activation::None,
             turbo(num_token),
         )?,
         layer.att.w_g.matmul_op(
             buffer.att_sx.view(.., .., 4, ..)?,
-            buffer.att_g.view(.., .., .., ..)?,
+            &buffer.att_g,
             Activation::None,
             turbo(num_token),
         )?,
@@ -845,30 +833,24 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreAttTimeDecayAdapt(index))?,
         layer.att.time_decay_w1.matmul_op(
             buffer.att_sx.view(.., .., 0, ..)?,
-            buffer.att_w.view(.., .., .., ..)?,
+            &buffer.att_w,
             Activation::Tanh,
             turbo(num_token),
         )?,
         hook_op(Hook::PostAttTimeDecayAdaptActivate(index))?,
         layer.att.time_decay_w2.matmul_op(
-            buffer.att_w.view(.., .., .., ..)?,
-            buffer.time_decay.view(.., .., .., ..)?,
+            &buffer.att_w,
+            &buffer.time_decay,
             Activation::None,
             turbo(num_token),
         )?,
         hook_op(Hook::PostAttTimeDecayAdapt(index))?,
-        TensorOp::add(
-            layer.att.time_decay.view(.., .., .., ..)?,
-            buffer.time_decay.view(.., .., .., ..)?,
-        )?,
+        TensorOp::add(&layer.att.time_decay, &buffer.time_decay)?,
         hook_op(Hook::PreAttTimeDecayActivate(index))?,
         TensorOp::stable_exp(&buffer.time_decay)?,
         hook_op(Hook::PostAttTimeDecayActivate(index))?,
         hook_op(Hook::PreAttTimeMix(index))?,
-        TensorOp::blit(
-            buffer.att_x.view(.., .., .., ..)?,
-            buffer.aux_x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::blit(&buffer.att_x, &buffer.aux_x)?,
         TensorOp::time_mix_v6(
             &buffer.cursors,
             &time_decay,
@@ -885,34 +867,25 @@ fn dispatch_layer<F: Float>(
             &aux_x,
             Model::GN_EPS,
         )?,
-        TensorOp::blit(
-            buffer.aux_x.view(.., .., .., ..)?,
-            buffer.att_x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::blit(&buffer.aux_x, &buffer.att_x)?,
         hook_op(Hook::PostAttTimeMix(index))?,
         hook_op(Hook::PreAttGate(index))?,
         TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
         hook_op(Hook::PostAttGate(index))?,
         hook_op(Hook::PreAttOut(index))?,
         layer.att.w_o.matmul_op(
-            buffer.att_x.view(.., .., .., ..)?,
-            buffer.att_o.view(.., .., .., ..)?,
+            &buffer.att_x,
+            &buffer.att_o,
             Activation::None,
             turbo(num_token),
         )?,
         hook_op(Hook::PostAttOut(index))?,
-        TensorOp::add(
-            buffer.att_o.view(.., .., .., ..)?,
-            buffer.x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::add(&buffer.att_o, &buffer.x)?,
         hook_op(Hook::PostAtt(index))?,
     ]);
 
     ops.append(&mut vec![
-        TensorOp::blit(
-            buffer.x.view(.., .., .., ..)?,
-            buffer.ffn_x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::blit(&buffer.x, &buffer.ffn_x)?,
         hook_op(Hook::PreFfn(index))?,
         TensorOp::layer_norm(
             &layer.ffn_layer_norm.w,
@@ -924,7 +897,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreFfnTokenShift(index))?,
         TensorOp::token_shift(
             &buffer.cursors,
-            layer.ffn.time_mix_k.view(.., .., .., ..)?,
+            &layer.ffn.time_mix_k,
             state.ffn(index)?,
             &buffer.ffn_x,
             &buffer.ffn_kx,
@@ -932,7 +905,7 @@ fn dispatch_layer<F: Float>(
         )?,
         TensorOp::token_shift(
             &buffer.cursors,
-            layer.ffn.time_mix_r.view(.., .., .., ..)?,
+            &layer.ffn.time_mix_r,
             state.ffn(index)?,
             &buffer.ffn_x,
             &buffer.ffn_rx,
@@ -941,21 +914,21 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostFfnTokenShift(index))?,
         hook_op(Hook::PreFfnLinear(index))?,
         layer.ffn.w_k.matmul_op(
-            buffer.ffn_kx.view(.., .., .., ..)?,
-            buffer.ffn_k.view(.., .., .., ..)?,
+            &buffer.ffn_kx,
+            &buffer.ffn_k,
             Activation::SquaredRelu,
             turbo(num_token),
         )?,
         hook_op(Hook::PostFfnActivate(index))?,
         layer.ffn.w_v.matmul_op(
-            buffer.ffn_k.view(.., .., .., ..)?,
-            buffer.ffn_v.view(.., .., .., ..)?,
+            &buffer.ffn_k,
+            &buffer.ffn_v,
             Activation::None,
             turbo(num_token),
         )?,
         layer.ffn.w_r.matmul_op(
-            buffer.ffn_rx.view(.., .., .., ..)?,
-            buffer.ffn_r.view(.., .., .., ..)?,
+            &buffer.ffn_rx,
+            &buffer.ffn_r,
             Activation::None,
             turbo(num_token),
         )?,
@@ -969,10 +942,7 @@ fn dispatch_layer<F: Float>(
             &buffer.ffn_x,
         )?,
         hook_op(Hook::PostFfnChannelMix(index))?,
-        TensorOp::add(
-            buffer.ffn_x.view(.., .., .., ..)?,
-            buffer.x.view(.., .., .., ..)?,
-        )?,
+        TensorOp::add(&buffer.ffn_x, &buffer.x)?,
         hook_op(Hook::PostFfn(index))?,
     ]);
 
@@ -1086,26 +1056,11 @@ impl<R: Reader> ModelBuilder<R> {
                 let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g"))?;
 
                 let ops = TensorOp::List(vec![
-                    TensorOp::blit(
-                        time_mix_w.view(.., .., .., ..)?,
-                        time_mix.view(.., .., 0, ..)?,
-                    )?,
-                    TensorOp::blit(
-                        time_mix_k.view(.., .., .., ..)?,
-                        time_mix.view(.., .., 1, ..)?,
-                    )?,
-                    TensorOp::blit(
-                        time_mix_v.view(.., .., .., ..)?,
-                        time_mix.view(.., .., 2, ..)?,
-                    )?,
-                    TensorOp::blit(
-                        time_mix_r.view(.., .., .., ..)?,
-                        time_mix.view(.., .., 3, ..)?,
-                    )?,
-                    TensorOp::blit(
-                        time_mix_g.view(.., .., .., ..)?,
-                        time_mix.view(.., .., 4, ..)?,
-                    )?,
+                    TensorOp::blit(&time_mix_w, time_mix.view(.., .., 0, ..)?)?,
+                    TensorOp::blit(&time_mix_k, time_mix.view(.., .., 1, ..)?)?,
+                    TensorOp::blit(&time_mix_v, time_mix.view(.., .., 2, ..)?)?,
+                    TensorOp::blit(&time_mix_r, time_mix.view(.., .., 3, ..)?)?,
+                    TensorOp::blit(&time_mix_g, time_mix.view(.., .., 4, ..)?)?,
                 ]);
                 context.queue.submit(context.encode(&ops));
                 time_mix
@@ -1231,11 +1186,8 @@ pub async fn read_state<R: Reader>(
             Auto,
         )?;
         ops.append(&mut vec![
-            TensorOp::transpose(matrix.view(.., .., .., ..)?, state.view(.., .., .., ..)?)?,
-            TensorOp::blit(
-                reshaped.view(.., .., .., ..)?,
-                data.view(.., 1..head_size + 1, layer, ..)?,
-            )?,
+            TensorOp::transpose(&matrix, &state)?,
+            TensorOp::blit(&reshaped, data.view(.., 1..head_size + 1, layer, ..)?)?,
         ]);
     }
     context.queue.submit(context.encode(&TensorOp::List(ops)));

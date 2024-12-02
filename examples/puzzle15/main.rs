@@ -8,6 +8,7 @@ use half::f16;
 #[cfg(not(debug_assertions))]
 use itertools::Itertools;
 use memmap2::Mmap;
+use ops::TensorOpExt;
 use safetensors::SafeTensors;
 use tokio::{
     fs::File,
@@ -15,15 +16,19 @@ use tokio::{
 };
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
+    num::Float,
     runtime::{
         infer::{InferInput, InferInputBatch, InferOption},
         loader::Loader,
         model::{ContextAutoLimits, ModelBuilder, ModelInfo},
         v6, TokioRuntime,
     },
+    tensor::ops::TensorOp,
     tokenizer::Tokenizer,
     wgpu,
 };
+
+mod ops;
 
 const PROMPT: &str = r"<input>
 <board>
@@ -85,6 +90,25 @@ async fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
+fn make_hooks<F: Float>(info: &ModelInfo) -> Result<v6::HookMap<F>> {
+    let mut hooks = v6::HookMap::new();
+
+    for layer in 0..info.num_layer {
+        hooks.insert(
+            v6::Hook::PreAttTimeDecayActivate(layer),
+            Box::new(move |frame: v6::Frame<F>| {
+                let ops = vec![TensorOp::mul_exp(
+                    &frame.buffer.time_decay,
+                    &frame.buffer.att_k,
+                )?];
+                Ok(TensorOp::List(ops))
+            }),
+        );
+    }
+
+    Ok(hooks)
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum EmbedDevice {
     #[default]
@@ -138,12 +162,13 @@ async fn main() -> Result<()> {
 
     let embed_device = cli.embed_device.unwrap_or(EmbedDevice::Cpu).into();
 
+    let hooks = make_hooks(&info)?;
     let model = ModelBuilder::new(&context, model)
         .embed_device(embed_device)
         .rescale(0)
         .build_v6()
         .await?;
-    let bundle = v6::Bundle::<f16>::new(model, 1);
+    let bundle = v6::Bundle::<f16>::new_with_hooks(model, 1, hooks);
     let runtime = TokioRuntime::new(bundle).await;
 
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;

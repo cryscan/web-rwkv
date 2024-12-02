@@ -250,11 +250,6 @@ impl TensorOp {
     pub const INT8_BLOCK_SIZE: u32 = 128;
 
     #[inline]
-    fn block_count(count: u32, block_size: u32) -> u32 {
-        count.div_ceil(block_size)
-    }
-
-    #[inline]
     pub fn empty() -> Self {
         Self::List(vec![])
     }
@@ -363,7 +358,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -626,13 +621,16 @@ impl TensorOp {
     /// - `matrix` shape: `[C, R, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn matmul_vec_fp16(
+    pub fn matmul_vec_fp16<'a, 'b, F0: Float, F1: Float>(
         matrix: &TensorGpu<f16, ReadWrite>,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = {
             let [m, n, b, _] = output.shape().into();
@@ -712,14 +710,17 @@ impl TensorOp {
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
     #[allow(clippy::too_many_arguments)]
-    pub fn matmul_vec_int8(
+    pub fn matmul_vec_int8<'a, 'b, F0: Float, F1: Float>(
         matrix: &TensorGpu<u8, ReadWrite>,
         minmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = {
             let [m, n, b, _] = output.shape().into();
@@ -805,15 +806,18 @@ impl TensorOp {
     /// - `matrix` shape: `[C, R, B]`.
     /// - `input` shape: `[C, T, B]`.
     /// - `output` shape: `[R, T, B]`.
-    pub fn matmul_vec_nf4(
+    pub fn matmul_vec_nf4<'a, 'b, F0: Float, F1: Float>(
         matrix: &TensorGpu<u8, ReadWrite>,
         quant: &TensorGpu<f32, Uniform>,
         absmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = {
             let [m, n, b, _] = output.shape().into();
@@ -905,13 +909,17 @@ impl TensorOp {
     /// - `output` shape: `[M, N, B]`.
     ///
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
-    pub fn matmul_mat_fp16(
-        matrix: TensorGpuView<f16>,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+    pub fn matmul_mat_fp16<'a, 'b, 'c, F0: Float, F1: Float>(
+        matrix: impl Into<TensorGpuView<'c, f16>>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
+
+        let matrix: TensorGpuView<_> = matrix.into();
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = {
             let [m, n, b, _] = output.shape().into();
@@ -969,8 +977,8 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(Self::block_count(shape[0] as u32, 4), BLOCK_SIZE),
-                Self::block_count(Self::block_count(shape[1] as u32, 4), BLOCK_SIZE),
+                u32::div_ceil(u32::div_ceil(shape[0] as u32, 4), BLOCK_SIZE),
+                u32::div_ceil(u32::div_ceil(shape[1] as u32, 4), BLOCK_SIZE),
                 shape[2] as u32,
             ],
         })
@@ -983,14 +991,18 @@ impl TensorOp {
     ///
     /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
     #[allow(clippy::too_many_arguments)]
-    pub fn matmul_mat_int8(
-        matrix: TensorGpuView<u8>,
+    pub fn matmul_mat_int8<'a, 'b, 'c, F0: Float, F1: Float>(
+        matrix: impl Into<TensorGpuView<'c, u8>>,
         minmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
+
+        let matrix: TensorGpuView<_> = matrix.into();
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = {
             let [m, n, b, _] = output.shape().into();
@@ -1054,8 +1066,8 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(Self::block_count(shape[0] as u32, 4), BLOCK_SIZE),
-                Self::block_count(Self::block_count(shape[1] as u32, 4), BLOCK_SIZE),
+                u32::div_ceil(u32::div_ceil(shape[0] as u32, 4), BLOCK_SIZE),
+                u32::div_ceil(u32::div_ceil(shape[1] as u32, 4), BLOCK_SIZE),
                 shape[2] as u32,
             ],
         })
@@ -1067,15 +1079,19 @@ impl TensorOp {
     /// - `output` shape: `[M, N, B]`.
     ///
     /// Note: `K` must be multiples of 256; `M` and `N` must be multiples of 8.
-    pub fn matmul_mat_nf4(
-        matrix: TensorGpuView<u8>,
+    pub fn matmul_mat_nf4<'a, 'b, 'c, F0: Float, F1: Float>(
+        matrix: impl Into<TensorGpuView<'c, u8>>,
         quant: &TensorGpu<f32, Uniform>,
         absmax: &TensorGpu<f16, ReadWrite>,
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
         active: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
+
+        let matrix: TensorGpuView<_> = matrix.into();
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = {
             let [m, n, b, _] = output.shape().into();
@@ -1143,8 +1159,8 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(Self::block_count(shape[0] as u32, 4), BLOCK_SIZE),
-                Self::block_count(Self::block_count(shape[1] as u32, 4), BLOCK_SIZE),
+                u32::div_ceil(u32::div_ceil(shape[0] as u32, 4), BLOCK_SIZE),
+                u32::div_ceil(u32::div_ceil(shape[1] as u32, 4), BLOCK_SIZE),
                 shape[2] as u32,
             ],
         })
@@ -1153,11 +1169,14 @@ impl TensorOp {
     /// Add `input` to `output`.
     /// - `input` shape: `[C, 1, B]` or `[C, T, B]`.
     /// - `output` shape: `[C, T, B]`.
-    pub fn add(
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+    pub fn add<'a, 'b, F0: Float, F1: Float>(
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = {
             let [index, token, batch, _] = output.shape().into();
@@ -1206,7 +1225,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1216,10 +1235,13 @@ impl TensorOp {
     /// Multiply `input` to `output`.
     /// - `input` shape: `[C, 1, B]` or `[C, T, B]`.
     /// - `output` shape: `[C, T, B]`.
-    pub fn mul(
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+    pub fn mul<'a, 'b, F0: Float, F1: Float>(
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
+
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
@@ -1269,21 +1291,24 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
         })
     }
 
-    pub fn token_shift(
+    pub fn token_shift<'a, 'b, F: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
-        time_mix: TensorGpuView<impl Float>,
-        state: TensorGpuView<f32>,
+        time_mix: impl Into<TensorGpuView<'a, F>>,
+        state: impl Into<TensorGpuView<'b, f32>>,
         input: &TensorGpu<impl Float, ReadWrite>,
         output: &TensorGpu<impl Float, ReadWrite>,
         reversed: bool,
     ) -> Result<Self, TensorError> {
+        let time_mix: TensorGpuView<_> = time_mix.into();
+        let state: TensorGpuView<_> = state.into();
+
         const BLOCK_SIZE: u32 = 128;
 
         let shape = {
@@ -1355,7 +1380,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1363,17 +1388,19 @@ impl TensorOp {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn time_mix_v4<T: Float>(
+    pub fn time_mix_v4<'a, T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        state: TensorGpuView<f32>,
+        state: impl Into<TensorGpuView<'a, f32>>,
         k: &TensorGpu<T, ReadWrite>,
         v: &TensorGpu<T, ReadWrite>,
         r: &TensorGpu<T, ReadWrite>,
         x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let state: TensorGpuView<_> = state.into();
 
         let shape = x.shape();
         k.check_shape(shape)?;
@@ -1441,22 +1468,24 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE), 1, 1],
+            dispatch: [u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE), 1, 1],
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn time_mix_v5<T: Float>(
+    pub fn time_mix_v5<'a, T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        state: TensorGpuView<f32>,
+        state: impl Into<TensorGpuView<'a, f32>>,
         k: &TensorGpu<T, ReadWrite>,
         v: &TensorGpu<T, ReadWrite>,
         r: &TensorGpu<T, ReadWrite>,
         x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 32;
+
+        let state: TensorGpuView<_> = state.into();
 
         let shape = x.shape();
         let dim = shape[0] * shape[1];
@@ -1526,22 +1555,24 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::block_count(dim as u32 / 4, BLOCK_SIZE), 1, 1],
+            dispatch: [u32::div_ceil(dim as u32 / 4, BLOCK_SIZE), 1, 1],
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn time_mix_v6<T: Float>(
+    pub fn time_mix_v6<'a, T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
         time_decay: &TensorGpu<f32, ReadWrite>,
         time_first: &TensorGpu<f32, ReadWrite>,
-        state: TensorGpuView<f32>,
+        state: impl Into<TensorGpuView<'a, f32>>,
         k: &TensorGpu<T, ReadWrite>,
         v: &TensorGpu<T, ReadWrite>,
         r: &TensorGpu<T, ReadWrite>,
         x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 32;
+
+        let state: TensorGpuView<_> = state.into();
 
         let shape = x.shape();
         let dim = shape[0] * shape[1];
@@ -1611,7 +1642,7 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [Self::block_count(dim as u32 / 4, BLOCK_SIZE), 1, 1],
+            dispatch: [u32::div_ceil(dim as u32 / 4, BLOCK_SIZE), 1, 1],
         })
     }
 
@@ -1658,7 +1689,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1696,7 +1727,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1734,7 +1765,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1772,7 +1803,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -1810,21 +1841,23 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
         })
     }
 
-    pub fn channel_mix<T: Float>(
+    pub fn channel_mix<'a, T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
-        state: TensorGpuView<f32>,
+        state: impl Into<TensorGpuView<'a, f32>>,
         r: &TensorGpu<T, ReadWrite>,
         v: &TensorGpu<T, ReadWrite>,
         x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let state: TensorGpuView<_> = state.into();
 
         let shape = x.shape();
         v.check_shape(shape)?;
@@ -1878,7 +1911,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 1,
             ],
@@ -1886,10 +1919,13 @@ impl TensorOp {
     }
 
     /// Copy the content of `input` into `output` of the same shape.
-    pub fn blit(
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+    pub fn blit<'a, 'b, F0: Float, F1: Float>(
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
+
         let shape = output.shape();
         input.check_shape(shape)?;
 
@@ -1937,19 +1973,22 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, block_size[0]),
-                Self::block_count(shape[1] as u32, block_size[1]),
+                u32::div_ceil(shape[0] as u32 / 4, block_size[0]),
+                u32::div_ceil(shape[1] as u32, block_size[1]),
                 shape[2] as u32,
             ],
         })
     }
 
     /// Repeat the content of `input` into `output` along the token and batch axes.
-    pub fn broadcast(
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+    pub fn broadcast<'a, 'b, F0: Float, F1: Float>(
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = output.shape();
         input.check_shape([shape[0], input.shape()[1], input.shape()[2], 1])?;
@@ -1992,7 +2031,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -2000,11 +2039,14 @@ impl TensorOp {
     }
 
     /// Swap the `token` and `batch` axes.
-    pub fn transpose(
-        input: TensorGpuView<impl Float>,
-        output: TensorGpuView<impl Float>,
+    pub fn transpose<'a, 'b, F0: Float, F1: Float>(
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = input.shape();
         output.check_shape([shape[0], shape[2], shape[1], 1])?;
@@ -2047,7 +2089,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -2111,20 +2153,24 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, block_size[0]),
-                Self::block_count(shape[1] as u32, block_size[1]),
+                u32::div_ceil(shape[0] as u32 / 4, block_size[0]),
+                u32::div_ceil(shape[1] as u32, block_size[1]),
                 shape[2] as u32,
             ],
         })
     }
 
-    pub fn blend_lora(
+    pub fn blend_lora<'a, 'b, 'c>(
         factor: &TensorGpu<f32, Uniform>,
-        xa: TensorGpuView<f16>,
-        xb: TensorGpuView<f16>,
-        output: TensorGpuView<f16>,
+        xa: impl Into<TensorGpuView<'a, f16>>,
+        xb: impl Into<TensorGpuView<'b, f16>>,
+        output: impl Into<TensorGpuView<'c, f16>>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
+
+        let xa: TensorGpuView<_> = xa.into();
+        let xb: TensorGpuView<_> = xb.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = output.shape();
         factor.check_shape([4, 1, 1, 1])?;
@@ -2178,8 +2224,8 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(Self::block_count(shape[0] as u32, 4), BLOCK_SIZE),
-                Self::block_count(Self::block_count(shape[1] as u32, 4), BLOCK_SIZE),
+                u32::div_ceil(u32::div_ceil(shape[0] as u32, 4), BLOCK_SIZE),
+                u32::div_ceil(u32::div_ceil(shape[1] as u32, 4), BLOCK_SIZE),
                 shape[2] as u32,
             ],
         })
@@ -2224,7 +2270,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32 / 4, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -2277,7 +2323,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(minmax_shape[0] as u32, BLOCK_SIZE),
+                u32::div_ceil(minmax_shape[0] as u32, BLOCK_SIZE),
                 minmax_shape[1] as u32,
                 minmax_shape[2] as u32,
             ],
@@ -2314,7 +2360,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
@@ -2385,7 +2431,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(absmax_shape[0] as u32, BLOCK_SIZE),
+                u32::div_ceil(absmax_shape[0] as u32, BLOCK_SIZE),
                 absmax_shape[1] as u32,
                 absmax_shape[2] as u32,
             ],
@@ -2430,7 +2476,7 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [
-                Self::block_count(shape[0] as u32, BLOCK_SIZE),
+                u32::div_ceil(shape[0] as u32, BLOCK_SIZE),
                 shape[1] as u32,
                 shape[2] as u32,
             ],
