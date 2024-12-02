@@ -228,9 +228,9 @@ where
     F: Iterator<Item = T> + Send + 'static,
     for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub fn new(model: M) -> Self {
+    pub fn new(bundle: M) -> Self {
         Self {
-            model,
+            model: bundle,
             _phantom: PhantomData,
         }
     }

@@ -125,9 +125,7 @@ async fn main() -> Result<()> {
 
     let tokenizer = load_tokenizer().await?;
 
-    let model = cli
-        .model
-        .unwrap_or("assets/models/rwkv-15-puzzle-final.st".into());
+    let model = cli.model.unwrap_or("assets/models/rwkv-puzzle15.st".into());
     let file = File::open(model).await?;
     let data = unsafe { Mmap::map(&file)? };
 
@@ -164,10 +162,9 @@ async fn main() -> Result<()> {
 
         let output = output[0].0.clone();
         if output.size() > 0 {
-            let output = output.slice(..info.num_vocab, .., .., ..)?;
             // let output = softmax_one(&context, output).await?;
             let output = output.to_vec();
-            let token = sample(&output, 0.0);
+            let token = sample(&output[..info.num_vocab], 0.0);
             prompt.batches[0].tokens.push(token);
 
             let decoded = tokenizer.decode(&[token])?;
@@ -176,7 +173,7 @@ async fn main() -> Result<()> {
             std::io::stdout().flush().unwrap();
 
             match token {
-                0 | 80 | 81 => break,
+                0 | 59 => break,
                 _ => {}
             }
         }

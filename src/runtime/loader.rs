@@ -21,7 +21,7 @@ use crate::{
 };
 
 pub const PAD_VEC: [usize; 4] = [256, 1, 1, 1];
-pub const PAD_MAT: [usize; 4] = [256, 8, 1, 1];
+pub const PAD_MAT: [usize; 4] = [256, 16, 1, 1];
 
 pub type ReaderTensor<'a> = (Dtype, Vec<usize>, Cow<'a, [u8]>);
 

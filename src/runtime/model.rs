@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-use super::loader::{Lora, Reader};
+use super::loader::{Lora, Reader, PAD_MAT};
 use crate::{
     context::{Context, ContextBuilder},
     impl_deserialize_seed,
@@ -67,7 +67,7 @@ impl ModelInfo {
     }
 
     pub fn num_vocab_padded(&self) -> usize {
-        self.num_vocab.next_multiple_of(8)
+        self.num_vocab.next_multiple_of(PAD_MAT[1])
     }
 }
 
