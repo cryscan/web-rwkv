@@ -267,15 +267,15 @@ async fn main() -> Result<()> {
         }
         ModelVersion::V5 => {
             let model = builder.build_v5().await?;
-            let builder = v5::Bundle::<f16>::new(model, 1);
-            let state = builder.state();
-            (TokioRuntime::new(builder).await, Box::new(state))
+            let bundle = v5::Bundle::<f16>::new(model, 1);
+            let state = bundle.state();
+            (TokioRuntime::new(bundle).await, Box::new(state))
         }
         ModelVersion::V6 => {
             let model = builder.build_v6().await?;
-            let builder = v6::Bundle::<f16>::new(model, 1);
-            let state = builder.state();
-            (TokioRuntime::new(builder).await, Box::new(state))
+            let bundle = v6::Bundle::<f16>::new(model, 1);
+            let state = bundle.state();
+            (TokioRuntime::new(bundle).await, Box::new(state))
         }
         ModelVersion::V7 => todo!(),
     };
