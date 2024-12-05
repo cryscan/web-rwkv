@@ -91,7 +91,7 @@ fn reduce_sum(index: u32, stride: u32) {
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
-    let stride = source.stride.x / 8u;
+    let stride = shape.x / 4u;
     let index = invocation_id.x % BLOCK_SIZE;
     let channel = invocation_id.x / BLOCK_SIZE;     // 1 channel: 4 rows in matrix
     let token = invocation_id.y;
@@ -103,6 +103,7 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if index == 0u {
         q = quant;
     }
+    workgroupBarrier();
 
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {

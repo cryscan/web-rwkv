@@ -824,7 +824,8 @@ impl TensorOp {
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
-            absmax.check_shape([k.div_ceil(Self::NF4_BLOCK_SIZE as usize), m, b, 1])?;
+            let len = matrix.shape().len() << 1;
+            absmax.check_shape([len.div_ceil(Self::NF4_BLOCK_SIZE as usize), 1, 1, 1])?;
             matrix.check_shape([k >> 1, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
             output.check_shape([m, n, b, 1])?;
@@ -991,9 +992,9 @@ impl TensorOp {
     /// - `input` shape: `[K, N, B]`.
     /// - `output` shape: `[M, N, B]`.
     ///
-    /// Note:
+    /// Notes:
     /// 1. `K` must be multiples of 4; `M` and `N` must be multiples of 4.
-    /// 2. The total length of `matrix` should be multiples of 128.
+    /// 2. The total size of `matrix` must be multiples of 128.
     #[allow(clippy::too_many_arguments)]
     pub fn matmul_mat_int8<'a, 'b, 'c, F0: Float, F1: Float>(
         matrix: impl Into<TensorGpuView<'c, u8>>,
@@ -1083,7 +1084,9 @@ impl TensorOp {
     /// - `input` shape: `[K, N, B]`.
     /// - `output` shape: `[M, N, B]`.
     ///
-    /// Note: `K` must be multiples of 256; `M` and `N` must be multiples of 8.
+    /// Notes:
+    /// 1. `K` must be multiples of 8; `M` and `N` must be multiples of 8.
+    /// 2. The total size of `matrix` must be multiples of 256.
     pub fn matmul_mat_nf4<'a, 'b, 'c, F0: Float, F1: Float>(
         matrix: impl Into<TensorGpuView<'c, u8>>,
         quant: &TensorGpu<f32, Uniform>,
@@ -1101,7 +1104,8 @@ impl TensorOp {
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
-            absmax.check_shape([k.div_ceil(Self::NF4_BLOCK_SIZE as usize), m, b, 1])?;
+            let len = matrix.shape().len() << 1;
+            absmax.check_shape([len.div_ceil(Self::NF4_BLOCK_SIZE as usize), 1, 1, 1])?;
             matrix.check_shape([k >> 1, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
             output.check_shape([m, n, b, 1])?;
@@ -2387,12 +2391,8 @@ impl TensorOp {
         let context = output.context();
         let shape = output.shape();
         let input_shape = Shape::new(shape[0] << 1, shape[1], shape[2], shape[3]);
-        let absmax_shape = Shape::new(
-            input_shape[0] / Self::NF4_BLOCK_SIZE as usize,
-            shape[1],
-            shape[2],
-            shape[3],
-        );
+        let absmax_len = input_shape.len().div_ceil(Self::NF4_BLOCK_SIZE as usize);
+        let absmax_shape = Shape::new(absmax_len, 1, 1, 1);
 
         input.check_shape(input_shape)?;
         absmax.check_shape(absmax_shape)?;
@@ -2412,10 +2412,10 @@ impl TensorOp {
             label: None,
             layout: &pipeline.layout,
             entries: &[
-                // BindGroupEntry {
-                //     binding: 0,
-                //     resource: absmax_f32.meta_binding(),
-                // },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: absmax_f32.meta_binding(),
+                },
                 // BindGroupEntry {
                 //     binding: 1,
                 //     resource: quant.binding(),
@@ -2437,13 +2437,15 @@ impl TensorOp {
         let compute_absmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [
-                u32::div_ceil(absmax_shape[0] as u32, BLOCK_SIZE),
-                absmax_shape[1] as u32,
-                absmax_shape[2] as u32,
-            ],
+            dispatch: [u32::div_ceil(absmax_shape[0] as u32, BLOCK_SIZE), 1, 1],
         };
 
+        let output = output.reshape(
+            TensorDimension::Auto,
+            TensorDimension::Dimension(1),
+            TensorDimension::Dimension(1),
+            TensorDimension::Dimension(1),
+        )?;
         let pipeline = context.checkout_pipeline(
             "quant_mat_nf4",
             include_str!("../shaders/quant_mat_nf4.wgsl"),
@@ -2457,10 +2459,10 @@ impl TensorOp {
             label: None,
             layout: &pipeline.layout,
             entries: &[
-                // BindGroupEntry {
-                //     binding: 0,
-                //     resource: output.meta_binding(),
-                // },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
                 BindGroupEntry {
                     binding: 1,
                     resource: quant.binding(),
@@ -2482,17 +2484,10 @@ impl TensorOp {
         let quantize = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [
-                u32::div_ceil(shape[0] as u32, BLOCK_SIZE),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
+            dispatch: [u32::div_ceil(shape.len() as u32, BLOCK_SIZE), 1, 1],
         };
 
-        let quantize_absmax = Self::blit(
-            absmax_f32.view(.., .., .., ..)?,
-            absmax.view(.., .., .., ..)?,
-        )?;
+        let quantize_absmax = Self::blit(&absmax_f32, absmax)?;
 
         Ok(Self::List(vec![compute_absmax, quantize, quantize_absmax]))
     }
@@ -2924,9 +2919,6 @@ mod tests {
         };
         fastrand::seed(42);
 
-        const C: usize = 2560;
-        const R: usize = 2048;
-        const T: usize = 64;
         const NF4_BLOCK_SIZE: usize = TensorOp::NF4_BLOCK_SIZE as usize;
 
         fn normal() -> f32 {
@@ -2935,158 +2927,181 @@ mod tests {
             (-2.0 * u.ln()).sqrt() * (2.0 * PI * v).cos()
         }
 
-        let matrix = vec![(); C * R]
-            .into_iter()
-            .map(|_| normal())
-            .map(f16::from_f32)
-            .collect_vec();
-        let input_f32 = vec![(); C * T]
-            .into_iter()
-            .map(|_| 2.0 * fastrand::f32() - 1.0)
-            .collect_vec();
-        let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
+        fn test_matmul_nf4_inner(context: &Context, c: usize, r: usize, t: usize) -> Result<()> {
+            let matrix = vec![(); c * r]
+                .into_iter()
+                .map(|_| normal())
+                .map(f16::from_f32)
+                .collect_vec();
+            let input_f32 = vec![(); c * t]
+                .into_iter()
+                .map(|_| 2.0 * fastrand::f32() - 1.0)
+                .collect_vec();
+            let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
-        #[allow(clippy::excessive_precision)]
-        let quant: [f32; 16] = [
-            -1.0,
-            -0.6961928009986877,
-            -0.5250730514526367,
-            -0.39491748809814453,
-            -0.28444138169288635,
-            -0.18477343022823334,
-            -0.09105003625154495,
-            0.0,
-            0.07958029955625534,
-            0.16093020141124725,
-            0.24611230194568634,
-            0.33791524171829224,
-            0.44070982933044434,
-            0.5626170039176941,
-            0.7229568362236023,
-            1.0,
-        ];
-        let (matrix_u8, matrix_u4, absmax) = {
-            let mut matrix_u8: Vec<u8> = vec![0; matrix.len()];
-            let mut matrix_u4: Vec<u8> = vec![0; matrix.len() / 2];
-            let mut absmax = vec![f16::ZERO; matrix.len() / NF4_BLOCK_SIZE];
+            #[allow(clippy::excessive_precision)]
+            let quant: [f32; 16] = [
+                -1.0,
+                -0.6961928009986877,
+                -0.5250730514526367,
+                -0.39491748809814453,
+                -0.28444138169288635,
+                -0.18477343022823334,
+                -0.09105003625154495,
+                0.0,
+                0.07958029955625534,
+                0.16093020141124725,
+                0.24611230194568634,
+                0.33791524171829224,
+                0.44070982933044434,
+                0.5626170039176941,
+                0.7229568362236023,
+                1.0,
+            ];
+            let (matrix_u8, matrix_u4, absmax) = {
+                let mut matrix_u8: Vec<u8> = vec![0; matrix.len()];
+                let mut matrix_u4: Vec<u8> = vec![0; matrix.len() / 2];
+                let mut absmax = vec![f16::ZERO; matrix.len().div_ceil(NF4_BLOCK_SIZE)];
 
-            for (i, absmax) in absmax.iter_mut().enumerate() {
-                let start = i * NF4_BLOCK_SIZE;
-                let end = start + NF4_BLOCK_SIZE;
-                let chunk = &matrix[start..end];
-                *absmax = chunk
-                    .iter()
-                    .map(|&x| if x >= f16::ZERO { x } else { -x })
-                    .reduce(f16::max)
-                    .unwrap();
-                for (j, value) in chunk.iter().enumerate() {
-                    let value = value.to_f32() / absmax.to_f32();
-                    matrix_u8[start + j] = quant
+                for (i, absmax) in absmax.iter_mut().enumerate() {
+                    let start = i * NF4_BLOCK_SIZE;
+                    let end = start + NF4_BLOCK_SIZE;
+                    let chunk = &matrix[start..end];
+                    *absmax = chunk
                         .iter()
-                        .map(|quant| (value - quant).abs())
-                        .enumerate()
-                        .fold((0, f32::MAX), |acc, x| if x.1 < acc.1 { x } else { acc })
-                        .0 as u8;
+                        .map(|&x| if x >= f16::ZERO { x } else { -x })
+                        .reduce(f16::max)
+                        .unwrap();
+                    for (j, value) in chunk.iter().enumerate() {
+                        let value = value.to_f32() / absmax.to_f32();
+                        matrix_u8[start + j] = quant
+                            .iter()
+                            .map(|quant| (value - quant).abs())
+                            .enumerate()
+                            .fold((0, f32::MAX), |acc, x| if x.1 < acc.1 { x } else { acc })
+                            .0 as u8;
+                    }
                 }
-            }
 
-            for (i, x) in matrix_u4.iter_mut().enumerate() {
-                *x = matrix_u8[2 * i] | matrix_u8[2 * i + 1] << 4;
-            }
+                for (i, x) in matrix_u4.iter_mut().enumerate() {
+                    *x = matrix_u8[2 * i] | matrix_u8[2 * i + 1] << 4;
+                }
 
-            (matrix_u8, matrix_u4, absmax)
-        };
+                (matrix_u8, matrix_u4, absmax)
+            };
 
-        let quant_shape = Shape::new(quant.len(), 1, 1, 1);
-        let absmax_shape = Shape::new(C.div_ceil(NF4_BLOCK_SIZE), R, 1, 1);
-        let matrix_f16_shape = Shape::new(C, R, 1, 1);
-        let matrix_u4_shape = Shape::new(C / 2, R, 1, 1);
-        let input_shape = Shape::new(C, T, 1, 1);
-        let output_shape = Shape::new(R, T, 1, 1);
+            let quant_shape = Shape::new(quant.len(), 1, 1, 1);
+            let absmax_shape = Shape::new((c * r).div_ceil(NF4_BLOCK_SIZE), 1, 1, 1);
+            let matrix_f16_shape = Shape::new(c, r, 1, 1);
+            let matrix_u4_shape = Shape::new(c / 2, r, 1, 1);
+            let input_shape = Shape::new(c, t, 1, 1);
+            let output_shape = Shape::new(r, t, 1, 1);
 
-        let quant_dev = context.tensor_from_data(quant_shape, quant.to_vec())?;
-        let absmax_dev = context.tensor_init(absmax_shape);
-        let matrix_f16_dev = context.tensor_from_data(matrix_f16_shape, matrix.clone())?;
+            let quant_dev = context.tensor_from_data(quant_shape, quant.to_vec())?;
+            let absmax_dev = context.tensor_init(absmax_shape);
+            let matrix_f16_dev = context.tensor_from_data(matrix_f16_shape, matrix.clone())?;
 
-        let matrix_u4_dev = context.tensor_init(matrix_u4_shape);
-        let input_dev: TensorGpu<_, _> =
-            context.tensor_from_data(input_shape, input_f16.clone())?;
-        let output_dev: TensorGpu<_, _> = context.tensor_init(output_shape);
+            let matrix_u4_dev = context.tensor_init(matrix_u4_shape);
+            let input_dev: TensorGpu<_, _> =
+                context.tensor_from_data(input_shape, input_f16.clone())?;
+            let output_dev: TensorGpu<_, _> = context.tensor_init(output_shape);
 
-        let ops = TensorOp::List(vec![
-            TensorOp::quantize_mat_nf4(&matrix_f16_dev, &quant_dev, &absmax_dev, &matrix_u4_dev)?,
-            TensorOp::matmul_mat_nf4(
-                matrix_u4_dev.view(.., .., .., ..)?,
+            let ops = TensorOp::List(vec![TensorOp::quantize_mat_nf4(
+                &matrix_f16_dev,
                 &quant_dev,
                 &absmax_dev,
-                input_dev.view(.., .., .., ..)?,
-                output_dev.view(.., .., .., ..)?,
-                Activation::None,
-            )?,
-        ]);
-        context.queue.submit(context.encode(&ops));
+                &matrix_u4_dev,
+            )?]);
+            context.queue.submit(context.encode(&ops));
+            let matrix_u4_host = matrix_u4_dev.back_in_place().to_vec();
+            let absmax_host = absmax_dev.back_in_place().to_vec();
 
-        let matrix_u4_host = matrix_u4_dev.back_in_place().to_vec();
-        let absmax_host = absmax_dev.back_in_place().to_vec();
-        let output_host = output_dev.back_in_place().to_vec();
-
-        let mut truth = vec![0.0; output_host.len()];
-        for token in 0..T {
-            for line in 0..R {
-                let matrix = &matrix[line * C..(line + 1) * C];
-                let input = &input_f16[token * C..(token + 1) * C];
-                let product = matrix
-                    .iter()
-                    .zip(input.iter())
-                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-                truth[token * R + line] = product;
-            }
-        }
-
-        let mut ans = vec![0.0; output_host.len()];
-        for token in 0..T {
-            for line in 0..R {
-                let matrix = &matrix_u8[line * C..(line + 1) * C];
-                let input = &input_f16[token * C..(token + 1) * C];
-                let product =
-                    matrix
-                        .iter()
-                        .zip(input.iter())
-                        .enumerate()
-                        .fold(0.0f32, |acc, (i, x)| {
-                            let amp = absmax[(line * C + i) / NF4_BLOCK_SIZE];
-                            acc + quant[*x.0 as usize] * amp.to_f32() * x.1.to_f32()
-                        });
-                ans[token * R + line] = product;
-            }
-        }
-
-        itertools::zip_eq(matrix_u4_host, matrix_u4)
-            .enumerate()
-            .for_each(|(index, (a, b))| {
-                assert!(
-                    a == b,
-                    "Failed at index {index}, computed: {a} vs. answer: {b}"
-                );
-            });
-
-        itertools::zip_eq(absmax_host, absmax)
-            .enumerate()
-            .for_each(|(index, (a, b))| {
+            for (index, (&a, &b)) in itertools::zip_eq(&absmax_host, &absmax).enumerate() {
                 assert!(
                     is_approx_eps(a.to_f32(), b.to_f32(), 0.01),
                     "Failed at index {index}, computed: {a} vs. answer: {b}"
                 );
-            });
+            }
 
-        itertools::zip_eq(output_host, ans)
-            .enumerate()
-            .for_each(|(index, (a, b))| {
+            for (index, (a, b)) in itertools::zip_eq(matrix_u4_host, matrix_u4).enumerate() {
+                assert!(
+                    a == b,
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            }
+
+            let mut truth = vec![0.0; t * r];
+            for token in 0..t {
+                for line in 0..r {
+                    let matrix = &matrix[line * c..(line + 1) * c];
+                    let input = &input_f16[token * c..(token + 1) * c];
+                    let product = matrix
+                        .iter()
+                        .zip(input.iter())
+                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
+                    truth[token * r + line] = product;
+                }
+            }
+
+            let mut ans = vec![0.0; t * r];
+            for token in 0..t {
+                for line in 0..r {
+                    let matrix = &matrix_u8[line * c..(line + 1) * c];
+                    let input = &input_f16[token * c..(token + 1) * c];
+                    let product =
+                        matrix
+                            .iter()
+                            .zip(input.iter())
+                            .enumerate()
+                            .fold(0.0f32, |acc, (i, x)| {
+                                let amp = absmax[(line * c + i) / NF4_BLOCK_SIZE];
+                                acc + quant[*x.0 as usize] * amp.to_f32() * x.1.to_f32()
+                            });
+                    ans[token * r + line] = product;
+                }
+            }
+
+            let ops = TensorOp::List(vec![TensorOp::matmul_vec_nf4(
+                &matrix_u4_dev,
+                &quant_dev,
+                &absmax_dev,
+                &input_dev,
+                &output_dev,
+                Activation::None,
+            )?]);
+            context.queue.submit(context.encode(&ops));
+            let output_host = output_dev.back_in_place().to_vec();
+
+            for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
                 assert!(
                     is_approx_eps(a, b, 0.01),
                     "Failed at index {index}, computed: {a} vs. answer: {b}"
                 );
-            });
+            }
+
+            let ops = TensorOp::List(vec![TensorOp::matmul_mat_nf4(
+                &matrix_u4_dev,
+                &quant_dev,
+                &absmax_dev,
+                &input_dev,
+                &output_dev,
+                Activation::None,
+            )?]);
+            context.queue.submit(context.encode(&ops));
+            let output_host = output_dev.back_in_place().to_vec();
+
+            for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
+                assert!(
+                    is_approx_eps(a, b, 0.01),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            }
+
+            Ok(())
+        }
+
+        test_matmul_nf4_inner(&context, 2560, 2048, 64)?;
+        test_matmul_nf4_inner(&context, 320, 64, 320)?;
 
         Ok(())
     }
