@@ -105,10 +105,10 @@ impl Matrix {
 
         let w = context.tensor_init(shape);
         let m = context.tensor_init(Shape::new(
-            (shape[0] << 1) / TensorOp::INT8_BLOCK_SIZE as usize,
-            shape[1],
-            shape[2],
-            shape[3],
+            (shape.len() << 1).div_ceil(TensorOp::INT8_BLOCK_SIZE as usize),
+            1,
+            1,
+            1,
         ));
 
         let op = TensorOp::quantize_mat_int8(matrix, &m, &w)?;
@@ -123,10 +123,10 @@ impl Matrix {
 
         let matrix_shape = Shape::new(shape[0] / 2, shape[1], shape[2], shape[3]);
         let absmax_shape = Shape::new(
-            shape[0] / TensorOp::NF4_BLOCK_SIZE as usize,
-            shape[1],
-            shape[2],
-            shape[3],
+            shape.len().div_ceil(TensorOp::NF4_BLOCK_SIZE as usize),
+            1,
+            1,
+            1,
         );
 
         let q = Nf4Quant::default().0.to(context);

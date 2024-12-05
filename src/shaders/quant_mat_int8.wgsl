@@ -22,33 +22,33 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_minmax(in: Input) {
-    let index = in.uid.x;
-    if index >= shape.x {
+    let bti = dot(in.uid, vec3<u32>(1u, BLOCK_SIZE * in.b.x, BLOCK_SIZE * in.b.x * in.b.y));
+    if bti >= shape.x {
         return;
     }
 
     var _min = vec4<f32>(65504.0);
     var _max = vec4<f32>(-65504.0);
     for (var i = 0u; i < INT8_BLOCK_STEP; i += 1u) {
-        let v = unpack4x16float(input[index * INT8_BLOCK_STEP + i]);
+        let v = unpack4x16float(input[bti * INT8_BLOCK_STEP + i]);
         _min = min(v, _min);
         _max = max(v, _max);
     }
 
     _min[0] = min(min(_min[0], _min[1]), min(_min[2], _min[3]));
     _max[0] = max(max(_max[0], _max[1]), max(_max[2], _max[3]));
-    minmax[index] = pack2x16float(vec2<f32>(_min[0], _max[0]));
+    minmax[bti] = pack2x16float(vec2<f32>(_min[0], _max[0]));
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn quantize(in: Input) {
-    let index = in.uid.x;
-    if index >= shape.x {
+    let bti = dot(in.uid, vec3<u32>(1u, BLOCK_SIZE * in.b.x, BLOCK_SIZE * in.b.x * in.b.y));
+    if bti >= shape.x {
         return;
     }
 
-    let m = unpack2x16float(minmax[index / INT8_BLOCK_STEP]);
-    let v = unpack4x16float(input[index]);
+    let m = unpack2x16float(minmax[bti / INT8_BLOCK_STEP]);
+    let v = unpack4x16float(input[bti]);
     let x = saturate((v - m[0]) / (m[1] - m[0]));
-    output[index] = pack4x8unorm(x);
+    output[bti] = pack4x8unorm(x);
 }

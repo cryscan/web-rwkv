@@ -22,27 +22,27 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_absmax(in: Input) {
-    let index = in.uid.x;
-    if index >= shape.x {
+    let bti = dot(in.uid, vec3<u32>(1u, BLOCK_SIZE * in.b.x, BLOCK_SIZE * in.b.x * in.b.y));
+    if bti >= shape.x {
         return;
     }
 
     var _max = vec4<f32>(0.0);
     for (var i = 0u; i < NF4_BLOCK_STEP; i += 1u) {
-        let v = input[index * NF4_BLOCK_STEP + i];
+        let v = input[bti * NF4_BLOCK_STEP + i];
         let x = unpack4x16float(v.xy);
         let y = unpack4x16float(v.zw);
 
         _max = max(abs(x), _max);
         _max = max(abs(y), _max);
     }
-    absmax[index] = max(max(_max[0], _max[1]), max(_max[2], _max[3]));
+    absmax[bti] = max(max(_max[0], _max[1]), max(_max[2], _max[3]));
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn quantize(in: Input) {
-    let index = in.uid.x;
-    if index >= shape.x {
+    let bti = dot(in.uid, vec3<u32>(1u, BLOCK_SIZE * in.b.x, BLOCK_SIZE * in.b.x * in.b.y));
+    if bti >= shape.x {
         return;
     }
 
@@ -51,8 +51,8 @@ fn quantize(in: Input) {
     }
     workgroupBarrier();
 
-    let a = 1.0 / absmax[index / NF4_BLOCK_STEP];
-    let v = input[index];
+    let a = 1.0 / absmax[bti / NF4_BLOCK_STEP];
+    let v = input[bti];
     var x: array<vec4<f32>, 2>;
     x[0] = unpack4x16float(v.xy) * a;
     x[1] = unpack4x16float(v.zw) * a;
@@ -72,5 +72,5 @@ fn quantize(in: Input) {
         y |= min_index << (i * 4u);
     }
 
-    output[index] = y;
+    output[bti] = y;
 }

@@ -2331,7 +2331,11 @@ impl TensorOp {
         let compute_minmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [u32::div_ceil(minmax_shape[0] as u32, BLOCK_SIZE), 1, 1],
+            dispatch: [
+                u32::div_ceil((shape[0] << 1) as u32, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
         };
 
         let output = output.reshape(
@@ -2374,7 +2378,11 @@ impl TensorOp {
         let quantize = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [u32::div_ceil(shape.len() as u32, BLOCK_SIZE), 1, 1],
+            dispatch: [
+                u32::div_ceil(shape[0] as u32, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
         };
 
         Ok(Self::List(vec![compute_minmax, quantize]))
@@ -2437,7 +2445,11 @@ impl TensorOp {
         let compute_absmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [u32::div_ceil(absmax_shape[0] as u32, BLOCK_SIZE), 1, 1],
+            dispatch: [
+                u32::div_ceil((shape[0] << 1) as u32, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
         };
 
         let output = output.reshape(
@@ -2484,7 +2496,11 @@ impl TensorOp {
         let quantize = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [u32::div_ceil(shape.len() as u32, BLOCK_SIZE), 1, 1],
+            dispatch: [
+                u32::div_ceil((shape[0]) as u32, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
         };
 
         let quantize_absmax = Self::blit(&absmax_f32, absmax)?;
