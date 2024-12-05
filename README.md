@@ -81,9 +81,6 @@ In this demo, type `+` to retry last round's generation; type `-` to exit.
   ```
   to quantize all 32 layers.
 
-- ~~Use `--turbo` flag to switch to alternative `GEMM` kernel when inferring long prompts.~~
-  The `rt` examples enforces `turbo`.
-
 
 ### Batched Inference
 This demo showcases generation of 4 batches of text with various lengths simultaneously.
@@ -98,7 +95,7 @@ The inspector demo is a guide to an advanced usage called hooks. Hooks allow use
 All versions of models implements `serde::ser::Serialize` and `serde::de::DeserializeSeed<'de>`, which means that one can save quantized or lora-merged model into a file and load it afterwards.
 
 ## Use in Your Project
-To use in your own rust project, simply add `web-rwkv = "0.8"` as a dependency in your `Cargo.toml`.
+To use in your own rust project, simply add `web-rwkv = "0.9"` as a dependency in your `Cargo.toml`.
 Check examples on how to create the environment, the tokenizer and how to run the model.
 
 ## Explanations
@@ -133,31 +130,42 @@ A `HookMap` is essentially a hashmap from `Model::Hook` to functions.
 A `Model::Hook` defines a certain place the hook function can be injected into. A model generally has dozens of hooking points.
 A hook function is a function of `Fn(&Model<'_>, &ModelState, &Runtime) -> Result<TensorOp, TensorError>`, where you can create tensor ops that reads/writes all the tensors you get here.
 
-An example that reads out every layer's output:
+An example reading out every layer's output during inference:
 ```rust
 let info = model.info();
+
+#[derive(Debug, Clone)]
+struct Buffer(TensorGpu<f32, ReadWrite>);
+
 // create a buffer to store each layer's output
 let buffer = Buffer::new(&context, &info);
+
 let mut hooks = HookMap::default();
 for layer in 0..info.num_layer {
    let buffer = buffer.clone();
    hooks.insert(
       v5::Hook::PostFfn(layer),
       Box::new(
-            move |_model, _state, runtime: &v5::Runtime| -> Result<TensorOp, TensorError> {
+            move |frame: &v6::Frame<_>| -> Result<TensorOp, TensorError> {
                // figure out how many tokens this run has
-               let shape = runtime.ffn_x.shape();
+               let shape = frame.buffer.ffn_x.shape();
                let num_token = shape[1];
                // "steal" the layer's output (activation), and put it into our buffer
                TensorOp::blit(
-                  runtime.ffn_x.view(.., num_token - 1, .., ..)?,
-                  buffer.ffn_x.view(.., layer, .., ..)?,
+                  frame.buffer.ffn_x.view(.., num_token - 1, .., ..)?,
+                  buffer.0.view(.., layer, .., ..)?,
                )
             },
       ),
    );
 }
-let output = model.run_with_hooks(&mut tokens, &state, &hooks).await?;
+
+let bundle = v6::Bundle::<f16>::new_with_hooks(model, 1, hooks);
+let runtime = TokioRuntime::new(bundle).await;
+
+let (input, output) = runtime.infer(input).await?;
+// now the data is available in `buffer`, we can read it back
+let data = buffer.back().await.to_vec();
 ```
 
 ## Convert Models
