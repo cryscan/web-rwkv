@@ -12,6 +12,7 @@ use super::{
 use crate::{
     context::{CachedPipeline, Macros},
     num::{Float, Scalar},
+    tensor::{shape::TensorDimension, TensorReshape},
 };
 
 pub trait TensorCommand<T: Scalar, K: Kind> {
@@ -725,7 +726,8 @@ impl TensorOp {
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
-            minmax.check_shape([(k << 1) / Self::INT8_BLOCK_SIZE as usize, m, b, 1])?;
+            let len = matrix.shape().len();
+            minmax.check_shape([(len << 1).div_ceil(Self::INT8_BLOCK_SIZE as usize), 1, 1, 1])?;
             matrix.check_shape([k, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
             output.check_shape([m, n, b, 1])?;
@@ -822,7 +824,7 @@ impl TensorOp {
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
-            absmax.check_shape([k / Self::NF4_BLOCK_SIZE as usize, m, b, 1])?;
+            absmax.check_shape([k.div_ceil(Self::NF4_BLOCK_SIZE as usize), m, b, 1])?;
             matrix.check_shape([k >> 1, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
             output.check_shape([m, n, b, 1])?;
@@ -908,7 +910,7 @@ impl TensorOp {
     /// - `input` shape: `[K, N, B]`.
     /// - `output` shape: `[M, N, B]`.
     ///
-    /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
+    /// Note: `K` must be multiples of 4; `M` and `N` must be multiples of 4.
     pub fn matmul_mat_fp16<'a, 'b, 'c, F0: Float, F1: Float>(
         matrix: impl Into<TensorGpuView<'c, f16>>,
         input: impl Into<TensorGpuView<'a, F0>>,
@@ -989,7 +991,9 @@ impl TensorOp {
     /// - `input` shape: `[K, N, B]`.
     /// - `output` shape: `[M, N, B]`.
     ///
-    /// Note: `K` must be multiples of 128; `M` and `N` must be multiples of 4.
+    /// Note:
+    /// 1. `K` must be multiples of 4; `M` and `N` must be multiples of 4.
+    /// 2. The total length of `matrix` should be multiples of 128.
     #[allow(clippy::too_many_arguments)]
     pub fn matmul_mat_int8<'a, 'b, 'c, F0: Float, F1: Float>(
         matrix: impl Into<TensorGpuView<'c, u8>>,
@@ -1007,7 +1011,8 @@ impl TensorOp {
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
-            minmax.check_shape([(k << 1) / Self::INT8_BLOCK_SIZE as usize, m, b, 1])?;
+            let len = matrix.shape().len();
+            minmax.check_shape([(len << 1).div_ceil(Self::INT8_BLOCK_SIZE as usize), 1, 1, 1])?;
             matrix.check_shape([k, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
             output.check_shape([m, n, b, 1])?;
@@ -1096,7 +1101,7 @@ impl TensorOp {
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
-            absmax.check_shape([k / Self::NF4_BLOCK_SIZE as usize, m, b, 1])?;
+            absmax.check_shape([k.div_ceil(Self::NF4_BLOCK_SIZE as usize), m, b, 1])?;
             matrix.check_shape([k >> 1, m, b, 1])?;
             input.check_shape([k, n, b, 1])?;
             output.check_shape([m, n, b, 1])?;
@@ -2286,12 +2291,8 @@ impl TensorOp {
 
         let context = output.context();
         let shape = output.shape();
-        let minmax_shape = Shape::new(
-            (shape[0] << 1) / Self::INT8_BLOCK_SIZE as usize,
-            shape[1],
-            shape[2],
-            shape[3],
-        );
+        let minmax_len = (shape.len() << 1).div_ceil(Self::INT8_BLOCK_SIZE as usize);
+        let minmax_shape = Shape::new(minmax_len, 1, 1, 1);
 
         input.check_shape(shape)?;
         minmax.check_shape(minmax_shape)?;
@@ -2310,6 +2311,10 @@ impl TensorOp {
             layout: &pipeline.layout,
             entries: &[
                 BindGroupEntry {
+                    binding: 0,
+                    resource: minmax.meta_binding(),
+                },
+                BindGroupEntry {
                     binding: 1,
                     resource: input.binding(),
                 },
@@ -2322,13 +2327,15 @@ impl TensorOp {
         let compute_minmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [
-                u32::div_ceil(minmax_shape[0] as u32, BLOCK_SIZE),
-                minmax_shape[1] as u32,
-                minmax_shape[2] as u32,
-            ],
+            dispatch: [u32::div_ceil(minmax_shape[0] as u32, BLOCK_SIZE), 1, 1],
         };
 
+        let output = output.reshape(
+            TensorDimension::Auto,
+            TensorDimension::Dimension(1),
+            TensorDimension::Dimension(1),
+            TensorDimension::Dimension(1),
+        )?;
         let pipeline = context.checkout_pipeline(
             "quant_mat_int8",
             include_str!("../shaders/quant_mat_int8.wgsl"),
@@ -2342,6 +2349,10 @@ impl TensorOp {
             label: None,
             layout: &pipeline.layout,
             entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: output.meta_binding(),
+                },
                 BindGroupEntry {
                     binding: 1,
                     resource: input.binding(),
@@ -2359,11 +2370,7 @@ impl TensorOp {
         let quantize = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [
-                u32::div_ceil(shape[0] as u32, BLOCK_SIZE),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
+            dispatch: [u32::div_ceil(shape.len() as u32, BLOCK_SIZE), 1, 1],
         };
 
         Ok(Self::List(vec![compute_minmax, quantize]))
@@ -2817,8 +2824,8 @@ mod tests {
 
         let (matrix_u8, min, max) = {
             let mut matrix_u8: Vec<u8> = vec![0; matrix.len()];
-            let mut min = vec![f16::MAX; matrix.len() / INT8_BLOCK_SIZE];
-            let mut max = vec![f16::MIN; matrix.len() / INT8_BLOCK_SIZE];
+            let mut min = vec![f16::MAX; matrix.len().div_ceil(INT8_BLOCK_SIZE)];
+            let mut max = vec![f16::MIN; matrix.len().div_ceil(INT8_BLOCK_SIZE)];
 
             for (i, (min, max)) in min.iter_mut().zip_eq(max.iter_mut()).enumerate() {
                 let start = i * INT8_BLOCK_SIZE;
@@ -2840,7 +2847,7 @@ mod tests {
             (matrix_u8, min, max)
         };
 
-        let minmax_shape = Shape::new(C / INT8_BLOCK_SIZE * 2, R, 1, 1);
+        let minmax_shape = Shape::new((C * R).div_ceil(INT8_BLOCK_SIZE) * 2, 1, 1, 1);
         let matrix_shape = Shape::new(C, R, 1, 1);
         let input_shape = Shape::new(C, T, 1, 1);
         let output_shape = Shape::new(R, T, 1, 1);
@@ -3005,7 +3012,7 @@ mod tests {
         };
 
         let quant_shape = Shape::new(quant.len(), 1, 1, 1);
-        let absmax_shape = Shape::new(C / NF4_BLOCK_SIZE, R, 1, 1);
+        let absmax_shape = Shape::new(C.div_ceil(NF4_BLOCK_SIZE), R, 1, 1);
         let matrix_f16_shape = Shape::new(C, R, 1, 1);
         let matrix_u4_shape = Shape::new(C / 2, R, 1, 1);
         let input_shape = Shape::new(C, T, 1, 1);
