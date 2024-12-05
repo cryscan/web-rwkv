@@ -42,7 +42,7 @@ It *does not* provide the following:
 
 ## Compile
 1. [Install Rust](https://rustup.rs/).
-2. Download the model from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert it using [`convert_safetensors.py`](./convert_safetensors.py). Put the `.st` model under `assets/models`.
+2. Download the model from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert it using [`convert_safetensors.py`](./assets/scripts/convert_safetensors.py). Put the `.st` model under `assets/models`.
 3. Compile
    ```bash
    $ cargo build --release --examples
@@ -164,10 +164,10 @@ let output = model.run_with_hooks(&mut tokens, &state, &hooks).await?;
 *You must download the model and put in `assets/models` before running if you are building from source.*
 You can now download the converted models [here](https://huggingface.co/cgisky/RWKV-safetensors-fp16).
 
-You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert them via the provided [`convert_safetensors.py`](convert_safetensors.py).
+You may download the official RWKV World series models from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert them via the provided [`convert_safetensors.py`](assets/scripts/convert_safetensors.py).
 
 ```bash
-$ python convert_safetensors.py --input /path/to/model.pth --output /path/to/model.st
+$ python assets/scripts/convert_safetensors.py --input /path/to/model.pth --output /path/to/model.st
 ```
 
 If you don't have python installed or don't want to, there is a pure rust [`converter`](https://github.com/cryscan/web-rwkv-converter).
