@@ -2566,14 +2566,12 @@ mod tests {
             ans.append(&mut x);
         }
 
-        itertools::zip_eq(x_host, ans)
-            .enumerate()
-            .for_each(|(index, (a, b))| {
-                assert!(
-                    is_approx(a, b),
-                    "Failed at index {index}, computed: {a} vs. answer: {b}"
-                );
-            });
+        for (index, (a, b)) in itertools::zip_eq(x_host, ans).enumerate() {
+            assert!(
+                is_approx(a, b),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
 
         Ok(())
     }
@@ -2663,32 +2661,19 @@ mod tests {
             ans.append(&mut x);
         }
 
-        // itertools::zip_eq(s_host.into_iter(), ans_stats.into_iter())
-        //     .enumerate()
-        //     .for_each(|(index, (a, b))| {
-        //         assert!(
-        //             is_approx_eps(a, b, 1.0e-3),
-        //             "Failed at index {index}, computed: {a} vs. answer: {b}"
-        //         );
-        //     });
+        for (index, (a, &b)) in itertools::zip_eq(x_host, ans.iter()).enumerate() {
+            assert!(
+                is_approx_eps(a, b, 1.0e-3),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
 
-        itertools::zip_eq(x_host, ans.iter())
-            .enumerate()
-            .for_each(|(index, (a, &b))| {
-                assert!(
-                    is_approx_eps(a, b, 1.0e-3),
-                    "Failed at index {index}, computed: {a} vs. answer: {b}"
-                );
-            });
-
-        itertools::zip_eq(x_rms_host, ans.iter())
-            .enumerate()
-            .for_each(|(index, (a, &b))| {
-                assert!(
-                    is_approx_eps(a, b, 1.0e-3),
-                    "Failed at index {index}, computed: {a} vs. answer: {b}"
-                );
-            });
+        for (index, (a, &b)) in itertools::zip_eq(x_rms_host, ans.iter()).enumerate() {
+            assert!(
+                is_approx_eps(a, b, 1.0e-3),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
 
         Ok(())
     }
@@ -2786,14 +2771,12 @@ mod tests {
             }
         }
 
-        itertools::zip_eq(output_host, ans)
-            .enumerate()
-            .for_each(|(index, (a, b))| {
-                assert!(
-                    is_approx_eps(a, b, 0.01),
-                    "Failed at index {index}, computed: {a} vs. answer: {b}"
-                );
-            });
+        for (index, (a, b)) in itertools::zip_eq(output_host, ans).enumerate() {
+            assert!(
+                is_approx_eps(a, b, 0.01),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
 
         Ok(())
     }
@@ -2806,126 +2789,129 @@ mod tests {
         };
         fastrand::seed(42);
 
-        const C: usize = 2560;
-        const R: usize = 2048;
-        const T: usize = 64;
         const INT8_BLOCK_SIZE: usize = TensorOp::INT8_BLOCK_SIZE as usize;
 
-        let matrix = vec![(); C * R]
-            .into_iter()
-            .map(|_| 10.0 * (fastrand::f32() - 0.5))
-            .map(f16::from_f32)
-            .collect_vec();
-        let input_f32 = vec![(); C * T]
-            .into_iter()
-            .map(|_| 10.0 * (fastrand::f32() - 0.5))
-            .collect_vec();
-        let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
+        fn test_matmul_int8_inner(context: &Context, c: usize, r: usize, t: usize) -> Result<()> {
+            let matrix = vec![(); c * r]
+                .into_iter()
+                .map(|_| 10.0 * (fastrand::f32() - 0.5))
+                .map(f16::from_f32)
+                .collect_vec();
+            let input_f32 = vec![(); c * t]
+                .into_iter()
+                .map(|_| 10.0 * (fastrand::f32() - 0.5))
+                .collect_vec();
+            let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
-        let (matrix_u8, min, max) = {
-            let mut matrix_u8: Vec<u8> = vec![0; matrix.len()];
-            let mut min = vec![f16::MAX; matrix.len().div_ceil(INT8_BLOCK_SIZE)];
-            let mut max = vec![f16::MIN; matrix.len().div_ceil(INT8_BLOCK_SIZE)];
+            let (matrix_u8, min, max) = {
+                let mut matrix_u8: Vec<u8> = vec![0; matrix.len()];
+                let mut min = vec![f16::MAX; matrix.len().div_ceil(INT8_BLOCK_SIZE)];
+                let mut max = vec![f16::MIN; matrix.len().div_ceil(INT8_BLOCK_SIZE)];
 
-            for (i, (min, max)) in min.iter_mut().zip_eq(max.iter_mut()).enumerate() {
-                let start = i * INT8_BLOCK_SIZE;
-                let end = start + INT8_BLOCK_SIZE;
-                let chunk = &matrix[start..end];
-                for value in chunk.iter() {
-                    *min = min.min(*value);
-                    *max = max.max(*value);
+                for (i, (min, max)) in min.iter_mut().zip_eq(max.iter_mut()).enumerate() {
+                    let start = i * INT8_BLOCK_SIZE;
+                    let end = start + INT8_BLOCK_SIZE;
+                    let chunk = &matrix[start..end];
+                    for value in chunk.iter() {
+                        *min = min.min(*value);
+                        *max = max.max(*value);
+                    }
+                    for (j, value) in chunk.iter().enumerate() {
+                        let value = value.to_f32();
+                        let min = min.to_f32();
+                        let max = max.to_f32();
+                        let value = (value - min) / (max - min);
+                        matrix_u8[start + j] = f32::round(value * 255.0) as u8;
+                    }
                 }
-                for (j, value) in chunk.iter().enumerate() {
-                    let value = value.to_f32();
-                    let min = min.to_f32();
-                    let max = max.to_f32();
-                    let value = (value - min) / (max - min);
-                    matrix_u8[start + j] = f32::round(value * 255.0) as u8;
-                }
-            }
 
-            (matrix_u8, min, max)
-        };
+                (matrix_u8, min, max)
+            };
 
-        let minmax_shape = Shape::new((C * R).div_ceil(INT8_BLOCK_SIZE) * 2, 1, 1, 1);
-        let matrix_shape = Shape::new(C, R, 1, 1);
-        let input_shape = Shape::new(C, T, 1, 1);
-        let output_shape = Shape::new(R, T, 1, 1);
+            let minmax_shape = Shape::new((c * r).div_ceil(INT8_BLOCK_SIZE) * 2, 1, 1, 1);
+            let matrix_shape = Shape::new(c, r, 1, 1);
+            let input_shape = Shape::new(c, t, 1, 1);
+            let output_shape = Shape::new(r, t, 1, 1);
 
-        let minmax_dev = context.tensor_init(minmax_shape);
-        let matrix_f16_dev = context.tensor_from_data(matrix_shape, matrix.clone())?;
+            let minmax_dev = context.tensor_init(minmax_shape);
+            let matrix_f16_dev = context.tensor_from_data(matrix_shape, matrix.clone())?;
 
-        let matrix_u8_dev = context.tensor_init(matrix_shape);
-        let input_dev: TensorGpu<_, _> =
-            context.tensor_from_data(input_shape, input_f16.clone())?;
-        let output_dev: TensorGpu<_, _> = context.tensor_init(output_shape);
+            let matrix_u8_dev = context.tensor_init(matrix_shape);
+            let input_dev = context.tensor_from_data(input_shape, input_f16.clone())?;
+            let output_dev = context.tensor_init(output_shape);
 
-        let ops = TensorOp::List(vec![
-            TensorOp::quantize_mat_int8(&matrix_f16_dev, &minmax_dev, &matrix_u8_dev)?,
-            TensorOp::matmul_mat_int8(
-                matrix_u8_dev.view(.., .., .., ..)?,
+            let ops = TensorOp::List(vec![TensorOp::quantize_mat_int8(
+                &matrix_f16_dev,
                 &minmax_dev,
-                input_dev.view(.., .., .., ..)?,
-                output_dev.view(.., .., .., ..)?,
-                Activation::None,
-            )?,
-        ]);
-        context.queue.submit(context.encode(&ops));
+                &matrix_u8_dev,
+            )?]);
+            context.queue.submit(context.encode(&ops));
+            let matrix_u8_host = matrix_u8_dev.back_in_place().to_vec();
 
-        let matrix_u8_host = matrix_u8_dev.back_in_place().to_vec();
-        let output_host = output_dev.back_in_place().to_vec();
-
-        // let mut truth = vec![0.0; output_host.len()];
-        // for token in 0..T {
-        //     for line in 0..R {
-        //         let matrix = &matrix[line * C..(line + 1) * C];
-        //         let input = &input_f16[token * C..(token + 1) * C];
-        //         let product = matrix
-        //             .iter()
-        //             .zip(input.iter())
-        //             .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-        //         truth[token * R + line] = product;
-        //     }
-        // }
-
-        let mut ans = vec![0.0; output_host.len()];
-        for token in 0..T {
-            for line in 0..R {
-                let matrix = &matrix_u8_host[line * C..(line + 1) * C];
-                let input = &input_f16[token * C..(token + 1) * C];
-                let product =
-                    matrix
-                        .iter()
-                        .zip_eq(input.iter())
-                        .enumerate()
-                        .fold(0.0f32, |acc, (i, x)| {
-                            let min = min[(line * C + i) / INT8_BLOCK_SIZE].to_f32();
-                            let max = max[(line * C + i) / INT8_BLOCK_SIZE].to_f32();
-                            let value = (*x.0 as f32) / 255.0;
-                            acc + (value * (max - min) + min) * x.1.to_f32()
-                        });
-                ans[token * R + line] = product;
-            }
-        }
-
-        itertools::zip_eq(matrix_u8_host, matrix_u8)
-            .enumerate()
-            .for_each(|(index, (a, b))| {
+            for (index, (&a, &b)) in itertools::zip_eq(&matrix_u8_host, &matrix_u8).enumerate() {
                 assert!(
                     a.abs_diff(b) < 2,
-                    // a == b,
                     "Failed at index {index}, computed: {a} vs. answer: {b}"
                 );
-            });
+            }
 
-        itertools::zip_eq(output_host, ans)
-            .enumerate()
-            .for_each(|(index, (a, b))| {
+            let mut ans = vec![0.0; t * r];
+            for token in 0..t {
+                for line in 0..r {
+                    let matrix = &matrix_u8_host[line * c..(line + 1) * c];
+                    let input = &input_f16[token * c..(token + 1) * c];
+                    let product = matrix.iter().zip_eq(input.iter()).enumerate().fold(
+                        0.0f32,
+                        |acc, (i, x)| {
+                            let min = min[(line * c + i) / INT8_BLOCK_SIZE].to_f32();
+                            let max = max[(line * c + i) / INT8_BLOCK_SIZE].to_f32();
+                            let value = (*x.0 as f32) / 255.0;
+                            acc + (value * (max - min) + min) * x.1.to_f32()
+                        },
+                    );
+                    ans[token * r + line] = product;
+                }
+            }
+
+            let ops = TensorOp::List(vec![TensorOp::matmul_vec_int8(
+                &matrix_u8_dev,
+                &minmax_dev,
+                &input_dev,
+                &output_dev,
+                Activation::None,
+            )?]);
+            context.queue.submit(context.encode(&ops));
+            let output_host = output_dev.back_in_place().to_vec();
+
+            for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
                 assert!(
                     is_approx_eps(a, b, 0.01),
                     "Failed at index {index}, computed: {a} vs. answer: {b}"
                 );
-            });
+            }
+
+            let ops = TensorOp::List(vec![TensorOp::matmul_mat_int8(
+                &matrix_u8_dev,
+                &minmax_dev,
+                &input_dev,
+                &output_dev,
+                Activation::None,
+            )?]);
+            context.queue.submit(context.encode(&ops));
+            let output_host = output_dev.back_in_place().to_vec();
+
+            for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
+                assert!(
+                    is_approx_eps(a, b, 0.01),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            }
+
+            Ok(())
+        }
+
+        test_matmul_int8_inner(&context, 2560, 2048, 64)?;
+        test_matmul_int8_inner(&context, 320, 64, 320)?;
 
         Ok(())
     }

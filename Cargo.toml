@@ -60,7 +60,7 @@ version = "0.9"
 default-features = false
 features = ["macros", "rt", "sync", "time"]
 optional = true
-version = "1.41"
+version = "1.42"
 
 [dev-dependencies]
 cbor4ii = { version = "0.3.2", features = ["half-f16", "serde1"] }
