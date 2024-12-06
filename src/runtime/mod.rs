@@ -275,14 +275,6 @@ impl Runtime for TokioRuntime<infer::InferInput, infer::InferOutput> {
     ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
         Box::pin(self.infer(input))
     }
-
-    #[cfg(target_arch = "wasm32")]
-    fn infer(
-        &self,
-        input: infer::InferInput,
-    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
-        Box::pin(self.infer(input))
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
