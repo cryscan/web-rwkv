@@ -144,7 +144,7 @@ let mut hooks = HookMap::default();
 for layer in 0..info.num_layer {
    let buffer = buffer.clone();
    hooks.insert(
-      v5::Hook::PostFfn(layer),
+      v6::Hook::PostFfn(layer),
       Box::new(
             move |frame: &v6::Frame<_>| -> Result<TensorOp, TensorError> {
                // figure out how many tokens this run has
