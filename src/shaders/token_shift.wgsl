@@ -91,7 +91,7 @@ fn token_shift(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     let cursor = compute_cursor(cursors[stack]);
     let token = stack - cursor.token;
 
-    if any(vec3<u32>(index, stack, count) > stride) {
+    if any(vec3<u32>(index, stack, count) >= stride) {
         return;
     }
 
