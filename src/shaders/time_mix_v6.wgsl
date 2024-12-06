@@ -72,6 +72,10 @@ fn time_mix(in: Input) {
     let head = in.tid.x / stride_head;
     let h = head * stride_head;
 
+    if index >= stride {
+        return;
+    }
+
     shared_u[in.tid.x] = time_first[index];
 
     for (var t = 0u; t < shape[2]; t += 1u) {

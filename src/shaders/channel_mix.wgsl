@@ -58,6 +58,10 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
 
     let bti = stack * stride + index;
 
+    if index >= stride {
+        return;
+    }
+
     if token + 1u == cursor.len {
 #ifdef FP16
         state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[bti]);
