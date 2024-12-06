@@ -72,70 +72,78 @@ fn time_mix(in: Input) {
     let head = in.tid.x / stride_head;
     let h = head * stride_head;
 
-    shared_u[in.tid.x] = time_first[index];
-    shared_w[in.tid.x] = time_decay[index];
+    if index < stride {
+        shared_u[in.tid.x] = time_first[index];
+        shared_w[in.tid.x] = time_decay[index];
+    }
 
     for (var t = 0u; t < shape[2]; t += 1u) {
         let bti = t * stride + index;
         let cursor = compute_cursor(cursors[t]);
 
+        if index < stride {
 #ifdef FP16
-        state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[(cursor.token + cursor.len - 1u) * stride + index]);
+            state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[(cursor.token + cursor.len - 1u) * stride + index]);
 #else
-        state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
-#endif
-
-        workgroupBarrier();
-#ifdef FP16
-        shared_k[in.tid.x] = unpack4x16float(k[bti]);
-        shared_r[in.tid.x] = unpack4x16float(r[bti]);
-#else
-        shared_k[in.tid.x] = k[bti];
-        shared_r[in.tid.x] = r[bti];
-#endif
-        workgroupBarrier();
-
-#ifdef FP16
-        let vv = unpack4x16float(v[bti]);
-#else
-        let vv = v[bti];
-#endif
-        var y = vec4<f32>(0.0);
-        for (var j = 0u; j < stride_head; j += 1u) {
-            let kk = shared_k[h + j];
-            let rr = shared_r[h + j];
-            let uu = shared_u[h + j];
-            let ww = shared_w[h + j];
-
-            var ss: array<vec4<f32>, 4>;
-            var kv: array<vec4<f32>, 4>;
-
-            let bji = compute_index(cursor.batch, j * 4u + 1u, index);
-
-            ss[0] = state[bji + stride * 0u];
-            ss[1] = state[bji + stride * 1u];
-            ss[2] = state[bji + stride * 2u];
-            ss[3] = state[bji + stride * 3u];
-
-            kv[0] = kk[0] * vv;
-            kv[1] = kk[1] * vv;
-            kv[2] = kk[2] * vv;
-            kv[3] = kk[3] * vv;
-
-            y += rr[0] * fma(vec4<f32>(uu[0]), kv[0], ss[0]);
-            y += rr[1] * fma(vec4<f32>(uu[1]), kv[1], ss[1]);
-            y += rr[2] * fma(vec4<f32>(uu[2]), kv[2], ss[2]);
-            y += rr[3] * fma(vec4<f32>(uu[3]), kv[3], ss[3]);
-
-            state[bji + stride * 0u] = fma(vec4<f32>(ww[0]), ss[0], kv[0]);
-            state[bji + stride * 1u] = fma(vec4<f32>(ww[1]), ss[1], kv[1]);
-            state[bji + stride * 2u] = fma(vec4<f32>(ww[2]), ss[2], kv[2]);
-            state[bji + stride * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
+            state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
+#endif               
         }
+
+        workgroupBarrier();
+        if index < stride {
 #ifdef FP16
-        x[bti] = pack4x16float(y);
+            shared_k[in.tid.x] = unpack4x16float(k[bti]);
+            shared_r[in.tid.x] = unpack4x16float(r[bti]);
 #else
-        x[bti] = y;
+            shared_k[in.tid.x] = k[bti];
+            shared_r[in.tid.x] = r[bti];
+#endif                
+        }
+        workgroupBarrier();
+
+        if index < stride {
+#ifdef FP16
+            let vv = unpack4x16float(v[bti]);
+#else
+            let vv = v[bti];
 #endif
+            var y = vec4<f32>(0.0);
+            for (var j = 0u; j < stride_head; j += 1u) {
+                let kk = shared_k[h + j];
+                let rr = shared_r[h + j];
+                let uu = shared_u[h + j];
+                let ww = shared_w[h + j];
+
+                var ss: array<vec4<f32>, 4>;
+                var kv: array<vec4<f32>, 4>;
+
+                let bji = compute_index(cursor.batch, j * 4u + 1u, index);
+
+                ss[0] = state[bji + stride * 0u];
+                ss[1] = state[bji + stride * 1u];
+                ss[2] = state[bji + stride * 2u];
+                ss[3] = state[bji + stride * 3u];
+
+                kv[0] = kk[0] * vv;
+                kv[1] = kk[1] * vv;
+                kv[2] = kk[2] * vv;
+                kv[3] = kk[3] * vv;
+
+                y += rr[0] * fma(vec4<f32>(uu[0]), kv[0], ss[0]);
+                y += rr[1] * fma(vec4<f32>(uu[1]), kv[1], ss[1]);
+                y += rr[2] * fma(vec4<f32>(uu[2]), kv[2], ss[2]);
+                y += rr[3] * fma(vec4<f32>(uu[3]), kv[3], ss[3]);
+
+                state[bji + stride * 0u] = fma(vec4<f32>(ww[0]), ss[0], kv[0]);
+                state[bji + stride * 1u] = fma(vec4<f32>(ww[1]), ss[1], kv[1]);
+                state[bji + stride * 2u] = fma(vec4<f32>(ww[2]), ss[2], kv[2]);
+                state[bji + stride * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
+            }
+#ifdef FP16
+            x[bti] = pack4x16float(y);
+#else
+            x[bti] = y;
+#endif   
+        }
     }
 }
