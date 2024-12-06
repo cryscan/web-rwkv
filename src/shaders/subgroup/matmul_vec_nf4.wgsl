@@ -103,6 +103,7 @@ fn matmul(
     if index == 0u {
         q = quant;
     }
+    workgroupBarrier();
 
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
