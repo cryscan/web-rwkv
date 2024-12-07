@@ -654,6 +654,60 @@ impl TensorOp {
         })
     }
 
+    /// L2 normalization applied on `x`.
+    /// - `x` shape: `[C, T, B]`.
+    pub fn l2_norm(x: &TensorGpu<impl Float, ReadWrite>, eps: f32) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let shape = x.shape();
+
+        let context = x.context();
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            "l2_norm",
+            include_str!("../shaders/rms_norm.wgsl"),
+            "l2_norm",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(x, None)
+                .f32("EPS", eps),
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            "l2_norm",
+            include_str!("../shaders/subgroup/rms_norm.wgsl"),
+            "l2_norm",
+            None,
+            Macros::new()
+                .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(x, None)
+                .f32("EPS", eps),
+        );
+
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [1, shape[1] as u32, shape[2] as u32],
+        })
+    }
+
     /// Fp32 matrix-vector multiplication.
     /// - `matrix` shape: `[C, R, B]`.
     /// - `input` shape: `[C, T, B]`.

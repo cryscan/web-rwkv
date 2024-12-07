@@ -7,9 +7,6 @@
 #else
 @group(0) @binding(3) var<storage, read_write> x: array<vec4<f32>>;         // (B, T, C)
 #endif
-#ifdef STATS
-@group(0) @binding(4) var<storage, read_write> s: array<vec4<f32>>;         // (B, T, 4)
-#endif
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 var<workgroup> mean: f32;
@@ -116,6 +113,49 @@ fn rms_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 #else
         let value = x[bb + i] * rms;
         x[bb + i] = fma(value, unpack4x16float(w[i]), unpack4x16float(b[i]));
+#endif
+    }
+}
+
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
+fn l2_norm(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+    let stride = shape[0] / 4u;
+    let index = invocation_id.x;
+    let token = invocation_id.y;
+    let batch = invocation_id.z;
+
+    let bb = (batch * shape[1] + token) * stride;
+
+    var _sum_4: vec4<f32>;
+    for (var i = index; i < stride; i += BLOCK_SIZE) {
+#ifdef FP16
+        let value = unpack4x16float(x[bb + i]);
+#else
+        let value = x[bb + i];
+#endif
+        _sum_4 += value * value;
+    }
+    sketch[index] = _sum_4;
+    workgroupBarrier();
+
+    reduce_sum(index, 64u);
+    reduce_sum(index, 32u);
+    reduce_sum(index, 16u);
+    reduce_sum(index, 8u);
+    reduce_sum(index, 4u);
+    reduce_sum(index, 2u);
+    reduce_sum(index, 1u);
+
+    if index == 0u {
+        l2 = inverseSqrt(dot(sketch[0], vec4<f32>(1.0)) + EPS);
+    }
+    workgroupBarrier();
+
+    for (var i = index; i < stride; i += BLOCK_SIZE) {
+#ifdef FP16
+        x[bb + i] = pack4x16float(unpack4x16float(x[bb + i]) * l2);
+#else
+        x[bb + i] = x[bb + i] * l2;
 #endif
     }
 }
