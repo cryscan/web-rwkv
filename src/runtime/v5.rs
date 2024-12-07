@@ -813,7 +813,7 @@ fn dispatch_layer<F: Float>(
         TensorOp::blit(&buffer.aux_x, &buffer.att_x)?,
         hook_op(Hook::PostAttTimeMix(index))?,
         hook_op(Hook::PreAttGate(index))?,
-        TensorOp::silu(&buffer.att_g, &buffer.att_x)?,
+        TensorOp::mul_activate(&buffer.att_g, &buffer.att_x, Activation::Silu)?,
         hook_op(Hook::PostAttGate(index))?,
         hook_op(Hook::PreAttOut(index))?,
         layer.att.w_o.matmul_op(

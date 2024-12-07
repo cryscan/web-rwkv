@@ -22,26 +22,7 @@ struct View {
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 
-fn squared_relu(x: vec4<f32>) -> vec4<f32> {
-    let p = max(x, vec4<f32>(0.0));
-    return p * p;
-}
-
-fn stable_exp(x: vec4<f32>) -> vec4<f32> {
-    return exp(-exp(x));
-}
-
-fn opposite_exp(x: vec4<f32>) -> vec4<f32> {
-    return -exp(x);
-}
-
-fn softplus(x: vec4<f32>) -> vec4<f32> {
-    return log(1.0 + exp(x));
-}
-
-fn sigmoid(x: vec4<f32>) -> vec4<f32> {
-    return 1.0 / (1.0 + exp(-x));
-}
+// ACTIVATION_DEFINE
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x >> 2u;
