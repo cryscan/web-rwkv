@@ -26,6 +26,27 @@ const INT8_BLOCK_STEP: u32 = INT8_BLOCK_SIZE / 4u;
 
 var<workgroup> sketch: array<vec4<f32>, BLOCK_SIZE>;
 
+fn squared_relu(x: vec4<f32>) -> vec4<f32> {
+    let p = max(x, vec4<f32>(0.0));
+    return p * p;
+}
+
+fn stable_exp(x: vec4<f32>) -> vec4<f32> {
+    return exp(-exp(x));
+}
+
+fn opposite_exp(x: vec4<f32>) -> vec4<f32> {
+    return -exp(x);
+}
+
+fn softplus(x: vec4<f32>) -> vec4<f32> {
+    return log(1.0 + exp(x));
+}
+
+fn sigmoid(x: vec4<f32>) -> vec4<f32> {
+    return 1.0 / (1.0 + exp(-x));
+}
+
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x >> 2u;
     let offset = vec3<u32>(view.offset.zy, view.offset.x >> 2u);
@@ -43,11 +64,6 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 fn unpack_minmax(index: u32) -> vec2<f32> {
     let i = index / INT8_BLOCK_STEP;
     return unpack2x16float(minmax[i]);
-}
-
-fn squared_relu(x: vec4<f32>) -> vec4<f32> {
-    let p = max(x, vec4<f32>(0.0));
-    return p * p;
 }
 
 fn reduce_sum(index: u32, stride: u32) {

@@ -40,6 +40,27 @@ var<workgroup> sb: array<array<mat2x4<f32>, BLOCK_SIZE>, TILE_SIZE>;
 #endif
 var<workgroup> q: array<vec4<f32>, 4u>;
 
+fn squared_relu(x: vec4<f32>) -> vec4<f32> {
+    let p = max(x, vec4<f32>(0.0));
+    return p * p;
+}
+
+fn stable_exp(x: vec4<f32>) -> vec4<f32> {
+    return exp(-exp(x));
+}
+
+fn opposite_exp(x: vec4<f32>) -> vec4<f32> {
+    return -exp(x);
+}
+
+fn softplus(x: vec4<f32>) -> vec4<f32> {
+    return log(1.0 + exp(x));
+}
+
+fn sigmoid(x: vec4<f32>) -> vec4<f32> {
+    return 1.0 / (1.0 + exp(-x));
+}
+
 fn compute_index(view: View, batch: u32, token: u32, index: u32, step: u32) -> u32 {
     let stride = view.stride.x / step;
     let offset = vec3<u32>(view.offset.zy, view.offset.x / step);
@@ -87,11 +108,6 @@ fn unpack_matrix_1(v: u32) -> vec4<f32> {
         q[i.z >> 2u][i.z & 3u],
         q[i.w >> 2u][i.w & 3u],
     );
-}
-
-fn squared_relu(x: vec4<f32>) -> vec4<f32> {
-    let p = max(x, vec4<f32>(0.0));
-    return p * p;
 }
 
 @compute @workgroup_size(BLOCK_SIZE, BLOCK_SIZE, 1)

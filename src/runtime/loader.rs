@@ -14,7 +14,7 @@ use crate::{
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::TensorOp,
+        ops::{Activation, TensorOp},
         shape::{Shape, TensorDimension},
         TensorCpu, TensorError, TensorGpu, TensorInit, TensorInto, TensorReshape, TensorShape,
     },
@@ -385,7 +385,7 @@ impl<R: Reader> Loader<R> {
             ops.push(op);
         }
 
-        let op = TensorOp::opposite_exp(&tensor)?;
+        let op = TensorOp::activate(&tensor, Activation::OppositeExp)?;
         ops.push(op);
 
         context.queue.submit(context.encode(&TensorOp::List(ops)));
@@ -423,7 +423,7 @@ impl<R: Reader> Loader<R> {
             ops.push(op);
         }
 
-        let op = TensorOp::stable_exp(&tensor)?;
+        let op = TensorOp::activate(&tensor, Activation::StableExp)?;
         ops.push(op);
 
         context.queue.submit(context.encode(&TensorOp::List(ops)));

@@ -1,6 +1,7 @@
 use std::{hash::Hash, sync::Arc};
 
 use half::f16;
+use serde::{Deserialize, Serialize};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, CommandBuffer, CommandEncoder, ComputePass,
 };
@@ -143,12 +144,24 @@ impl crate::context::Context {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Activation {
     #[default]
+    #[serde(rename = "")]
     None,
     SquaredRelu,
     Tanh,
+    StableExp,
+    OppositeExp,
+    Softplus,
+    Sigmoid,
+}
+
+impl std::fmt::Display for Activation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(serde_variant::to_variant_name(self).unwrap())
+    }
 }
 
 impl Macros {
@@ -188,12 +201,7 @@ impl Macros {
     }
 
     pub fn activate(mut self, name: impl Into<String>, value: Activation) -> Self {
-        let name = name.into();
-        match value {
-            Activation::None => self.insert(name, "".into()),
-            Activation::SquaredRelu => self.insert(name, "squared_relu".into()),
-            Activation::Tanh => self.insert(name, "tanh".into()),
-        };
+        self.insert(name.into(), value.to_string());
         self
     }
 
@@ -1705,131 +1713,25 @@ impl TensorOp {
         })
     }
 
-    pub fn tanh(x: &TensorGpu<impl Float, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn activate<'a, F: Float>(
+        x: impl Into<TensorGpuView<'a, F>>,
+        active: Activation,
+    ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
+
+        let x: TensorGpuView<_> = x.into();
 
         let shape = x.shape();
         let context = x.context();
         let pipeline = context.checkout_pipeline(
-            "tanh",
+            "activate",
             include_str!("../shaders/activation.wgsl"),
-            "act_tanh",
+            "act",
             None,
-            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
-        );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: x.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
-    pub fn opposite_exp(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        const BLOCK_SIZE: u32 = 128;
-
-        let shape = x.shape();
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
-            "opposite_exp",
-            include_str!("../shaders/activation.wgsl"),
-            "opposite_exp",
-            None,
-            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
-        );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: x.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
-    pub fn stable_exp(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        const BLOCK_SIZE: u32 = 128;
-
-        let shape = x.shape();
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
-            "stable_exp",
-            include_str!("../shaders/activation.wgsl"),
-            "stable_exp",
-            None,
-            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
-        );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: x.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
-    pub fn squared_relu(x: &TensorGpu<f32, ReadWrite>) -> Result<Self, TensorError> {
-        const BLOCK_SIZE: u32 = 128;
-
-        let shape = x.shape();
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
-            "squared_relu",
-            include_str!("../shaders/activation.wgsl"),
-            "squared_relu",
-            None,
-            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(&x, None)
+                .activate("ACT", active),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,

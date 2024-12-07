@@ -847,7 +847,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostAttTimeDecayAdapt(index))?,
         TensorOp::add(&layer.att.time_decay, &buffer.time_decay)?,
         hook_op(Hook::PreAttTimeDecayActivate(index))?,
-        TensorOp::stable_exp(&buffer.time_decay)?,
+        TensorOp::activate(&buffer.time_decay, Activation::StableExp)?,
         hook_op(Hook::PostAttTimeDecayActivate(index))?,
         hook_op(Hook::PreAttTimeMix(index))?,
         TensorOp::blit(&buffer.att_x, &buffer.aux_x)?,
