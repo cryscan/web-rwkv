@@ -23,7 +23,7 @@ impl Model {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AdapterInfo {
+pub struct CustomInfo {
     pub w: usize,
     pub a: usize,
     pub g: usize,

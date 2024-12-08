@@ -7,7 +7,7 @@ use regex::Regex;
 use safetensors::{Dtype, SafeTensorError, SafeTensors};
 use web_rwkv_derive::{Deref, DerefMut};
 
-use super::model::{ModelAdapterInfo, ModelError, ModelInfo, ModelVersion, Quant};
+use super::model::{ModelCustomInfo, ModelError, ModelInfo, ModelVersion, Quant};
 use crate::{
     context::Context,
     num::Scalar,
@@ -199,8 +199,16 @@ impl<R: Reader> Loader<R> {
 
         let embed = model.shape("emb.weight")?;
         let ffn = model.shape("blocks.0.ffn.key.weight")?;
-        let time_first = model.shape("blocks.0.att.time_first")?;
 
+        let v4 = [
+            "blocks.0.att.time_decay",
+            "blocks.0.att.time_first",
+            "blocks.0.att.time_mix_k",
+            "blocks.0.att.time_mix_v",
+            "blocks.0.att.time_mix_r",
+        ]
+        .into_iter()
+        .all(|name| model.contains(name));
         let v5 = [
             "blocks.0.att.gate.weight",
             "blocks.0.att.ln_x.weight",
@@ -224,40 +232,63 @@ impl<R: Reader> Loader<R> {
         ]
         .into_iter()
         .all(|name| model.contains(name));
+        let v7 = [
+            "blocks.0.att.x_r",
+            "blocks.0.att.x_w",
+            "blocks.0.att.x_k",
+            "blocks.0.att.x_v",
+            "blocks.0.att.x_a",
+            "blocks.0.att.x_g",
+            "blocks.0.att.w0",
+            "blocks.0.att.w1",
+            "blocks.0.att.w2",
+            "blocks.0.att.a0",
+            "blocks.0.att.a1",
+            "blocks.0.att.a2",
+            "blocks.0.att.g1",
+            "blocks.0.att.g2",
+            "blocks.0.att.r_k",
+            "blocks.0.att.k_k",
+            "blocks.0.att.k_a",
+        ]
+        .into_iter()
+        .all(|name| model.contains(name));
 
-        let version = match (v5, v6) {
-            (false, false) => ModelVersion::V4,
-            (true, false) => ModelVersion::V5,
-            (true, true) => ModelVersion::V6,
+        let version = match (v4, v5, v6, v7) {
+            (true, false, false, false) => ModelVersion::V4,
+            (_, true, false, false) => ModelVersion::V5,
+            (_, _, true, false) => ModelVersion::V6,
+            (_, _, _, true) => ModelVersion::V7,
             _ => return Err(ModelError::InvalidVersion.into()),
         };
 
         let num_emb = embed[1];
         let num_hidden = ffn[0];
         let num_vocab = embed[0];
-        let num_head = time_first[0];
 
-        let adapter = match version {
+        let num_head = match version {
+            ModelVersion::V4 => 1,
+            ModelVersion::V5 | ModelVersion::V6 => model.shape("blocks.0.att.time_first")?[0],
+            ModelVersion::V7 => model.shape("blocks.0.att.r_k")?[0],
+        };
+
+        let custom = match version {
             ModelVersion::V6 => {
-                let time_mix = model
-                    .shape("blocks.0.att.time_mix_w1")
-                    .map(|shape| shape[0] / 5)?;
-                let time_decay = model
-                    .shape("blocks.0.att.time_decay_w1")
-                    .map(|shape| shape[0])?;
-                ModelAdapterInfo::V6(super::v6::AdapterInfo {
+                let time_mix = model.shape("blocks.0.att.time_mix_w1")?[0] / 5;
+                let time_decay = model.shape("blocks.0.att.time_decay_w1")?[0];
+                ModelCustomInfo::V6(super::v6::CustomInfo {
                     time_mix,
                     time_decay,
                 })
             }
             ModelVersion::V7 => {
-                let w = model.shape("blocks.0.att.w0").map(|shape| shape[0])?;
-                let a = model.shape("blocks.0.att.a0").map(|shape| shape[0])?;
-                let g = model.shape("blocks.0.att.g0").map(|shape| shape[0])?;
-                let v = model.shape("blocks.1.att.v0").map(|shape| shape[0])?;
-                ModelAdapterInfo::V7(super::v7::AdapterInfo { w, a, g, v })
+                let w = model.shape("blocks.0.att.w1").map(|shape| shape[0])?;
+                let a = model.shape("blocks.0.att.a1").map(|shape| shape[0])?;
+                let g = model.shape("blocks.0.att.g1").map(|shape| shape[0])?;
+                let v = model.shape("blocks.1.att.v1").map(|shape| shape[0])?;
+                ModelCustomInfo::V7(super::v7::CustomInfo { w, a, g, v })
             }
-            _ => ModelAdapterInfo::None,
+            _ => ModelCustomInfo::None,
         };
 
         Ok(ModelInfo {
@@ -267,7 +298,7 @@ impl<R: Reader> Loader<R> {
             num_hidden,
             num_vocab,
             num_head,
-            adapter,
+            custom,
         })
     }
 

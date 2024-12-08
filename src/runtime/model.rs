@@ -44,7 +44,7 @@ pub struct ModelInfo {
     pub num_vocab: usize,
     pub num_head: usize,
     #[wasm_bindgen(skip)]
-    pub adapter: ModelAdapterInfo,
+    pub custom: ModelCustomInfo,
 }
 
 impl ModelInfo {
@@ -73,11 +73,11 @@ impl ModelInfo {
 
 /// Info about the model's inner LoRA dimensions.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ModelAdapterInfo {
+pub enum ModelCustomInfo {
     #[default]
     None,
-    V6(super::v6::AdapterInfo),
-    V7(super::v7::AdapterInfo),
+    V6(super::v6::CustomInfo),
+    V7(super::v7::CustomInfo),
 }
 
 pub trait AsAny {

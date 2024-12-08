@@ -14,7 +14,7 @@ use wgpu::CommandBuffer;
 use super::{
     infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
-    model::{AsAny, EmbedDevice, ModelAdapterInfo, ModelBuilder, ModelInfo, Quant, State as _},
+    model::{AsAny, EmbedDevice, ModelBuilder, ModelCustomInfo, ModelInfo, Quant, State as _},
     Dispatcher, Job,
 };
 use crate::{
@@ -46,8 +46,10 @@ impl Model {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AdapterInfo {
+pub struct CustomInfo {
+    /// Token shift LoRA adapter size.
     pub time_mix: usize,
+    /// Time decay LoRA adapter size.
     pub time_decay: usize,
 }
 
@@ -293,7 +295,7 @@ pub struct Runtime<F: Float> {
 
 impl<F: Float> Runtime<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
-        let ModelAdapterInfo::V6(adapter) = info.adapter else {
+        let ModelCustomInfo::V6(adapter) = info.custom else {
             unreachable!()
         };
 
