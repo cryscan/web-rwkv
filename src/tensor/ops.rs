@@ -536,7 +536,7 @@ impl TensorOp {
         #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "recenter",
-            include_str!("../shaders/rms_norm.wgsl"),
+            include_str!("../shaders/normalize.wgsl"),
             "recenter",
             None,
             Macros::new()
@@ -547,7 +547,7 @@ impl TensorOp {
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
             "recenter",
-            include_str!("../shaders/subgroup/rms_norm.wgsl"),
+            include_str!("../shaders/subgroup/normalize.wgsl"),
             "recenter",
             None,
             Macros::new()
@@ -603,7 +603,7 @@ impl TensorOp {
         #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "rms_norm",
-            include_str!("../shaders/rms_norm.wgsl"),
+            include_str!("../shaders/normalize.wgsl"),
             "rms_norm",
             None,
             Macros::new()
@@ -614,7 +614,7 @@ impl TensorOp {
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
             "rms_norm",
-            include_str!("../shaders/subgroup/rms_norm.wgsl"),
+            include_str!("../shaders/subgroup/normalize.wgsl"),
             "rms_norm",
             None,
             Macros::new()
@@ -665,7 +665,7 @@ impl TensorOp {
         #[cfg(not(feature = "subgroup-ops"))]
         let pipeline = context.checkout_pipeline(
             "l2_norm",
-            include_str!("../shaders/rms_norm.wgsl"),
+            include_str!("../shaders/normalize.wgsl"),
             "l2_norm",
             None,
             Macros::new()
@@ -676,7 +676,7 @@ impl TensorOp {
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
             "l2_norm",
-            include_str!("../shaders/subgroup/rms_norm.wgsl"),
+            include_str!("../shaders/subgroup/normalize.wgsl"),
             "l2_norm",
             None,
             Macros::new()
@@ -2501,12 +2501,9 @@ mod tests {
         Ok(context)
     }
 
-    #[test]
-    fn test_softmax() -> Result<()> {
-        let context = match pollster::block_on(create_context()) {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
+    #[tokio::test]
+    async fn test_softmax() -> Result<()> {
+        let context = create_context().await?;
         fastrand::seed(42);
 
         const C: usize = 1000;
@@ -2523,7 +2520,7 @@ mod tests {
 
         context.queue.submit(context.encode(&softmax));
 
-        let x_host = x_dev.back_in_place().to_vec();
+        let x_host = x_dev.back().await.to_vec();
 
         let mut ans = vec![];
         for x in &x.into_iter().chunks(C) {
@@ -2545,12 +2542,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_layer_norm() -> Result<()> {
-        let context = match pollster::block_on(create_context()) {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
+    #[tokio::test]
+    async fn test_layer_norm() -> Result<()> {
+        let context = create_context().await?;
         fastrand::seed(42);
 
         const C: usize = 1000;
@@ -2583,8 +2577,8 @@ mod tests {
         let layer_norm = TensorOp::layer_norm(&w_dev, &b_dev, &x_dev, EPS)?;
         context.queue.submit(context.encode(&layer_norm));
 
-        let x_host = x_dev.back_in_place().to_vec();
-        // let s_host = s_dev.back_in_place().to_vec();
+        let x_host = x_dev.back().await.to_vec();
+        // let s_host = s_dev.back().await.to_vec();
 
         // test recenter and rms norm
         let shape = Shape::new(C, T, B, 1);
@@ -2595,7 +2589,7 @@ mod tests {
         ]);
         context.queue.submit(context.encode(&ops));
 
-        let x_rms_host = x_dev.back_in_place().to_vec();
+        let x_rms_host = x_dev.back().await.to_vec();
 
         let mut ans = vec![];
         // let mut ans_stats = vec![];
@@ -2647,120 +2641,127 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_matmul() -> Result<()> {
-        let context = match pollster::block_on(create_context()) {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
+    #[tokio::test]
+    async fn test_matmul() -> Result<()> {
+        let context = create_context().await?;
         fastrand::seed(42);
-        // let mut profiler = GpuProfiler::new(&context.adapter, &context.device, &context.queue, 1);
 
-        const C: usize = 2560;
-        const R: usize = 2048;
-        const T: usize = 32;
-        const B: usize = 2;
+        async fn test_matmul_inner(
+            context: &Context,
+            c: usize,
+            r: usize,
+            t: usize,
+            b: usize,
+        ) -> Result<()> {
+            // let mut profiler = GpuProfiler::new(&context.adapter, &context.device, &context.queue, 1);
 
-        let matrix = vec![(); C * R * B]
-            .into_iter()
-            .map(|_| 10.0 * (fastrand::f32() - 0.5))
-            .map(f16::from_f32)
-            .collect_vec();
-        let input_f32 = vec![(); C * T * B]
-            .into_iter()
-            .map(|_| 10.0 * (fastrand::f32() - 0.5))
-            .collect_vec();
-        let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
+            let matrix = vec![(); c * r * b]
+                .into_iter()
+                .map(|_| 10.0 * (fastrand::f32() - 0.5))
+                .map(f16::from_f32)
+                .collect_vec();
+            let input_f32 = vec![(); c * t * b]
+                .into_iter()
+                .map(|_| 10.0 * (fastrand::f32() - 0.5))
+                .collect_vec();
+            let input_f16 = input_f32.iter().copied().map(f16::from_f32).collect_vec();
 
-        let matrix_shape = Shape::new(C, R, B, 1);
-        let input_shape = Shape::new(C, T, B, 1);
-        let output_shape = Shape::new(R, T, 2 * B, 1);
+            let matrix_shape = Shape::new(c, r, b, 1);
+            let input_shape = Shape::new(c, t, b, 1);
+            let output_shape = Shape::new(r, t, 2 * b, 1);
 
-        let matrix_dev = context.tensor_from_data(matrix_shape, matrix.clone())?;
-        let input_f32_dev: TensorGpu<_, _> =
-            context.tensor_from_data(input_shape, input_f32.clone())?;
-        let input_f16_dev: TensorGpu<f16, _> = context.tensor_init(input_shape);
-        let output_dev: TensorGpu<_, _> = context.tensor_init(output_shape);
+            let matrix_dev = context.tensor_from_data(matrix_shape, matrix.clone())?;
+            let input_f32_dev = context.tensor_from_data(input_shape, input_f32.clone())?;
+            let input_f16_dev: TensorGpu<f16, _> = context.tensor_init(input_shape);
+            let output_dev: TensorGpu<_, _> = context.tensor_init(output_shape);
 
-        let ops = TensorOp::List(vec![
-            TensorOp::blit(
-                input_f32_dev.view(.., .., .., ..)?,
-                input_f16_dev.view(.., .., .., ..)?,
-            )?,
-            TensorOp::matmul_vec_fp16(
-                &matrix_dev,
-                input_f32_dev.view(.., .., .., ..)?,
-                output_dev.view(.., .., 0..B, ..)?,
-                Activation::None,
-            )?,
-            TensorOp::matmul_mat_fp16(
-                matrix_dev.view(.., .., .., ..)?,
-                input_f16_dev.view(.., .., .., ..)?,
-                output_dev.view(.., .., B.., ..)?,
-                Activation::None,
-            )?,
-        ]);
+            let ops = TensorOp::List(vec![
+                TensorOp::blit(&input_f32_dev, &input_f16_dev)?,
+                TensorOp::matmul_vec_fp16(
+                    &matrix_dev,
+                    &input_f32_dev,
+                    output_dev.view(.., .., 0..b, ..)?,
+                    Activation::None,
+                )?,
+                TensorOp::matmul_mat_fp16(
+                    &matrix_dev,
+                    &input_f16_dev,
+                    output_dev.view(.., .., b.., ..)?,
+                    Activation::None,
+                )?,
+            ]);
 
-        // profiler.resolve_queries(&mut encoder);
-        context.queue.submit(context.encode(&ops));
+            // profiler.resolve_queries(&mut encoder);
+            context.queue.submit(context.encode(&ops));
 
-        let output_host = output_dev.back_in_place();
-        let output_host = Vec::from(output_host);
+            let output_host = output_dev.back().await;
+            let output_host = Vec::from(output_host);
 
-        // profiler.end_frame().unwrap();
-        context.device.poll(wgpu::MaintainBase::Wait);
+            // profiler.end_frame().unwrap();
+            context.device.poll(wgpu::MaintainBase::Wait);
 
-        // if let Some(results) = profiler.process_finished_frame() {
-        //     wgpu_profiler::chrometrace::write_chrometrace(
-        //         std::path::Path::new(&format!("./trace/matmul_{T}.json")),
-        //         &results,
-        //     )
-        //     .expect("failed to write trace");
-        // }
+            // if let Some(results) = profiler.process_finished_frame() {
+            //     wgpu_profiler::chrometrace::write_chrometrace(
+            //         std::path::Path::new(&format!("./trace/matmul_{T}.json")),
+            //         &results,
+            //     )
+            //     .expect("failed to write trace");
+            // }
 
-        let mut ans = vec![0.0; output_host.len()];
-        for batch in 0..B {
-            for token in 0..T {
-                for line in 0..R {
-                    let matrix = &matrix[((batch * R + line) * C)..((batch * R + line) + 1) * C];
-                    let input = &input_f32[(batch * T + token) * C..((batch * T + token) + 1) * C];
-                    let product = matrix
-                        .iter()
-                        .zip(input.iter())
-                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
-                    ans[(batch * T + token) * R + line] = product;
+            let mut ans = vec![0.0; output_host.len()];
+            for batch in 0..b {
+                for token in 0..t {
+                    for line in 0..r {
+                        let matrix =
+                            &matrix[((batch * r + line) * c)..((batch * r + line) + 1) * c];
+                        let input =
+                            &input_f32[(batch * t + token) * c..((batch * t + token) + 1) * c];
+                        let product = matrix
+                            .iter()
+                            .zip(input.iter())
+                            .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
+                        ans[(batch * t + token) * r + line] = product;
 
-                    let input = &input_f16[(batch * T + token) * C..((batch * T + token) + 1) * C];
-                    let product = matrix
-                        .iter()
-                        .zip(input.iter())
-                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-                    ans[((B + batch) * T + token) * R + line] = product;
+                        let input =
+                            &input_f16[(batch * t + token) * c..((batch * t + token) + 1) * c];
+                        let product = matrix
+                            .iter()
+                            .zip(input.iter())
+                            .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
+                        ans[((b + batch) * t + token) * r + line] = product;
+                    }
                 }
             }
+
+            for (index, (a, b)) in itertools::zip_eq(output_host, ans).enumerate() {
+                assert!(
+                    is_approx_eps(a, b, 0.01),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            }
+
+            Ok(())
         }
 
-        for (index, (a, b)) in itertools::zip_eq(output_host, ans).enumerate() {
-            assert!(
-                is_approx_eps(a, b, 0.01),
-                "Failed at index {index}, computed: {a} vs. answer: {b}"
-            );
-        }
+        test_matmul_inner(&context, 2560, 2048, 32, 2).await?;
+        test_matmul_inner(&context, 320, 64, 320, 2).await?;
 
         Ok(())
     }
 
-    #[test]
-    fn test_matmul_int8() -> Result<()> {
-        let context = match pollster::block_on(create_context()) {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
+    #[tokio::test]
+    async fn test_matmul_int8() -> Result<()> {
+        let context = create_context().await?;
         fastrand::seed(42);
 
         const INT8_BLOCK_SIZE: usize = TensorOp::INT8_BLOCK_SIZE as usize;
 
-        fn test_matmul_int8_inner(context: &Context, c: usize, r: usize, t: usize) -> Result<()> {
+        async fn test_matmul_int8_inner(
+            context: &Context,
+            c: usize,
+            r: usize,
+            t: usize,
+        ) -> Result<()> {
             let matrix = vec![(); c * r]
                 .into_iter()
                 .map(|_| 10.0 * (fastrand::f32() - 0.5))
@@ -2815,7 +2816,7 @@ mod tests {
                 &matrix_u8_dev,
             )?]);
             context.queue.submit(context.encode(&ops));
-            let matrix_u8_host = matrix_u8_dev.back_in_place().to_vec();
+            let matrix_u8_host = matrix_u8_dev.back().await.to_vec();
 
             for (index, (&a, &b)) in itertools::zip_eq(&matrix_u8_host, &matrix_u8).enumerate() {
                 assert!(
@@ -2850,7 +2851,7 @@ mod tests {
                 Activation::None,
             )?]);
             context.queue.submit(context.encode(&ops));
-            let output_host = output_dev.back_in_place().to_vec();
+            let output_host = output_dev.back().await.to_vec();
 
             for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
                 assert!(
@@ -2867,7 +2868,7 @@ mod tests {
                 Activation::None,
             )?]);
             context.queue.submit(context.encode(&ops));
-            let output_host = output_dev.back_in_place().to_vec();
+            let output_host = output_dev.back().await.to_vec();
 
             for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
                 assert!(
@@ -2879,18 +2880,15 @@ mod tests {
             Ok(())
         }
 
-        test_matmul_int8_inner(&context, 2560, 2048, 64)?;
-        test_matmul_int8_inner(&context, 320, 64, 320)?;
+        test_matmul_int8_inner(&context, 2560, 2048, 64).await?;
+        test_matmul_int8_inner(&context, 320, 64, 320).await?;
 
         Ok(())
     }
 
-    #[test]
-    fn test_matmul_nf4() -> Result<()> {
-        let context = match pollster::block_on(create_context()) {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
+    #[tokio::test]
+    async fn test_matmul_nf4() -> Result<()> {
+        let context = create_context().await?;
         fastrand::seed(42);
 
         const NF4_BLOCK_SIZE: usize = TensorOp::NF4_BLOCK_SIZE as usize;
@@ -2901,7 +2899,12 @@ mod tests {
             (-2.0 * u.ln()).sqrt() * (2.0 * PI * v).cos()
         }
 
-        fn test_matmul_nf4_inner(context: &Context, c: usize, r: usize, t: usize) -> Result<()> {
+        async fn test_matmul_nf4_inner(
+            context: &Context,
+            c: usize,
+            r: usize,
+            t: usize,
+        ) -> Result<()> {
             let matrix = vec![(); c * r]
                 .into_iter()
                 .map(|_| normal())
@@ -2987,8 +2990,8 @@ mod tests {
                 &matrix_u4_dev,
             )?]);
             context.queue.submit(context.encode(&ops));
-            let matrix_u4_host = matrix_u4_dev.back_in_place().to_vec();
-            let absmax_host = absmax_dev.back_in_place().to_vec();
+            let matrix_u4_host = matrix_u4_dev.back().await.to_vec();
+            let absmax_host = absmax_dev.back().await.to_vec();
 
             for (index, (&a, &b)) in itertools::zip_eq(&absmax_host, &absmax).enumerate() {
                 assert!(
@@ -3044,7 +3047,7 @@ mod tests {
                 Activation::None,
             )?]);
             context.queue.submit(context.encode(&ops));
-            let output_host = output_dev.back_in_place().to_vec();
+            let output_host = output_dev.back().await.to_vec();
 
             for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
                 assert!(
@@ -3062,7 +3065,7 @@ mod tests {
                 Activation::None,
             )?]);
             context.queue.submit(context.encode(&ops));
-            let output_host = output_dev.back_in_place().to_vec();
+            let output_host = output_dev.back().await.to_vec();
 
             for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
                 assert!(
@@ -3074,18 +3077,15 @@ mod tests {
             Ok(())
         }
 
-        test_matmul_nf4_inner(&context, 2560, 2048, 64)?;
-        test_matmul_nf4_inner(&context, 320, 64, 320)?;
+        test_matmul_nf4_inner(&context, 2560, 2048, 64).await?;
+        test_matmul_nf4_inner(&context, 320, 64, 320).await?;
 
         Ok(())
     }
 
-    #[test]
-    fn test_blit() -> Result<()> {
-        let context = match pollster::block_on(create_context()) {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
+    #[tokio::test]
+    async fn test_blit() -> Result<()> {
+        let context = create_context().await?;
         fastrand::seed(42);
 
         let output = vec![0.0; 24];
@@ -3095,20 +3095,16 @@ mod tests {
 
         let input = (0..8).map(|x| x as f32).collect_vec();
         let input: TensorGpu<_, _> = context.tensor_from_data([4, 1, 2, 1], input)?;
-        ops.push(TensorOp::blit(
-            input.view(.., .., .., ..)?,
-            output.view(.., 1, .., ..)?,
-        )?);
+        ops.push(TensorOp::blit(&input, output.view(.., 1, .., ..)?)?);
 
         let input = (8..12).map(|x| x as f32).collect_vec();
         let input: TensorGpu<_, _> = context.tensor_from_data([4, 1, 1, 1], input)?;
-        let input = input.view(.., .., .., ..)?;
-        ops.push(TensorOp::blit(input, output.view(.., 2.., 1..2, ..)?)?);
+        ops.push(TensorOp::blit(&input, output.view(.., 2.., 1..2, ..)?)?);
 
         let ops = TensorOp::List(ops);
         context.queue.submit(context.encode(&ops));
 
-        let output_host = output.back_in_place();
+        let output_host = output.back().await;
         let output_host = Vec::from(output_host);
 
         assert_eq!(
@@ -3122,12 +3118,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_transpose() -> Result<()> {
-        let context = match pollster::block_on(create_context()) {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
+    #[tokio::test]
+    async fn test_transpose() -> Result<()> {
+        let context = create_context().await?;
         fastrand::seed(42);
 
         let output = vec![0.0; 36];
@@ -3136,10 +3129,10 @@ mod tests {
         let input = (0..24).map(|x| x as f32).collect_vec();
         let input: TensorGpu<_, _> = context.tensor_from_data([4, 3, 2, 1], input)?;
 
-        let ops = TensorOp::transpose(input.view(.., .., .., ..)?, output.view(.., ..2, .., ..)?)?;
+        let ops = TensorOp::transpose(&input, output.view(.., ..2, .., ..)?)?;
         context.queue.submit(context.encode(&ops));
 
-        let output_host = output.back_in_place();
+        let output_host = output.back().await;
         let output_host: Vec<f32> = Vec::from(output_host);
 
         assert_eq!(
