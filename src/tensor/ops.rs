@@ -158,6 +158,7 @@ pub enum Activation {
     Sigmoid,
     Silu,
     SigmoidExp,
+    PlusOne,
 }
 
 impl std::fmt::Display for Activation {
@@ -231,6 +232,10 @@ fn silu(x: vec4<f32>) -> vec4<f32> {
 
 fn sigmoid_exp(x: vec4<f32>) -> vec4<f32> {
     return exp(-0.606531 * sigmoid(x)); // 0.606531 = exp(-0.5)
+}
+
+fn plus_one(x: vec4<f32>) -> vec4<f32> {
+    return x + vec4<f32>(1.0);
 }
 ";
         self.insert("ACTIVATION_DEFINE".into(), ACTIVATION_DEFINE.to_string());

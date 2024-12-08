@@ -7,7 +7,7 @@ use regex::Regex;
 use safetensors::{Dtype, SafeTensorError, SafeTensors};
 use web_rwkv_derive::{Deref, DerefMut};
 
-use super::model::{ModelError, ModelInfo, ModelVersion, Quant};
+use super::model::{ModelAdapterInfo, ModelError, ModelInfo, ModelVersion, Quant};
 use crate::{
     context::Context,
     num::Scalar,
@@ -237,14 +237,28 @@ impl<R: Reader> Loader<R> {
         let num_vocab = embed[0];
         let num_head = time_first[0];
 
-        let time_mix_adapter_size = model
-            .shape("blocks.0.att.time_mix_w1")
-            .map(|shape| shape[0] / 5)
-            .unwrap_or_default();
-        let time_decay_adapter_size = model
-            .shape("blocks.0.att.time_decay_w1")
-            .map(|shape| shape[0])
-            .unwrap_or_default();
+        let adapter = match version {
+            ModelVersion::V6 => {
+                let time_mix = model
+                    .shape("blocks.0.att.time_mix_w1")
+                    .map(|shape| shape[0] / 5)?;
+                let time_decay = model
+                    .shape("blocks.0.att.time_decay_w1")
+                    .map(|shape| shape[0])?;
+                ModelAdapterInfo::V6(super::v6::AdapterInfo {
+                    time_mix,
+                    time_decay,
+                })
+            }
+            ModelVersion::V7 => {
+                let w = model.shape("blocks.0.att.w0").map(|shape| shape[0])?;
+                let a = model.shape("blocks.0.att.a0").map(|shape| shape[0])?;
+                let g = model.shape("blocks.0.att.g0").map(|shape| shape[0])?;
+                let v = model.shape("blocks.1.att.v0").map(|shape| shape[0])?;
+                ModelAdapterInfo::V7(super::v7::AdapterInfo { w, a, g, v })
+            }
+            _ => ModelAdapterInfo::None,
+        };
 
         Ok(ModelInfo {
             version,
@@ -253,8 +267,7 @@ impl<R: Reader> Loader<R> {
             num_hidden,
             num_vocab,
             num_head,
-            time_mix_adapter_size,
-            time_decay_adapter_size,
+            adapter,
         })
     }
 

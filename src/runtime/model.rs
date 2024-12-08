@@ -43,8 +43,8 @@ pub struct ModelInfo {
     pub num_hidden: usize,
     pub num_vocab: usize,
     pub num_head: usize,
-    pub time_mix_adapter_size: usize,
-    pub time_decay_adapter_size: usize,
+    #[wasm_bindgen(skip)]
+    pub adapter: ModelAdapterInfo,
 }
 
 impl ModelInfo {
@@ -69,6 +69,15 @@ impl ModelInfo {
     pub fn num_vocab_padded(&self) -> usize {
         self.num_vocab.next_multiple_of(PAD_MAT[1])
     }
+}
+
+/// Info about the model's inner LoRA dimensions.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ModelAdapterInfo {
+    #[default]
+    None,
+    V6(super::v6::AdapterInfo),
+    V7(super::v7::AdapterInfo),
 }
 
 pub trait AsAny {

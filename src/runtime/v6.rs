@@ -14,7 +14,7 @@ use wgpu::CommandBuffer;
 use super::{
     infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
-    model::{AsAny, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
+    model::{AsAny, EmbedDevice, ModelAdapterInfo, ModelBuilder, ModelInfo, Quant, State as _},
     Dispatcher, Job,
 };
 use crate::{
@@ -43,6 +43,12 @@ pub struct Model {
 impl Model {
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AdapterInfo {
+    pub time_mix: usize,
+    pub time_decay: usize,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
@@ -287,14 +293,18 @@ pub struct Runtime<F: Float> {
 
 impl<F: Float> Runtime<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
+        let ModelAdapterInfo::V6(adapter) = info.adapter else {
+            unreachable!()
+        };
+
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
         let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
-        let time_mix_x_shape = Shape::new(info.time_mix_adapter_size, 5, num_token, 1);
-        let time_mix_t_shape = Shape::new(info.time_mix_adapter_size, num_token, 5, 1);
-        let time_decay_shape = Shape::new(info.time_decay_adapter_size, num_token, 1, 1);
+        let time_mix_x_shape = Shape::new(adapter.time_mix, 5, num_token, 1);
+        let time_mix_t_shape = Shape::new(adapter.time_mix, num_token, 5, 1);
+        let time_decay_shape = Shape::new(adapter.time_decay, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
