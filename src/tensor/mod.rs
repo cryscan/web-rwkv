@@ -216,6 +216,21 @@ pub trait TensorShape: Sized {
             .then_some(())
             .ok_or(TensorError::Shape(self.shape(), shape))
     }
+
+    fn check_shape_any<S>(&self, shapes: &[S]) -> Result<(), TensorError>
+    where
+        S: Into<Shape> + ToOwned<Owned = S>,
+    {
+        let mut error = TensorError::Shape(self.shape(), Shape::default());
+        for shape in shapes {
+            let shape: Shape = shape.to_owned().into();
+            match self.check_shape(shape) {
+                Ok(_) => return Ok(()),
+                Err(err) => error = err,
+            };
+        }
+        Err(error)
+    }
 }
 
 pub trait TensorReshape: Sized {

@@ -9,9 +9,9 @@ struct View {
 @group(0) @binding(1) var<uniform> vy: View;
 
 #ifdef FACTOR_FP16
-@group(0) @binding(2) var<storage, read> f: array<vec2<u32>>;           // (B, T, C)
+@group(0) @binding(2) var<storage, read> f: array<vec2<u32>>;           // (B?, T?, C)
 #else
-@group(0) @binding(2) var<storage, read> f: array<vec4<f32>>;           // (B, T, C)
+@group(0) @binding(2) var<storage, read> f: array<vec4<f32>>;           // (B?, T?, C)
 #endif
 #ifdef IN_FP16
 @group(0) @binding(3) var<storage, read> x: array<vec2<u32>>;           // (B, T, C)
@@ -47,9 +47,9 @@ fn lerp(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if all(vec3<u32>(index, token, batch) < vec3<u32>(stride, vf.shape.yz)) {
 #ifdef FACTOR_FP16
-        let _f = unpack4x16float(f[compute_index(vf, batch, token, index)]);
+        let _f = unpack4x16float(f[compute_index(vf, select(batch, 0u, vf.shape.z == 1u), select(token, 0u, vf.shape.y == 1u), index)]);
 #else
-        let _f = f[compute_index(vf, batch, token, index)];
+        let _f = f[compute_index(vf, select(batch, 0u, vf.shape.z == 1u), select(token, 0u, vf.shape.y == 1u), index)];
 #endif
 #ifdef IN_FP16
         let _x = unpack4x16float(x[compute_index(vx, batch, token, index)]);

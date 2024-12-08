@@ -23,7 +23,7 @@ use crate::{
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{Activation, TensorCommand, TensorOp},
+        ops::{Activation, BinaryActivation, TensorCommand, TensorOp},
         serialization::Seed,
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
@@ -887,7 +887,7 @@ fn dispatch_layer<F: Float>(
         TensorOp::mul_activate(
             &buffer.att_g,
             &buffer.att_x,
-            (Activation::Silu, Activation::None, Activation::None),
+            BinaryActivation::x(Activation::Silu),
         )?,
         hook_op(Hook::PostAttGate(index))?,
         hook_op(Hook::PreAttOut(index))?,

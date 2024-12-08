@@ -157,12 +157,41 @@ pub enum Activation {
     Softplus,
     Sigmoid,
     Silu,
-    SigmoidExp,
 }
 
 impl std::fmt::Display for Activation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(serde_variant::to_variant_name(self).unwrap())
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BinaryActivation {
+    pub x: Activation,
+    pub y: Activation,
+    pub out: Activation,
+}
+
+impl BinaryActivation {
+    pub fn x(x: Activation) -> Self {
+        Self {
+            x,
+            ..Default::default()
+        }
+    }
+
+    pub fn y(y: Activation) -> Self {
+        Self {
+            y,
+            ..Default::default()
+        }
+    }
+
+    pub fn out(out: Activation) -> Self {
+        Self {
+            out,
+            ..Default::default()
+        }
     }
 }
 
@@ -227,10 +256,6 @@ fn sigmoid(x: vec4<f32>) -> vec4<f32> {
 
 fn silu(x: vec4<f32>) -> vec4<f32> {
     return x / (1.0 + exp(-x));
-}
-
-fn sigmoid_exp(x: vec4<f32>) -> vec4<f32> {
-    return exp(-0.606531 * sigmoid(x)); // 0.606531 = exp(-0.5)
 }
 ";
         self.insert("ACTIVATION_DEFINE".into(), ACTIVATION_DEFINE.to_string());
@@ -1277,7 +1302,7 @@ impl TensorOp {
     pub fn add_activate<'a, 'b, F0: Float, F1: Float>(
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: (Activation, Activation, Activation),
+        active: BinaryActivation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1286,9 +1311,12 @@ impl TensorOp {
 
         let shape = {
             let [index, token, batch, _] = output.shape().into();
-            input
-                .check_shape([index, 1, batch, 1])
-                .or(input.check_shape([index, token, batch, 1]))?;
+            input.check_shape_any(&[
+                [index, token, batch, 1],
+                [index, token, 1, batch],
+                [index, 1, batch, 1],
+                [index, 1, 1, 1],
+            ])?;
             output.check_shape([index, token, batch, 1])?;
             output.shape()
         };
@@ -1303,9 +1331,9 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT_X", active.0)
-                .activate("ACT_Y", active.1)
-                .activate("ACT_OUT", active.2),
+                .activate("ACT_X", active.x)
+                .activate("ACT_Y", active.y)
+                .activate("ACT_OUT", active.out),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1358,7 +1386,7 @@ impl TensorOp {
     pub fn mul_activate<'a, 'b, F0: Float, F1: Float>(
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: (Activation, Activation, Activation),
+        active: BinaryActivation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1367,9 +1395,12 @@ impl TensorOp {
 
         let shape = {
             let [index, token, batch, _] = output.shape().into();
-            input
-                .check_shape([index, 1, batch, 1])
-                .or(input.check_shape([index, token, batch, 1]))?;
+            input.check_shape_any(&[
+                [index, token, batch, 1],
+                [index, token, 1, batch],
+                [index, 1, batch, 1],
+                [index, 1, 1, 1],
+            ])?;
             output.check_shape([index, token, batch, 1])?;
             output.shape()
         };
@@ -1384,9 +1415,9 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT_X", active.0)
-                .activate("ACT_Y", active.1)
-                .activate("ACT_OUT", active.2),
+                .activate("ACT_X", active.x)
+                .activate("ACT_Y", active.y)
+                .activate("ACT_OUT", active.out),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1448,12 +1479,8 @@ impl TensorOp {
         let shape = {
             let [index, token, count, _] = output.shape().into();
             let [_, head, batch, _] = state.shape().into();
-            input
-                .check_shape([index, token, 1, 1])
-                .or(input.check_shape([index, token, count, 1]))?;
-            time_mix
-                .check_shape([index, 1, 1, 1])
-                .or(time_mix.check_shape([index, token, count, 1]))?;
+            input.check_shape_any(&[[index, token, count, 1], [index, token, 1, 1]])?;
+            time_mix.check_shape_any(&[[index, token, count, 1], [index, 1, 1, 1]])?;
             state.check_shape([index, head, batch, 1])?;
             output.shape()
         };
@@ -2294,8 +2321,13 @@ impl TensorOp {
 
         let shape = {
             let [index, token, batch, _] = y.shape().into();
+            f.check_shape_any(&[
+                [index, token, batch, 1],
+                [index, token, 1, 1],
+                [index, 1, batch, 1],
+                [index, 1, 1, 1],
+            ])?;
             x.check_shape([index, token, batch, 1])?;
-            f.check_shape([index, token, batch, 1])?;
             y.shape()
         };
 

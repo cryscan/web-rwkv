@@ -22,7 +22,7 @@ use crate::{
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{Activation, TensorCommand, TensorOp},
+        ops::{Activation, BinaryActivation, TensorCommand, TensorOp},
         serialization::Seed,
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
@@ -295,6 +295,9 @@ pub struct Runtime<F: Float> {
     pub att_kk: TensorGpu<F, ReadWrite>,
     pub att_vv: TensorGpu<F, ReadWrite>,
 
+    pub att_kv: TensorGpu<F, ReadWrite>,
+    pub att_ab: TensorGpu<F, ReadWrite>,
+
     /// Time decay LoRA intermediate.
     pub temp_w: TensorGpu<F, ReadWrite>,
     pub temp_a: TensorGpu<F, ReadWrite>,
@@ -317,6 +320,8 @@ impl<F: Float> Runtime<F> {
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
+        let att_kv_shape = Shape::new(info.num_emb, num_token, 2, 1);
+        let att_ab_shape = Shape::new(info.num_emb, num_token, 2, 1);
         let temp_w_shape = Shape::new(custom.w, num_token, 1, 1);
         let temp_a_shape = Shape::new(custom.a, num_token, 1, 1);
         let temp_g_shape = Shape::new(custom.g, num_token, 1, 1);
@@ -344,6 +349,8 @@ impl<F: Float> Runtime<F> {
             att_g: context.tensor_init(shape),
             att_kk: context.tensor_init(shape),
             att_vv: context.tensor_init(shape),
+            att_kv: context.tensor_init(att_kv_shape),
+            att_ab: context.tensor_init(att_ab_shape),
             temp_w: context.tensor_init(temp_w_shape),
             temp_a: context.tensor_init(temp_a_shape),
             temp_g: context.tensor_init(temp_g_shape),
@@ -392,6 +399,8 @@ pub enum Hook {
     PostAttDeltaRule(usize),
     PreAttTimeDecayActivate(usize),
     PostAttTimeDecayActivate(usize),
+    PreAttTimeMix(usize),
+    PostAttTimeMix(usize),
     PreHead,
     PostHeadLayerNorm,
     PostHead,
@@ -855,7 +864,7 @@ fn dispatch_layer<F: Float>(
         TensorOp::add_activate(
             &layer.att.a0,
             &buffer.att_a,
-            (Activation::None, Activation::None, Activation::Sigmoid),
+            BinaryActivation::out(Activation::Sigmoid),
         )?,
         layer.att.g1.matmul_op(
             &buffer.att_gx,
@@ -897,7 +906,7 @@ fn dispatch_layer<F: Float>(
             TensorOp::add_activate(
                 &layer.att.v0,
                 &buffer.att_vv,
-                (Activation::None, Activation::None, Activation::Sigmoid),
+                BinaryActivation::out(Activation::Sigmoid),
             )?,
             TensorOp::lerp(&buffer.att_v0, &buffer.att_v, &buffer.att_vv, true)?,
         ]),
@@ -906,12 +915,14 @@ fn dispatch_layer<F: Float>(
 
     ops.extend([
         hook_op(Hook::PreAttTimeDecayActivate(index))?,
-        TensorOp::add_activate(
-            &layer.att.w0,
-            &buffer.att_w,
-            (Activation::None, Activation::None, Activation::SigmoidExp),
-        )?,
+        TensorOp::add(&layer.att.w0, &buffer.att_w)?,
         hook_op(Hook::PostAttTimeDecayActivate(index))?,
+        hook_op(Hook::PreAttTimeMix(index))?,
+        TensorOp::blit(&buffer.att_k, buffer.att_kv.view(.., .., 0, ..)?)?,
+        TensorOp::blit(&buffer.att_v, buffer.att_kv.view(.., .., 1, ..)?)?,
+        TensorOp::blit(&buffer.att_a, buffer.att_ab.view(.., .., 0, ..)?)?,
+        TensorOp::blit(&buffer.att_kk, buffer.att_ab.view(.., .., 1, ..)?)?,
+        hook_op(Hook::PostAttTimeMix(index))?,
     ]);
 
     if (index + 1) % rescale == 0 {
