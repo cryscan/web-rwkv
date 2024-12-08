@@ -978,7 +978,7 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<T>>> for TensorStack<T> {
             (Shape::new(shape[0], 0, 1, 1), vec![]),
             |(mut shape, mut data), tensor| {
                 shape[1] += tensor.shape[1];
-                data.append(&mut tensor.data.to_vec());
+                data.extend(tensor.data.to_vec());
                 (shape, data)
             },
         );

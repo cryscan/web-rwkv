@@ -49,9 +49,9 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 #endif
         let bti = compute_index(destination, batch, token, index);
 #ifdef OUT_FP16
-        output[bti] = pack4x16float(ACT(x) + unpack4x16float(output[bti]));
+        output[bti] = pack4x16float(ACT_OUT(ACT_X(x) + ACT_Y(unpack4x16float(output[bti]))));
 #else
-        output[bti] = ACT(x) + output[bti];
+        output[bti] = ACT_OUT(ACT_X(x) + ACT_Y(output[bti]));
 #endif
     }
 }
@@ -71,9 +71,9 @@ fn mul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 #endif
         let bti = compute_index(destination, batch, token, index);
 #ifdef OUT_FP16
-        output[bti] = pack4x16float(ACT(x) * unpack4x16float(output[bti]));
+        output[bti] = pack4x16float(ACT_OUT(ACT_X(x) * ACT_Y(unpack4x16float(output[bti]))));
 #else
-        output[bti] = ACT(x) * output[bti];
+        output[bti] = ACT_OUT(ACT_X(x) * ACT_Y(output[bti]));
 #endif
     }
 }

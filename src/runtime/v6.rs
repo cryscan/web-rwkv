@@ -295,7 +295,7 @@ pub struct Runtime<F: Float> {
 
 impl<F: Float> Runtime<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
-        let ModelCustomInfo::V6(adapter) = info.custom else {
+        let ModelCustomInfo::V6(custom) = info.custom else {
             unreachable!()
         };
 
@@ -304,9 +304,9 @@ impl<F: Float> Runtime<F> {
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
         let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
-        let time_mix_x_shape = Shape::new(adapter.time_mix, 5, num_token, 1);
-        let time_mix_t_shape = Shape::new(adapter.time_mix, num_token, 5, 1);
-        let time_decay_shape = Shape::new(adapter.time_decay, num_token, 1, 1);
+        let time_mix_x_shape = Shape::new(custom.time_mix, 5, num_token, 1);
+        let time_mix_t_shape = Shape::new(custom.time_mix, num_token, 5, 1);
+        let time_decay_shape = Shape::new(custom.time_decay, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
@@ -644,7 +644,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
                 }
                 None => EmbedDevice::Cpu,
             };
-            ops.append(&mut vec![
+            ops.extend([
                 hook_op(Hook::PostEmbedLoaded)?,
                 TensorOp::layer_norm(
                     &tensor.embed.layer_norm.w,
@@ -726,50 +726,52 @@ fn dispatch_layer<F: Float>(
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let Frame { state, buffer, .. } = &frame;
 
-    use TensorDimension::{Auto, Dimension};
-    let time_first =
-        layer
-            .att
-            .time_first
-            .reshape(Dimension(head_size), Auto, Dimension(1), Dimension(1))?;
-    let time_decay = buffer.time_decay.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+    let time_first = layer.att.time_first.reshape(
+        TensorDimension::Dimension(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Dimension(1),
+        TensorDimension::Dimension(1),
     )?;
-    let time_mix_x =
-        buffer
-            .time_mix_x
-            .reshape(Auto, Dimension(num_token), Dimension(1), Dimension(1))?;
+    let time_decay = buffer.time_decay.reshape(
+        TensorDimension::Dimension(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Dimension(num_token),
+        TensorDimension::Dimension(1),
+    )?;
+    let time_mix_x = buffer.time_mix_x.reshape(
+        TensorDimension::Auto,
+        TensorDimension::Dimension(num_token),
+        TensorDimension::Dimension(1),
+        TensorDimension::Dimension(1),
+    )?;
     let aux_x = buffer.aux_x.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+        TensorDimension::Dimension(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Dimension(num_token),
+        TensorDimension::Dimension(1),
     )?;
     let att_k = buffer.att_k.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+        TensorDimension::Dimension(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Dimension(num_token),
+        TensorDimension::Dimension(1),
     )?;
     let att_v = buffer.att_v.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+        TensorDimension::Dimension(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Dimension(num_token),
+        TensorDimension::Dimension(1),
     )?;
     let att_r = buffer.att_r.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+        TensorDimension::Dimension(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Dimension(num_token),
+        TensorDimension::Dimension(1),
     )?;
 
     let mut ops = vec![];
 
-    ops.append(&mut vec![
+    ops.extend([
         TensorOp::blit(&buffer.x, &buffer.att_x)?,
         hook_op(Hook::PreAtt(index))?,
         TensorOp::layer_norm(
@@ -882,7 +884,11 @@ fn dispatch_layer<F: Float>(
         TensorOp::blit(&buffer.aux_x, &buffer.att_x)?,
         hook_op(Hook::PostAttTimeMix(index))?,
         hook_op(Hook::PreAttGate(index))?,
-        TensorOp::mul_activate(&buffer.att_g, &buffer.att_x, Activation::Silu)?,
+        TensorOp::mul_activate(
+            &buffer.att_g,
+            &buffer.att_x,
+            (Activation::Silu, Activation::None, Activation::None),
+        )?,
         hook_op(Hook::PostAttGate(index))?,
         hook_op(Hook::PreAttOut(index))?,
         layer.att.w_o.matmul_op(
@@ -896,7 +902,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostAtt(index))?,
     ]);
 
-    ops.append(&mut vec![
+    ops.extend([
         TensorOp::blit(&buffer.x, &buffer.ffn_x)?,
         hook_op(Hook::PreFfn(index))?,
         TensorOp::layer_norm(
@@ -977,7 +983,7 @@ fn dispatch_header<F: Float>(
     let header = &frame.header;
 
     if num_header > 0 {
-        ops.append(&mut vec![
+        ops.extend([
             hook_op(Hook::PreHead)?,
             TensorOp::layer_norm(
                 &head.layer_norm.w,
@@ -1197,7 +1203,7 @@ pub async fn read_state<R: Reader>(
             Dimension(1),
             Auto,
         )?;
-        ops.append(&mut vec![
+        ops.extend([
             TensorOp::transpose(&matrix, &state)?,
             TensorOp::blit(&reshaped, data.view(.., 1..head_size + 1, layer, ..)?)?,
         ]);

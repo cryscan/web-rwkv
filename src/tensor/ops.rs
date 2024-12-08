@@ -158,7 +158,6 @@ pub enum Activation {
     Sigmoid,
     Silu,
     SigmoidExp,
-    PlusOne,
 }
 
 impl std::fmt::Display for Activation {
@@ -232,10 +231,6 @@ fn silu(x: vec4<f32>) -> vec4<f32> {
 
 fn sigmoid_exp(x: vec4<f32>) -> vec4<f32> {
     return exp(-0.606531 * sigmoid(x)); // 0.606531 = exp(-0.5)
-}
-
-fn plus_one(x: vec4<f32>) -> vec4<f32> {
-    return x + vec4<f32>(1.0);
 }
 ";
         self.insert("ACTIVATION_DEFINE".into(), ACTIVATION_DEFINE.to_string());
@@ -1275,13 +1270,14 @@ impl TensorOp {
         })
     }
 
-    /// Apply activation to `input and then add into `output`.
+    /// Add `input` to `output`.
     /// - `input` shape: `[C, 1, B]` or `[C, T, B]`.
     /// - `output` shape: `[C, T, B]`.
+    /// - Activations may be applied to `input`, `output` and the final result.
     pub fn add_activate<'a, 'b, F0: Float, F1: Float>(
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        active: (Activation, Activation, Activation),
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1307,7 +1303,9 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT_X", active.0)
+                .activate("ACT_Y", active.1)
+                .activate("ACT_OUT", active.2),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1350,21 +1348,22 @@ impl TensorOp {
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
-        Self::add_activate(input, output, Activation::None)
+        Self::add_activate(input, output, Default::default())
     }
 
-    /// Apply activation to `input and then multiply into `output`.
+    /// Multiply `input` to `output`.
     /// - `input` shape: `[C, 1, B]` or `[C, T, B]`.
     /// - `output` shape: `[C, T, B]`.
+    /// - Activations may be applied to `input`, `output` and the final result.
     pub fn mul_activate<'a, 'b, F0: Float, F1: Float>(
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        active: (Activation, Activation, Activation),
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
-
-        const BLOCK_SIZE: u32 = 128;
 
         let shape = {
             let [index, token, batch, _] = output.shape().into();
@@ -1385,7 +1384,9 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT_X", active.0)
+                .activate("ACT_Y", active.1)
+                .activate("ACT_OUT", active.2),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1428,7 +1429,7 @@ impl TensorOp {
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
-        Self::mul_activate(input, output, Activation::None)
+        Self::mul_activate(input, output, Default::default())
     }
 
     pub fn token_shift<'a, 'b, F: Float>(
@@ -1439,10 +1440,10 @@ impl TensorOp {
         output: &TensorGpu<impl Float, ReadWrite>,
         reversed: bool,
     ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
         let time_mix: TensorGpuView<_> = time_mix.into();
         let state: TensorGpuView<_> = state.into();
-
-        const BLOCK_SIZE: u32 = 128;
 
         let shape = {
             let [index, token, count, _] = output.shape().into();
@@ -1776,6 +1777,77 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [u32::div_ceil(dim as u32 / 4, BLOCK_SIZE), 1, 1],
+        })
+    }
+
+    pub fn control_k_v7<'a, 'b, F0: Float, F1: Float>(
+        p: &TensorGpu<f16, ReadWrite>,
+        a: impl Into<TensorGpuView<'a, F0>>,
+        k: impl Into<TensorGpuView<'b, F1>>,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let p: TensorGpuView<_> = p.into();
+        let a: TensorGpuView<_> = a.into();
+        let k: TensorGpuView<_> = k.into();
+
+        let shape = {
+            let [index, token, batch, _] = k.shape().into();
+            a.check_shape([index, token, batch, 1])?;
+            p.check_shape([index, 1, 1, 1])?;
+            k.shape()
+        };
+
+        let context = k.context();
+        let pipeline = context.checkout_pipeline(
+            "control_k_v7",
+            include_str!("../shaders/control_k_v7.wgsl"),
+            "main",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(&a, Some("A"))
+                .tensor(&k, Some("K")),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: p.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: a.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: k.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: p.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: a.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: k.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
         })
     }
 
@@ -2208,6 +2280,80 @@ impl TensorOp {
         })
     }
 
+    pub fn lerp<'a, 'b, 'c, F0: Float, F1: Float, F2: Float>(
+        x: impl Into<TensorGpuView<'a, F0>>,
+        y: impl Into<TensorGpuView<'b, F1>>,
+        f: impl Into<TensorGpuView<'c, F2>>,
+        reversed: bool,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let f: TensorGpuView<_> = f.into();
+        let x: TensorGpuView<_> = x.into();
+        let y: TensorGpuView<_> = y.into();
+
+        let shape = {
+            let [index, token, batch, _] = y.shape().into();
+            x.check_shape([index, token, batch, 1])?;
+            f.check_shape([index, token, batch, 1])?;
+            y.shape()
+        };
+
+        let context = y.context();
+        let pipeline = context.checkout_pipeline(
+            "lerp",
+            include_str!("../shaders/lerp.wgsl"),
+            "lerp",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(&f, Some("FACTOR"))
+                .tensor(&x, Some("IN"))
+                .tensor(&y, Some("OUT"))
+                .bool("REVERSED", reversed),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: f.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: y.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: f.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: x.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: y.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
+            ],
+        })
+    }
+
     pub fn discount(
         x: &TensorGpu<impl Float, ReadWrite>,
         factor: f32,
@@ -2538,8 +2684,8 @@ mod tests {
             let max = x.clone().reduce(f32::max).unwrap_or_default();
             let x = x.map(|x| (x - max).exp());
             let sum: f32 = x.clone().sum();
-            let mut x: Vec<_> = x.map(|x| x / sum).collect();
-            ans.append(&mut x);
+            let x = x.map(|x| x / sum);
+            ans.extend(x);
         }
 
         for (index, (a, b)) in itertools::zip_eq(x_host, ans).enumerate() {
@@ -2627,11 +2773,10 @@ mod tests {
             let deviation = 1.0 / variance.sqrt();
             // ans_stats.append(&mut vec![mean, deviation, variance, 0.0]);
 
-            let mut x: Vec<_> = chunk
+            let x = chunk
                 .into_iter()
-                .map(|((x, w), b)| (x - mean) * deviation * w.to_f32() + b.to_f32())
-                .collect();
-            ans.append(&mut x);
+                .map(|((x, w), b)| (x - mean) * deviation * w.to_f32() + b.to_f32());
+            ans.extend(x);
         }
 
         for (index, (a, &b)) in itertools::zip_eq(x_host, ans.iter()).enumerate() {
