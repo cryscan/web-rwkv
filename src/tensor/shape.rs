@@ -424,7 +424,6 @@ mod tests {
         tensor::{shape::ShapedIndex, TensorCpu, TensorInit},
     };
 
-    #[tokio::main]
     async fn create_context() -> Result<Context> {
         let instance = Instance::default();
         let adapter = instance.adapter(PowerPreference::HighPerformance).await?;
@@ -443,12 +442,9 @@ mod tests {
         assert_eq!(index, 35 + 42 * 1024 + 9 * 1024 * 768);
     }
 
-    #[test]
-    fn test_slice() -> Result<()> {
-        let context = match create_context() {
-            Ok(context) => context,
-            Err(_) => return Ok(()),
-        };
+    #[tokio::test]
+    async fn test_slice() -> Result<()> {
+        let context = create_context().await?;
 
         let x: TensorCpu<f32> = context.tensor_init([1024, 768, 3, 1]);
         assert_eq!(
