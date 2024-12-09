@@ -65,19 +65,19 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn time_mix(in: Input) {
-    let stride_head = shape[0] / 4u;
-    let stride = shape[1] * stride_head;
+    // const HEAD_SIZE = shape[0] / 4u;
+    let stride = shape[1] * shape[0] / 4u;
 
     let index = in.uid.x;
-    let head = in.tid.x / stride_head;
-    let h = head * stride_head;
+    let head = in.tid.x / HEAD_SIZE;
+    let h = head * HEAD_SIZE;
 
     if index < stride {
         shared_u[in.tid.x] = time_first[index];
     }
 
     for (var t = 0u; t < shape[2]; t += 1u) {
-        let bti = t * stride + index;
+        let ti = t * stride + index;
         let cursor = compute_cursor(cursors[t]);
 
         if index < stride {
@@ -90,25 +90,25 @@ fn time_mix(in: Input) {
 
         workgroupBarrier();
         if index < stride {
-            shared_w[in.tid.x] = time_decay[bti];
+            shared_w[in.tid.x] = time_decay[ti];
 #ifdef FP16
-            shared_k[in.tid.x] = unpack4x16float(k[bti]);
-            shared_r[in.tid.x] = unpack4x16float(r[bti]);
+            shared_k[in.tid.x] = unpack4x16float(k[ti]);
+            shared_r[in.tid.x] = unpack4x16float(r[ti]);
 #else
-            shared_k[in.tid.x] = k[bti];
-            shared_r[in.tid.x] = r[bti];
+            shared_k[in.tid.x] = k[ti];
+            shared_r[in.tid.x] = r[ti];
 #endif
         }
         workgroupBarrier();
 
         if index < stride {
 #ifdef FP16
-            let vv = unpack4x16float(v[bti]);
+            let vv = unpack4x16float(v[ti]);
 #else
-            let vv = v[bti];
+            let vv = v[ti];
 #endif
             var y = vec4<f32>(0.0);
-            for (var j = 0u; j < stride_head; j += 1u) {
+            for (var j = 0u; j < HEAD_SIZE; j += 1u) {
                 let kk = shared_k[h + j];
                 let rr = shared_r[h + j];
                 let uu = shared_u[h + j];
@@ -140,9 +140,9 @@ fn time_mix(in: Input) {
                 state[bji + stride * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
             }
 #ifdef FP16
-            x[bti] = pack4x16float(y);
+            x[ti] = pack4x16float(y);
 #else
-            x[bti] = y;
+            x[ti] = y;
 #endif
         }
     }

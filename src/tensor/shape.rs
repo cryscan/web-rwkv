@@ -379,12 +379,12 @@ pub enum TensorDimension {
     #[default]
     Full,
     Auto,
-    Dimension(usize),
+    Size(usize),
 }
 
 impl TensorDimension {
     pub fn deduce(shape: Shape, x: Self, y: Self, z: Self, w: Self) -> Result<Shape, TensorError> {
-        use TensorDimension::{Auto, Dimension, Full};
+        use TensorDimension::{Auto, Full, Size};
         let len = shape.len();
 
         let deduced = [x, y, z, w]
@@ -393,7 +393,7 @@ impl TensorDimension {
             .map(|(index, dim)| match dim {
                 Full => Some(shape[index]),
                 Auto => None,
-                Dimension(dim) => Some(dim),
+                Size(dim) => Some(dim),
             });
         let remain: usize = deduced.clone().flatten().product();
 

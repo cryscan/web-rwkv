@@ -69,7 +69,23 @@ fn sigmoid_exp(x: vec4<f32>) -> vec4<f32> {
     return exp(-0.606531 * sigmoid(x)); // 0.606531 = exp(-0.5)
 }
 
-fn load_k(ti: u32) -> vec4<f32> {
+fn __r(ti: u32) -> vec4<f32> {
+#ifdef FP16
+    return unpack4x16float(r[ti]);
+#else
+    return r[ti];
+#endif
+}
+
+fn __w(ti: u32) -> vec4<f32> {
+#ifdef FP16
+    return unpack4x16float(w[ti]);
+#else
+    return w[ti];
+#endif
+}
+
+fn __k(ti: u32) -> vec4<f32> {
 #ifdef FP16
     return unpack4x16float(kv[ti]);
 #else
@@ -77,7 +93,7 @@ fn load_k(ti: u32) -> vec4<f32> {
 #endif
 }
 
-fn load_v(ti: u32) -> vec4<f32> {
+fn __v(ti: u32) -> vec4<f32> {
     let offset = shape[2] * shape[1] * shape[0] / 4u;
 #ifdef FP16
     return unpack4x16float(kv[ti + offset]);
@@ -86,7 +102,7 @@ fn load_v(ti: u32) -> vec4<f32> {
 #endif
 }
 
-fn load_a(ti: u32) -> vec4<f32> {
+fn __a(ti: u32) -> vec4<f32> {
 #ifdef FP16
     return unpack4x16float(ab[ti]);
 #else
@@ -94,7 +110,7 @@ fn load_a(ti: u32) -> vec4<f32> {
 #endif
 }
 
-fn load_kk(ti: u32) -> vec4<f32> {
+fn __kk(ti: u32) -> vec4<f32> {
     let offset = shape[2] * shape[1] * shape[0] / 4u;
 #ifdef FP16
     return unpack4x16float(ab[ti + offset]);
@@ -105,14 +121,12 @@ fn load_kk(ti: u32) -> vec4<f32> {
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn time_mix(in: Input) {
-    let stride_head = shape[0] / 4u;
-    let stride = shape[1] * stride_head;
+    // const HEAD_SIZE = shape[0] / 4u;
+    let stride = shape[1] * shape[0] / 4u;
 
     let index = in.uid.x;
-    let head = in.tid.x / stride_head;
-    let h = head * stride_head;
-
-    var _state: array<vec4<f32>, BLOCK_SIZE>;
+    let head = in.tid.x / HEAD_SIZE;
+    let h = head * HEAD_SIZE;
 
     for (var t = 0u; t < shape[2]; t += 1u) {
         let ti = t * stride + index;
@@ -128,23 +142,68 @@ fn time_mix(in: Input) {
 
         workgroupBarrier();
         if index < stride {
-#ifdef FP16
-            shared_r[in.tid.x] = unpack4x16float(r[ti]);
-            shared_w[in.tid.x] = sigmoid_exp(unpack4x16float(w[ti]));
-#else
-            shared_r[in.tid.x] = r[ti];
-            shared_w[in.tid.x] = sigmoid_exp(w[ti]);
-#endif
-            shared_k[in.tid.x] = load_k(ti);
-            let _a = load_a(ti);
-            let _kk = load_kk(ti);
+            shared_r[in.tid.x] = __r(ti);
+            shared_w[in.tid.x] = sigmoid_exp(__w(ti));
+            shared_k[in.tid.x] = __k(ti);
+            let a = __a(ti);
+            let kk = __kk(ti);
             shared_a[in.tid.x] = -kk;
             shared_b[in.tid.x] = kk * a;
         }
         workgroupBarrier();
 
         if index < stride {
+            var sa = vec4<f32>(0.0);
+            for (var j = 0u; j < HEAD_SIZE; j += 1u) {
+                var ss: mat4x4<f32>;
+                let aa = shared_a[h + j];
 
+                var bji = compute_index(cursor.batch, j * 4u + 1u, index);
+                ss[0] = state[bji]; bji += stride;
+                ss[1] = state[bji]; bji += stride;
+                ss[2] = state[bji]; bji += stride;
+                ss[3] = state[bji];
+
+                sa += transpose(ss) * aa;
+            }
+
+            let vv = __v(ti);
+            var y = vec4<f32>(0.0);
+            for (var j = 0u; j < HEAD_SIZE; j += 1u) {
+                let rr = shared_r[h + j];
+                let ww = shared_w[h + j];
+                let kk = shared_k[h + j];
+                let bb = shared_b[h + j];
+
+                var ss: array<vec4<f32>, 4>;
+
+                var bji = compute_index(cursor.batch, j * 4u + 1u, index);
+                ss[0] = state[bji]; bji += stride;
+                ss[1] = state[bji]; bji += stride;
+                ss[2] = state[bji]; bji += stride;
+                ss[3] = state[bji];
+
+                ss[0] = ss[0] * ww[0] + kk[0] * vv + sa * bb[0];
+                ss[1] = ss[1] * ww[1] + kk[1] * vv + sa * bb[1];
+                ss[2] = ss[2] * ww[2] + kk[2] * vv + sa * bb[2];
+                ss[3] = ss[3] * ww[3] + kk[3] * vv + sa * bb[3];
+
+                y += rr[0] * ss[0];
+                y += rr[1] * ss[1];
+                y += rr[2] * ss[2];
+                y += rr[3] * ss[3];
+
+                bji = compute_index(cursor.batch, j * 4u + 1u, index);
+                state[bji] = ss[0]; bji += stride;
+                state[bji] = ss[1]; bji += stride;
+                state[bji] = ss[2]; bji += stride;
+                state[bji] = ss[3];
+            }
+#ifdef FP16
+            x[ti] = pack4x16float(y);
+#else
+            x[ti] = y;
+#endif
         }
     }
 }

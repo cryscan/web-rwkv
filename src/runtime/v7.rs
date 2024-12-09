@@ -22,7 +22,7 @@ use crate::{
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{Activation, BinaryActivation, TensorCommand, TensorOp},
+        ops::{Activation, BinAct, TensorCommand, TensorOp},
         serialization::Seed,
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
@@ -736,22 +736,40 @@ fn dispatch_layer<F: Float>(
     let Frame { state, buffer, .. } = &frame;
 
     let att_kk = buffer.att_kk.reshape(
-        TensorDimension::Dimension(head_size),
+        TensorDimension::Size(head_size),
         TensorDimension::Auto,
-        TensorDimension::Dimension(num_token),
-        TensorDimension::Dimension(1),
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
     )?;
-    let att_k = buffer.att_k.reshape(
-        TensorDimension::Dimension(head_size),
+    let att_x = buffer.att_x.reshape(
+        TensorDimension::Size(head_size),
         TensorDimension::Auto,
-        TensorDimension::Dimension(num_token),
-        TensorDimension::Dimension(1),
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
     )?;
-    let att_v = buffer.att_v.reshape(
-        TensorDimension::Dimension(head_size),
+    let att_r = buffer.att_r.reshape(
+        TensorDimension::Size(head_size),
         TensorDimension::Auto,
-        TensorDimension::Dimension(num_token),
-        TensorDimension::Dimension(1),
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
+    )?;
+    let att_w = buffer.att_w.reshape(
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
+    )?;
+    let att_kv = buffer.att_kv.reshape(
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(2),
+    )?;
+    let att_ab = buffer.att_ab.reshape(
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(2),
     )?;
 
     let mut ops = vec![];
@@ -864,7 +882,7 @@ fn dispatch_layer<F: Float>(
         TensorOp::add_activate(
             &layer.att.a0,
             &buffer.att_a,
-            BinaryActivation::out(Activation::Sigmoid),
+            BinAct::out(Activation::Sigmoid),
         )?,
         layer.att.g1.matmul_op(
             &buffer.att_gx,
@@ -906,7 +924,7 @@ fn dispatch_layer<F: Float>(
             TensorOp::add_activate(
                 &layer.att.v0,
                 &buffer.att_vv,
-                BinaryActivation::out(Activation::Sigmoid),
+                BinAct::out(Activation::Sigmoid),
             )?,
             TensorOp::lerp(&buffer.att_v0, &buffer.att_v, &buffer.att_vv, true)?,
         ]),
@@ -922,6 +940,15 @@ fn dispatch_layer<F: Float>(
         TensorOp::blit(&buffer.att_v, buffer.att_kv.view(.., .., 1, ..)?)?,
         TensorOp::blit(&buffer.att_a, buffer.att_ab.view(.., .., 0, ..)?)?,
         TensorOp::blit(&buffer.att_kk, buffer.att_ab.view(.., .., 1, ..)?)?,
+        TensorOp::time_mix_v7(
+            &buffer.cursors,
+            state.att(index)?,
+            &att_r,
+            &att_w,
+            &att_kv,
+            &att_ab,
+            &att_x,
+        )?,
         hook_op(Hook::PostAttTimeMix(index))?,
     ]);
 

@@ -1,5 +1,6 @@
 use std::{hash::Hash, sync::Arc};
 
+use embed_doc_image::embed_doc_image;
 use half::f16;
 use serde::{Deserialize, Serialize};
 use wgpu::{
@@ -166,13 +167,13 @@ impl std::fmt::Display for Activation {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct BinaryActivation {
+pub struct BinAct {
     pub x: Activation,
     pub y: Activation,
     pub out: Activation,
 }
 
-impl BinaryActivation {
+impl BinAct {
     pub fn x(x: Activation) -> Self {
         Self {
             x,
@@ -1302,7 +1303,7 @@ impl TensorOp {
     pub fn add_activate<'a, 'b, F0: Float, F1: Float>(
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: BinaryActivation,
+        active: BinAct,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1386,7 +1387,7 @@ impl TensorOp {
     pub fn mul_activate<'a, 'b, F0: Float, F1: Float>(
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: BinaryActivation,
+        active: BinAct,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1649,14 +1650,14 @@ impl TensorOp {
         let state: TensorGpuView<_> = state.into();
 
         let shape = x.shape();
-        let dim = shape[0] * shape[1];
+        let stride = shape[0] * shape[1];
 
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         time_decay.check_shape([shape[0], shape[1], 1, 1])?;
         time_first.check_shape([shape[0], shape[1], 1, 1])?;
-        state.check_shape([dim, shape[0] + 1, state.shape()[2], 1])?;
+        state.check_shape([stride, shape[0] + 1, state.shape()[2], 1])?;
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -1664,7 +1665,10 @@ impl TensorOp {
             include_str!("../shaders/time_mix_v5.wgsl"),
             "time_mix",
             None,
-            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("HEAD_SIZE", shape[0] as u32 / 4)
+                .tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1716,7 +1720,7 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [u32::div_ceil(dim as u32 / 4, BLOCK_SIZE), 1, 1],
+            dispatch: [u32::div_ceil(stride as u32 / 4, BLOCK_SIZE), 1, 1],
         })
     }
 
@@ -1736,14 +1740,14 @@ impl TensorOp {
         let state: TensorGpuView<_> = state.into();
 
         let shape = x.shape();
-        let dim = shape[0] * shape[1];
+        let stride = shape[0] * shape[1];
 
         k.check_shape(shape)?;
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         time_decay.check_shape(shape)?;
         time_first.check_shape([shape[0], shape[1], 1, 1])?;
-        state.check_shape([dim, shape[0] + 1, state.shape()[2], 1])?;
+        state.check_shape([stride, shape[0] + 1, state.shape()[2], 1])?;
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -1751,7 +1755,10 @@ impl TensorOp {
             include_str!("../shaders/time_mix_v6.wgsl"),
             "time_mix",
             None,
-            Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("HEAD_SIZE", shape[0] as u32 / 4)
+                .tensor(x, None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1803,7 +1810,94 @@ impl TensorOp {
         Ok(Self::Atom {
             pipeline,
             bindings,
-            dispatch: [u32::div_ceil(dim as u32 / 4, BLOCK_SIZE), 1, 1],
+            dispatch: [u32::div_ceil(stride as u32 / 4, BLOCK_SIZE), 1, 1],
+        })
+    }
+
+    /// The V7 WKV kernel.
+    ///
+    /// Note that the state layout is different from the official implementation.
+    /// Here is a simple illustration shows the layout:
+    /// - Thread layouts are shown as `T0`, `T1`, etc.;
+    /// - Numbers with the same color are multiplied;
+    ///
+    /// ![time-mix-v7][time-mix-v7]
+    #[embed_doc_image("time-mix-v7", "assets/time-mix-v7.png")]
+    pub fn time_mix_v7<'a, T: Float>(
+        cursors: &TensorGpu<u32, ReadWrite>,
+        state: impl Into<TensorGpuView<'a, f32>>,
+        r: &TensorGpu<T, ReadWrite>,
+        w: &TensorGpu<T, ReadWrite>,
+        kv: &TensorGpu<T, ReadWrite>,
+        ab: &TensorGpu<T, ReadWrite>,
+        x: &TensorGpu<T, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 32;
+
+        let state: TensorGpuView<_> = state.into();
+
+        let shape = x.shape();
+        let stride = shape[0] * shape[1];
+
+        r.check_shape(shape)?;
+        w.check_shape(shape)?;
+        kv.check_shape([shape[0], shape[1], shape[2], 2])?;
+        ab.check_shape([shape[0], shape[1], shape[2], 2])?;
+        state.check_shape([stride, shape[1] + 1, state.shape()[2], 1])?;
+
+        let context = x.context();
+        let pipeline = context.checkout_pipeline(
+            "time_mix_v7",
+            include_str!("../shaders/time_mix_v7.wgsl"),
+            "time_mix",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("HEAD_SIZE", shape[0] as u32 / 4)
+                .tensor(x, None),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: state.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: cursors.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: r.binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: w.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: kv.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: ab.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [u32::div_ceil(stride as u32 / 4, BLOCK_SIZE), 1, 1],
         })
     }
 
@@ -2486,9 +2580,9 @@ impl TensorOp {
 
         let output = output.reshape(
             TensorDimension::Auto,
-            TensorDimension::Dimension(1),
-            TensorDimension::Dimension(1),
-            TensorDimension::Dimension(1),
+            TensorDimension::Size(1),
+            TensorDimension::Size(1),
+            TensorDimension::Size(1),
         )?;
         let pipeline = context.checkout_pipeline(
             "quant_mat_int8",
@@ -2600,9 +2694,9 @@ impl TensorOp {
 
         let output = output.reshape(
             TensorDimension::Auto,
-            TensorDimension::Dimension(1),
-            TensorDimension::Dimension(1),
-            TensorDimension::Dimension(1),
+            TensorDimension::Size(1),
+            TensorDimension::Size(1),
+            TensorDimension::Size(1),
         )?;
         let pipeline = context.checkout_pipeline(
             "quant_mat_nf4",

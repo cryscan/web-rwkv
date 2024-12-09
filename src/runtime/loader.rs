@@ -373,12 +373,16 @@ impl<R: Reader> Loader<R> {
     }
 
     pub fn load_vector_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| x.to_f32())
-            .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+            .reshape(
+                TensorDimension::Auto,
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+            )?
             .to(context);
 
         let mut ops = vec![];
@@ -388,10 +392,10 @@ impl<R: Reader> Loader<R> {
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
-                Dimension(shape[0]),
-                Dimension(shape[1]),
-                Dimension(shape[2]),
-                Dimension(shape[3]),
+                TensorDimension::Size(shape[0]),
+                TensorDimension::Size(shape[1]),
+                TensorDimension::Size(shape[2]),
+                TensorDimension::Size(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -403,13 +407,17 @@ impl<R: Reader> Loader<R> {
     }
 
     pub fn load_vector_exp_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             // .map(|x| -x.to_f32().exp())
             .map(|x| x.to_f32())
-            .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+            .reshape(
+                TensorDimension::Auto,
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+            )?
             .to(context);
 
         let mut ops = vec![];
@@ -419,10 +427,10 @@ impl<R: Reader> Loader<R> {
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
-                Dimension(shape[0]),
-                Dimension(shape[1]),
-                Dimension(shape[2]),
-                Dimension(shape[3]),
+                TensorDimension::Size(shape[0]),
+                TensorDimension::Size(shape[1]),
+                TensorDimension::Size(shape[2]),
+                TensorDimension::Size(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -440,14 +448,18 @@ impl<R: Reader> Loader<R> {
         &self,
         name: impl AsRef<str>,
     ) -> Result<TensorGpu<f32, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             // .map(|x| -x.to_f32().exp())
             // .map(|x| x.exp())
             .map(|x| x.to_f32())
-            .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+            .reshape(
+                TensorDimension::Auto,
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+            )?
             .to(context);
 
         let mut ops = vec![];
@@ -457,10 +469,10 @@ impl<R: Reader> Loader<R> {
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
-                Dimension(shape[0]),
-                Dimension(shape[1]),
-                Dimension(shape[2]),
-                Dimension(shape[3]),
+                TensorDimension::Size(shape[0]),
+                TensorDimension::Size(shape[1]),
+                TensorDimension::Size(shape[2]),
+                TensorDimension::Size(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -475,18 +487,27 @@ impl<R: Reader> Loader<R> {
     }
 
     pub fn load_vector_f16(&self, name: impl AsRef<str>) -> Result<TensorGpu<f16, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let lora = self.lora_vectors(name.as_ref())?;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = if lora.is_empty() {
             TensorCpu::from_reader(tensor)?
-                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+                .reshape(
+                    TensorDimension::Auto,
+                    TensorDimension::Size(1),
+                    TensorDimension::Size(1),
+                    TensorDimension::Size(1),
+                )?
                 .to(context)
         } else {
             let tensor_f32: TensorGpu<f32, _> = TensorCpu::<f16>::from_reader(tensor)?
                 .map(|x| x.to_f32())
-                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+                .reshape(
+                    TensorDimension::Auto,
+                    TensorDimension::Size(1),
+                    TensorDimension::Size(1),
+                    TensorDimension::Size(1),
+                )?
                 .to(context);
             let tensor_f16: TensorGpu<f16, _> = context.tensor_init(tensor_f32.shape());
 
@@ -497,10 +518,10 @@ impl<R: Reader> Loader<R> {
 
                 let shape = lora.tensor.shape();
                 let tensor = tensor_f32.reshape(
-                    Dimension(shape[0]),
-                    Dimension(shape[1]),
-                    Dimension(shape[2]),
-                    Dimension(shape[3]),
+                    TensorDimension::Size(shape[0]),
+                    TensorDimension::Size(shape[1]),
+                    TensorDimension::Size(shape[2]),
+                    TensorDimension::Size(shape[3]),
                 )?;
 
                 let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -620,13 +641,17 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
         discount: f32,
     ) -> Result<()> {
-        use TensorDimension::{Dimension, Full};
         let context = &self.context;
 
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| f16::from_f32(discount * x.to_f32()))
-            .reshape(Full, Full, Dimension(1), Dimension(1))?;
+            .reshape(
+                TensorDimension::Full,
+                TensorDimension::Full,
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+            )?;
         matrix.load(&tensor)?;
 
         let mut ops = vec![];
