@@ -2042,52 +2042,6 @@ impl TensorOp {
         })
     }
 
-    pub fn activate<'a, F: Float>(
-        x: impl Into<TensorGpuView<'a, F>>,
-        active: Activation,
-    ) -> Result<Self, TensorError> {
-        const BLOCK_SIZE: u32 = 128;
-
-        let x: TensorGpuView<_> = x.into();
-
-        let shape = x.shape();
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
-            "activate",
-            include_str!("../shaders/activation.wgsl"),
-            "act",
-            None,
-            Macros::new()
-                .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .tensor(&x, None)
-                .activate("ACT", active),
-        );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: x.binding(),
-                },
-            ],
-        })];
-
-        Ok(Self::Atom {
-            pipeline,
-            bindings,
-            dispatch: [
-                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
-        })
-    }
-
     pub fn channel_mix<'a, T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
         state: impl Into<TensorGpuView<'a, f32>>,
@@ -2154,6 +2108,119 @@ impl TensorOp {
                 u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
                 shape[1] as u32,
                 1,
+            ],
+        })
+    }
+
+    pub fn channel_mix_v7<'a, T: Float>(
+        cursors: &TensorGpu<u32, ReadWrite>,
+        state: impl Into<TensorGpuView<'a, f32>>,
+        v: &TensorGpu<T, ReadWrite>,
+        x: &TensorGpu<T, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let state: TensorGpuView<_> = state.into();
+
+        let shape = x.shape();
+        v.check_shape(shape)?;
+        state.check_shape([shape[0], 1, state.shape()[2], 1])?;
+
+        let context = x.context();
+        let pipeline = context.checkout_pipeline(
+            "channel_mix",
+            include_str!("../shaders/channel_mix.wgsl"),
+            "channel_mix",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(x, None)
+                .bool("V7", true),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: state.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: cursors.binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: state.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: v.binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                1,
+            ],
+        })
+    }
+
+    pub fn activate<'a, F: Float>(
+        x: impl Into<TensorGpuView<'a, F>>,
+        active: Activation,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 128;
+
+        let x: TensorGpuView<_> = x.into();
+
+        let shape = x.shape();
+        let context = x.context();
+        let pipeline = context.checkout_pipeline(
+            "activate",
+            include_str!("../shaders/activation.wgsl"),
+            "act",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .tensor(&x, None)
+                .activate("ACT", active),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                u32::div_ceil(shape[0] as u32 / 4, BLOCK_SIZE),
+                shape[1] as u32,
+                shape[2] as u32,
             ],
         })
     }

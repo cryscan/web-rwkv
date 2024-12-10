@@ -1023,6 +1023,14 @@ fn dispatch_layer<F: Float>(
             turbo(num_token),
         )?,
         hook_op(Hook::PostFfnLinear(index))?,
+        hook_op(Hook::PreFfnChannelMix(index))?,
+        TensorOp::channel_mix_v7(
+            &buffer.cursors,
+            state.ffn(index)?,
+            &buffer.ffn_v,
+            &buffer.ffn_x,
+        )?,
+        hook_op(Hook::PostFfnChannelMix(index))?,
         TensorOp::add(&buffer.ffn_x, &buffer.x)?,
         hook_op(Hook::PostFfn(index))?,
     ]);
