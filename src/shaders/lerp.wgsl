@@ -5,23 +5,23 @@ struct View {
 };
 
 @group(0) @binding(0) var<uniform> vf: View;
-@group(0) @binding(0) var<uniform> vx: View;
-@group(0) @binding(1) var<uniform> vy: View;
+@group(0) @binding(1) var<uniform> vx: View;
+@group(0) @binding(2) var<uniform> vy: View;
 
 #ifdef FACTOR_FP16
-@group(0) @binding(2) var<storage, read> f: array<vec2<u32>>;           // (B?, T?, C)
+@group(0) @binding(3) var<storage, read> f: array<vec2<u32>>;           // (B?, T?, C)
 #else
-@group(0) @binding(2) var<storage, read> f: array<vec4<f32>>;           // (B?, T?, C)
+@group(0) @binding(3) var<storage, read> f: array<vec4<f32>>;           // (B?, T?, C)
 #endif
 #ifdef IN_FP16
-@group(0) @binding(3) var<storage, read> x: array<vec2<u32>>;           // (B, T, C)
+@group(0) @binding(4) var<storage, read> x: array<vec2<u32>>;           // (B, T, C)
 #else
-@group(0) @binding(3) var<storage, read> x: array<vec4<f32>>;           // (B, T, C)
+@group(0) @binding(4) var<storage, read> x: array<vec4<f32>>;           // (B, T, C)
 #endif
 #ifdef OUT_FP16
-@group(0) @binding(4) var<storage, read_write> y: array<vec2<u32>>;     // (B, T, C)
+@group(0) @binding(5) var<storage, read_write> y: array<vec2<u32>>;     // (B, T, C)
 #else
-@group(0) @binding(4) var<storage, read_write> y: array<vec4<f32>>;     // (B, T, C)
+@group(0) @binding(5) var<storage, read_write> y: array<vec4<f32>>;     // (B, T, C)
 #endif
 
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
@@ -38,7 +38,7 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
-@compute @workgroup_size(BLOCK_SIZE_X, BLOCK_SIZE_Y, 1)
+@compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn lerp(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = vf.shape.x / 4u;
     let index = invocation_id.x;

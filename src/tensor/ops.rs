@@ -1841,7 +1841,7 @@ impl TensorOp {
         w.check_shape(shape)?;
         kv.check_shape([shape[0], shape[1], shape[2], 2])?;
         ab.check_shape([shape[0], shape[1], shape[2], 2])?;
-        state.check_shape([stride, shape[1] + 1, state.shape()[2], 1])?;
+        state.check_shape([stride, shape[0] + 1, state.shape()[2], 1])?;
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -1852,7 +1852,9 @@ impl TensorOp {
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .u32("HEAD_SIZE", shape[0] as u32 / 4)
-                .tensor(x, None),
+                .bool("TIME_MIX", true)
+                .tensor(x, None)
+                .activate("ACT", Activation::None),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1872,22 +1874,26 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: w.binding(),
+                    resource: state.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: kv.binding(),
+                    resource: r.binding(),
                 },
                 BindGroupEntry {
                     binding: 6,
-                    resource: ab.binding(),
+                    resource: w.binding(),
                 },
                 BindGroupEntry {
                     binding: 7,
+                    resource: kv.binding(),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: ab.binding(),
+                },
+                BindGroupEntry {
+                    binding: 9,
                     resource: x.binding(),
                 },
             ],
@@ -1896,6 +1902,72 @@ impl TensorOp {
             pipeline,
             bindings,
             dispatch: [u32::div_ceil(stride as u32 / 4, BLOCK_SIZE), 1, 1],
+        })
+    }
+
+    pub fn time_first_v7<T: Float>(
+        u: &TensorGpu<f16, ReadWrite>,
+        r: &TensorGpu<T, ReadWrite>,
+        kv: &TensorGpu<T, ReadWrite>,
+        x: &TensorGpu<T, ReadWrite>,
+    ) -> Result<Self, TensorError> {
+        const BLOCK_SIZE: u32 = 32;
+
+        let shape = x.shape();
+        let stride = shape[0] * shape[1];
+
+        r.check_shape(shape)?;
+        u.check_shape([shape[0], shape[1], 1, 1])?;
+        kv.check_shape([shape[0], shape[1], shape[2], 2])?;
+
+        let context = x.context();
+        let pipeline = context.checkout_pipeline(
+            "time_first_v7",
+            include_str!("../shaders/time_mix_v7.wgsl"),
+            "time_first",
+            None,
+            Macros::new()
+                .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .u32("HEAD_SIZE", shape[0] as u32 / 4)
+                .bool("TIME_FIRST", true)
+                .tensor(x, None)
+                .activate("ACT", Activation::None),
+        );
+        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: x.meta_binding(),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: u.binding(),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: r.binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: kv.binding(),
+                },
+                BindGroupEntry {
+                    binding: 9,
+                    resource: x.binding(),
+                },
+            ],
+        })];
+
+        Ok(Self::Atom {
+            pipeline,
+            bindings,
+            dispatch: [
+                u32::div_ceil(stride as u32 / 4, BLOCK_SIZE),
+                shape[2] as u32,
+                1,
+            ],
         })
     }
 

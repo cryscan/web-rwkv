@@ -23,7 +23,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{Bundle, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant, State},
         softmax::softmax_one,
-        v4, v5, v6, TokioRuntime,
+        v4, v5, v6, v7, TokioRuntime,
     },
     tensor::{TensorCpu, TensorInit, TensorShape},
     tokenizer::Tokenizer,
@@ -277,7 +277,12 @@ async fn main() -> Result<()> {
             let state = bundle.state();
             (TokioRuntime::new(bundle).await, Box::new(state))
         }
-        ModelVersion::V7 => todo!(),
+        ModelVersion::V7 => {
+            let model = builder.build_v7().await?;
+            let bundle = v7::Bundle::<f16>::new(model, 1);
+            let state = bundle.state();
+            (TokioRuntime::new(bundle).await, Box::new(state))
+        }
     };
 
     println!("\n\nInstructions:\n\n+: Alternative reply\n-: Exit chatting\n\n------------");

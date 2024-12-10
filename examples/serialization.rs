@@ -22,7 +22,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
-        v4, v5, v6, TokioRuntime,
+        v4, v5, v6, v7, TokioRuntime,
     },
     tensor::serialization::Seed,
     tokenizer::Tokenizer,
@@ -199,7 +199,14 @@ async fn main() -> Result<()> {
             let bundle = v6::Bundle::<f16>::new(model, 1);
             TokioRuntime::new(bundle).await
         }
-        ModelVersion::V7 => todo!(),
+        ModelVersion::V7 => {
+            let context = context.clone();
+            let model = builder.build_v7().await?;
+            let f = move || serde::<v7::Model>(cli.output, &context, model);
+            let model = tokio::task::spawn_blocking(f).await??;
+            let bundle = v7::Bundle::<f16>::new(model, 1);
+            TokioRuntime::new(bundle).await
+        }
     };
 
     const PROMPT: &str = include_str!("prompt.md");

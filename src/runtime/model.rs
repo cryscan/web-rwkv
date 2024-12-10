@@ -151,7 +151,7 @@ pub enum EmbedDevice {
 pub struct ModelBuilder<R: Reader> {
     pub context: Context,
     pub model: R,
-    pub rescale: usize,
+    pub rescale: Option<usize>,
     pub lora: Vec<Lora<R>>,
     pub quant: HashMap<usize, Quant>,
     pub embed_device: EmbedDevice,
@@ -162,7 +162,7 @@ impl<R: Reader> ModelBuilder<R> {
         Self {
             context: context.clone(),
             model,
-            rescale: 6,
+            rescale: None,
             lora: vec![],
             quant: Default::default(),
             embed_device: Default::default(),
@@ -172,8 +172,8 @@ impl<R: Reader> ModelBuilder<R> {
     /// Half the layer and activation every `value` layers.
     pub fn rescale(mut self, value: usize) -> Self {
         self.rescale = match value {
-            0 => usize::MAX,
-            x => x,
+            0 => Some(usize::MAX),
+            x => Some(x),
         };
         self
     }

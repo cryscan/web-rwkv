@@ -26,7 +26,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
-        v4, v5, v6, TokioRuntime,
+        v4, v5, v6, v7, TokioRuntime,
     },
     tokenizer::Tokenizer,
 };
@@ -188,7 +188,11 @@ async fn main() -> Result<()> {
             let bundle = v6::Bundle::<f16>::new(model, 1);
             TokioRuntime::new(bundle).await
         }
-        ModelVersion::V7 => todo!(),
+        ModelVersion::V7 => {
+            let model = builder.build_v7().await?;
+            let bundle = v7::Bundle::<f16>::new(model, 1);
+            TokioRuntime::new(bundle).await
+        }
     };
 
     const PROMPT: &str = include_str!("prompt.md");

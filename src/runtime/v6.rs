@@ -43,6 +43,8 @@ pub struct Model {
 impl Model {
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
+
+    pub const DEFAULT_RESCALE: usize = 6;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1011,6 +1013,8 @@ impl<R: Reader> ModelBuilder<R> {
             embed_device,
             ..
         } = self;
+
+        let rescale = rescale.unwrap_or(Model::DEFAULT_RESCALE);
 
         let info = Loader::info(&model)?;
         let loader = Loader {
