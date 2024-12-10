@@ -164,7 +164,7 @@ fn time_mix(in: Input) {
                 ss[2] = state[bji]; bji += stride;
                 ss[3] = state[bji];
 
-                sa += transpose(ss) * aa;
+                sa += ss * aa;
             }
 
             let vv = __v(ti);
@@ -177,11 +177,11 @@ fn time_mix(in: Input) {
 
                 var ss: array<vec4<f32>, 4>;
 
-                var bji = compute_index(cursor.batch, j * 4u + 1u, index);
-                ss[0] = state[bji]; bji += stride;
-                ss[1] = state[bji]; bji += stride;
-                ss[2] = state[bji]; bji += stride;
-                ss[3] = state[bji];
+                let bji = compute_index(cursor.batch, j * 4u + 1u, index);
+                ss[0] = state[bji + stride * 0u];
+                ss[1] = state[bji + stride * 1u];
+                ss[2] = state[bji + stride * 2u];
+                ss[3] = state[bji + stride * 3u];
 
                 ss[0] = ss[0] * ww[0] + kk[0] * vv + sa * bb[0];
                 ss[1] = ss[1] * ww[1] + kk[1] * vv + sa * bb[1];
@@ -193,11 +193,10 @@ fn time_mix(in: Input) {
                 y += rr[2] * ss[2];
                 y += rr[3] * ss[3];
 
-                bji = compute_index(cursor.batch, j * 4u + 1u, index);
-                state[bji] = ss[0]; bji += stride;
-                state[bji] = ss[1]; bji += stride;
-                state[bji] = ss[2]; bji += stride;
-                state[bji] = ss[3];
+                state[bji + stride * 0u] = ss[0];
+                state[bji + stride * 1u] = ss[1];
+                state[bji + stride * 2u] = ss[2];
+                state[bji + stride * 3u] = ss[3];
             }
 #ifdef FP16
             x[ti] = pack4x16float(y);
