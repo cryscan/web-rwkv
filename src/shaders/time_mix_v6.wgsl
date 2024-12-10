@@ -63,6 +63,22 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
+fn load_x(index: u32) -> vec4<f32> {
+#ifdef FP16
+    return unpack4x16float(x[index]);
+#else
+    return x[index];
+#endif
+}
+
+fn store_x(index: u32, value: vec4<f32>) {
+#ifdef FP16
+    x[index] = pack4x16float(value);
+#else
+    x[index] = value;
+#endif
+}
+
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn time_mix(in: Input) {
     // const HEAD_SIZE = shape[0] / 4u;
@@ -80,12 +96,8 @@ fn time_mix(in: Input) {
         let ti = t * stride + index;
         let cursor = compute_cursor(cursors[t]);
 
-        if index < stride {
-#ifdef FP16
-            state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[(cursor.token + cursor.len - 1u) * stride + index]);
-#else
-            state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
-#endif
+        if index < stride && t - cursor.token + 1u == cursor.len {
+            state[compute_index(cursor.batch, 0u, index)] = load_x((cursor.token + cursor.len - 1u) * stride + index);
         }
 
         workgroupBarrier();
@@ -139,11 +151,7 @@ fn time_mix(in: Input) {
                 state[bji + stride * 2u] = fma(vec4<f32>(ww[2]), ss[2], kv[2]);
                 state[bji + stride * 3u] = fma(vec4<f32>(ww[3]), ss[3], kv[3]);
             }
-#ifdef FP16
-            x[ti] = pack4x16float(y);
-#else
-            x[ti] = y;
-#endif
+            store_x(ti, y);
         }
     }
 }
