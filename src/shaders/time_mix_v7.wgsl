@@ -67,61 +67,57 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 
 // ACTIVATION_DEFINE
 
-fn sigmoid_exp(x: vec4<f32>) -> vec4<f32> {
-    return exp(-0.606531 * sigmoid(x)); // 0.606531 = exp(-0.5)
+fn load_u(index: u32) -> vec4<f32> {
+    return unpack4x16float(u[index]);
 }
 
-fn load_u(ti: u32) -> vec4<f32> {
-    return unpack4x16float(u[ti]);
-}
-
-fn load_r(ti: u32) -> vec4<f32> {
+fn load_r(index: u32) -> vec4<f32> {
 #ifdef FP16
-    return unpack4x16float(r[ti]);
+    return unpack4x16float(r[index]);
 #else
-    return r[ti];
+    return r[index];
 #endif
 }
 
-fn load_w(ti: u32) -> vec4<f32> {
+fn load_w(index: u32) -> vec4<f32> {
 #ifdef FP16
-    return unpack4x16float(w[ti]);
+    return unpack4x16float(w[index]);
 #else
-    return w[ti];
+    return w[index];
 #endif
 }
 
-fn load_k(ti: u32) -> vec4<f32> {
+fn load_k(index: u32) -> vec4<f32> {
 #ifdef FP16
-    return unpack4x16float(kv[ti]);
+    return unpack4x16float(kv[index]);
 #else
-    return kv[ti];
+    return kv[index];
 #endif
 }
 
-fn load_v(ti: u32) -> vec4<f32> {
+fn load_v(index: u32) -> vec4<f32> {
     let offset = shape[2] * shape[1] * shape[0] / 4u;
 #ifdef FP16
-    return unpack4x16float(kv[ti + offset]);
+    return unpack4x16float(kv[index + offset]);
 #else
-    return kv[ti + offset];
+    return kv[index + offset];
 #endif
 }
 
-fn load_a(ti: u32) -> vec4<f32> {
+fn load_a(index: u32) -> vec4<f32> {
 #ifdef FP16
-    return unpack4x16float(ab[ti]);
+    return unpack4x16float(ab[index]);
 #else
-    return ab[ti];
+    return ab[index];
 #endif
 }
 
-fn load_kk(ti: u32) -> vec4<f32> {
+fn load_kk(index: u32) -> vec4<f32> {
     let offset = shape[2] * shape[1] * shape[0] / 4u;
 #ifdef FP16
-    return unpack4x16float(ab[ti + offset]);
+    return unpack4x16float(ab[index + offset]);
 #else
-    return ab[ti + offset];
+    return ab[index + offset];
 #endif
 }
 
@@ -149,7 +145,7 @@ fn time_mix(in: Input) {
         workgroupBarrier();
         if index < stride {
             shared_r[in.tid.x] = load_r(ti);
-            shared_w[in.tid.x] = sigmoid_exp(load_w(ti));
+            shared_w[in.tid.x] = exp(-0.606531 * load_w(ti));   // 0.606531 = exp(-0.5)
             shared_k[in.tid.x] = load_k(ti);
             let a = load_a(ti);
             let kk = load_kk(ti);
@@ -238,12 +234,14 @@ fn time_first(in: Input) {
         workgroupBarrier();
     }
 
-    let xx = dot(shared_x[head], vec4<f32>(1.0));
-    let vv = load_v(ti);
+    if index < stride {
+        let xx = dot(shared_x[head], vec4<f32>(1.0));
+        let vv = load_v(ti);
 
 #ifdef FP16
-    x[ti] = pack4x16float(unpack4x16float(x[ti]) + xx * vv);
+        x[ti] = pack4x16float(unpack4x16float(x[ti]) + xx * vv);
 #else
-    x[ti] = x[ti] + xx * vv;
+        x[ti] = x[ti] + xx * vv;
 #endif
+    }
 }

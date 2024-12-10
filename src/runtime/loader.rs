@@ -528,10 +528,7 @@ impl<R: Reader> Loader<R> {
                 ops.push(op);
             }
 
-            let op = TensorOp::blit(
-                tensor_f32.view(.., .., .., ..)?,
-                tensor_f16.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blit(&tensor_f32, &tensor_f16)?;
             ops.push(op);
 
             context.queue.submit(context.encode(&TensorOp::List(ops)));
@@ -549,12 +546,7 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-            let op = TensorOp::blend_lora(
-                &factor,
-                lora.x.view(.., .., .., ..)?,
-                lora.y.view(.., .., .., ..)?,
-                tensor.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blend_lora(&factor, &lora.x, &lora.y, &tensor)?;
             ops.push(op);
         }
         for lora in self.lora_vectors(name.as_ref())? {
@@ -583,12 +575,7 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-            let op = TensorOp::blend_lora(
-                &factor,
-                lora.x.view(.., .., .., ..)?,
-                lora.y.view(.., .., .., ..)?,
-                tensor.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blend_lora(&factor, &lora.x, &lora.y, &tensor)?;
             ops.push(op);
         }
         for lora in self.lora_vectors(name.as_ref())? {
@@ -616,12 +603,7 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-            let op = TensorOp::blend_lora(
-                &factor,
-                lora.x.view(.., .., .., ..)?,
-                lora.y.view(.., .., .., ..)?,
-                matrix.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blend_lora(&factor, &lora.x, &lora.y, matrix)?;
             ops.push(op);
         }
         for lora in self.lora_vectors(name.as_ref())? {
@@ -658,12 +640,7 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-            let op = TensorOp::blend_lora(
-                &factor,
-                lora.x.view(.., .., .., ..)?,
-                lora.y.view(.., .., .., ..)?,
-                matrix.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blend_lora(&factor, &lora.x, &lora.y, matrix)?;
             ops.push(op);
         }
         for lora in self.lora_vectors(name.as_ref())? {

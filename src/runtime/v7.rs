@@ -397,14 +397,12 @@ pub enum Hook {
     PostAttTokenShift(usize),
     PreAttLinear(usize),
     PostAttLinear(usize),
-    PreAttLora(usize),
-    PostAttLora(usize),
+    PreAttAdapt(usize),
+    PostAttAdapt(usize),
     PreAttControl(usize),
     PostAttControl(usize),
     PreAttDeltaRule(usize),
     PostAttDeltaRule(usize),
-    PreAttTimeDecayActivate(usize),
-    PostAttTimeDecayActivate(usize),
     PreAttTimeMix(usize),
     PostAttTimeMix(usize),
     PreAttGate(usize),
@@ -875,7 +873,7 @@ fn dispatch_layer<F: Float>(
             turbo(num_token),
         )?,
         hook_op(Hook::PostAttLinear(index))?,
-        hook_op(Hook::PreAttLora(index))?,
+        hook_op(Hook::PreAttAdapt(index))?,
         layer.att.w1.matmul_op(
             &buffer.att_wx,
             &buffer.temp_w,
@@ -887,6 +885,11 @@ fn dispatch_layer<F: Float>(
             &buffer.att_w,
             Activation::None,
             turbo(num_token),
+        )?,
+        TensorOp::add_activate(
+            &layer.att.w0,
+            &buffer.att_w,
+            BinAct::out(Activation::Sigmoid),
         )?,
         layer.att.a1.matmul_op(
             &buffer.att_ax,
@@ -917,7 +920,7 @@ fn dispatch_layer<F: Float>(
             Activation::None,
             turbo(num_token),
         )?,
-        hook_op(Hook::PostAttLora(index))?,
+        hook_op(Hook::PostAttAdapt(index))?,
         hook_op(Hook::PreAttControl(index))?,
         TensorOp::blit(&buffer.att_k, &buffer.att_kk)?,
         TensorOp::mul(&layer.att.k_k, &buffer.att_kk)?,
@@ -953,9 +956,6 @@ fn dispatch_layer<F: Float>(
     ops.push(hook_op(Hook::PostAttDeltaRule(index))?);
 
     ops.extend([
-        hook_op(Hook::PreAttTimeDecayActivate(index))?,
-        TensorOp::add(&layer.att.w0, &buffer.att_w)?,
-        hook_op(Hook::PostAttTimeDecayActivate(index))?,
         hook_op(Hook::PreAttTimeMix(index))?,
         TensorOp::blit(&buffer.att_k, buffer.att_kv.view(.., .., 0, ..)?)?,
         TensorOp::blit(&buffer.att_v, buffer.att_kv.view(.., .., 1, ..)?)?,
@@ -1130,7 +1130,7 @@ impl<R: Reader> ModelBuilder<R> {
             let x_g = loader.load_vector_f16(format!("{att}.x_g"))?;
 
             let w0 = loader.load_vector_f16(format!("{att}.w0"))?;
-            let a0 = loader.load_vector_f16(format!("{att}.w0"))?;
+            let a0 = loader.load_vector_f16(format!("{att}.a0"))?;
 
             let w1 = Matrix::Fp16(loader.load_matrix_f16(format!("{att}.w1"))?);
             let w2 = Matrix::Fp16(loader.load_matrix_f16(format!("{att}.w2"))?);
@@ -1195,7 +1195,7 @@ impl<R: Reader> ModelBuilder<R> {
                 w_k: load_matrix(format!("{att}.key.weight"), quant)?,
                 w_v: load_matrix(format!("{att}.value.weight"), quant)?,
                 w_r: load_matrix(format!("{att}.receptance.weight"), quant)?,
-                w_o: load_matrix(format!("{att}.output.weight"), quant)?,
+                w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount)?,
                 gn,
             };
 

@@ -38,6 +38,38 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
+fn load_f(index: u32) -> vec4<f32> {
+#ifdef FACTOR_FP16
+    return unpack4x16float(f[index]);
+#else
+    return f[index];
+#endif
+}
+
+fn load_x(index: u32) -> vec4<f32> {
+#ifdef IN_FP16
+    return unpack4x16float(x[index]);
+#else
+    return x[index];
+#endif
+}
+
+fn load_y(index: u32) -> vec4<f32> {
+#ifdef OUT_FP16
+    return unpack4x16float(y[index]);
+#else
+    return y[index];
+#endif
+}
+
+fn store_y(index: u32, value: vec4<f32>) {
+#ifdef OUT_FP16
+    y[index] = pack4x16float(value);
+#else
+    y[index] = value;
+#endif
+}
+
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn lerp(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = vf.shape.x / 4u;
@@ -46,30 +78,16 @@ fn lerp(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let batch = invocation_id.z;
 
     if all(vec3<u32>(index, token, batch) < vec3<u32>(stride, vf.shape.yz)) {
-#ifdef FACTOR_FP16
-        let _f = unpack4x16float(f[compute_index(vf, select(batch, 0u, vf.shape.z == 1u), select(token, 0u, vf.shape.y == 1u), index)]);
-#else
-        let _f = f[compute_index(vf, select(batch, 0u, vf.shape.z == 1u), select(token, 0u, vf.shape.y == 1u), index)];
-#endif
-#ifdef IN_FP16
-        let _x = unpack4x16float(x[compute_index(vx, batch, token, index)]);
-#else
-        let _x = x[compute_index(vx, batch, token, index)];
-#endif
-#ifdef OUT_FP16
-        let _y = unpack4x16float(y[compute_index(vy, batch, token, index)]);
-#else
-        let _y = y[compute_index(vy, batch, token, index)];
-#endif
+        let _f = load_f(compute_index(vf, select(batch, 0u, vf.shape.z == 1u), select(token, 0u, vf.shape.y == 1u), index));
+        let _x = load_x(compute_index(vx, batch, token, index));
+        let _y = load_y(compute_index(vy, batch, token, index));
+        
 #ifdef REVERSED
         let value = mix(_y, _x, _f);
 #else
         let value = mix(_x, _y, _f);
 #endif
-#ifdef OUT_FP16
-        y[compute_index(vy, batch, token, index)] = pack4x16float(value);
-#else
-        y[compute_index(vy, batch, token, index)] = value;
-#endif
+
+        store_y(compute_index(vy, batch, token, index), value);
     }
 }

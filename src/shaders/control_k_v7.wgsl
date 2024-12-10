@@ -34,6 +34,30 @@ fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     return dot(vec3<u32>(batch, token, index) + offset, vec3<u32>(view.stride.y * stride, stride, 1u));
 }
 
+fn load_a(index: u32) -> vec4<f32> {
+#ifdef A_FP16
+    return unpack4x16float(a[index]);
+#else
+    return a[index];
+#endif
+}
+
+fn load_k(index: u32) -> vec4<f32> {
+#ifdef K_FP16
+    return unpack4x16float(k[index]);
+#else
+    return k[index];
+#endif
+}
+
+fn store_k(index: u32, value: vec4<f32>) {
+#ifdef K_FP16
+    k[index] = pack4x16float(value);
+#else
+    k[index] = value;
+#endif
+}
+
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn main(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape.x / 4u;
@@ -43,22 +67,10 @@ fn main(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if index < stride {
         let _p = unpack4x16float(p[index]);
+        let _a = load_a(compute_index(va, batch, token, index));
+        let _k = load_k(compute_index(vk, batch, token, index));
 
-#ifdef K_FP16
-        let _k = unpack4x16float(k[compute_index(vk, batch, token, index)]);
-#else
-        let _k = k[compute_index(vk, batch, token, index)];
-#endif
-#ifdef A_FP16
-        let _a = unpack4x16float(a[compute_index(va, batch, token, index)]);
-#else
-        let _a = a[compute_index(va, batch, token, index)];
-#endif
         let value = _k * (vec4<f32>(1.0) + (_a - vec4<f32>(1.0)) * _p);
-#ifdef K_FP16
-        k[compute_index(vk, batch, token, index)] = pack4x16float(value);
-#else
-        k[compute_index(vk, batch, token, index)] = value;
-#endif
+        store_k(compute_index(vk, batch, token, index), value);
     }
 }

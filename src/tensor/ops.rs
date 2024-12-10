@@ -2993,6 +2993,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_l2_norm() -> Result<()> {
+        let context = create_context().await?;
+        fastrand::seed(42);
+
+        const C: usize = 1000;
+        const T: usize = 3;
+        const B: usize = 2;
+        const EPS: f32 = 1.0e-12;
+
+        let x = [(); C * T * B]
+            .map(|_| 10.0 * (fastrand::f32() - 0.5))
+            .to_vec();
+
+        let shape = Shape::new(C, T, B, 1);
+        let x_dev = context.tensor_from_data(shape, x.clone())?;
+
+        let l2_norm = TensorOp::l2_norm(&x_dev, EPS)?;
+        context.queue.submit(context.encode(&l2_norm));
+
+        let x_host = x_dev.back().await.to_vec();
+
+        let mut ans = vec![];
+        for x in &x.into_iter().chunks(C) {
+            let x = x.collect_vec().into_iter();
+            let norm = x.clone().map(|x| x * x).sum::<f32>().sqrt();
+            let x = x.map(|x| x / (norm + EPS));
+            ans.extend(x);
+        }
+
+        for (index, (a, b)) in itertools::zip_eq(x_host, ans).enumerate() {
+            assert!(
+                is_approx(a, b),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_matmul() -> Result<()> {
         let context = create_context().await?;
         fastrand::seed(42);
@@ -3060,28 +3100,21 @@ mod tests {
             // }
 
             let mut ans = vec![0.0; output_host.len()];
-            for batch in 0..b {
-                for token in 0..t {
-                    for line in 0..r {
-                        let matrix =
-                            &matrix[((batch * r + line) * c)..((batch * r + line) + 1) * c];
-                        let input =
-                            &input_f32[(batch * t + token) * c..((batch * t + token) + 1) * c];
-                        let product = matrix
-                            .iter()
-                            .zip(input.iter())
-                            .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
-                        ans[(batch * t + token) * r + line] = product;
+            for ((batch, token), line) in (0..b).cartesian_product(0..t).cartesian_product(0..r) {
+                let matrix = &matrix[((batch * r + line) * c)..((batch * r + line) + 1) * c];
+                let input = &input_f32[(batch * t + token) * c..((batch * t + token) + 1) * c];
+                let product = matrix
+                    .iter()
+                    .zip(input.iter())
+                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * *x.1);
+                ans[(batch * t + token) * r + line] = product;
 
-                        let input =
-                            &input_f16[(batch * t + token) * c..((batch * t + token) + 1) * c];
-                        let product = matrix
-                            .iter()
-                            .zip(input.iter())
-                            .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-                        ans[((b + batch) * t + token) * r + line] = product;
-                    }
-                }
+                let input = &input_f16[(batch * t + token) * c..((batch * t + token) + 1) * c];
+                let product = matrix
+                    .iter()
+                    .zip(input.iter())
+                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
+                ans[((b + batch) * t + token) * r + line] = product;
             }
 
             for (index, (a, b)) in itertools::zip_eq(output_host, ans).enumerate() {
@@ -3177,21 +3210,21 @@ mod tests {
             }
 
             let mut ans = vec![0.0; t * r];
-            for token in 0..t {
-                for line in 0..r {
-                    let matrix = &matrix_u8_host[line * c..(line + 1) * c];
-                    let input = &input_f16[token * c..(token + 1) * c];
-                    let product = matrix.iter().zip_eq(input.iter()).enumerate().fold(
-                        0.0f32,
-                        |acc, (i, x)| {
+            for (token, line) in (0..t).cartesian_product(0..r) {
+                let matrix = &matrix_u8_host[line * c..(line + 1) * c];
+                let input = &input_f16[token * c..(token + 1) * c];
+                let product =
+                    matrix
+                        .iter()
+                        .zip_eq(input.iter())
+                        .enumerate()
+                        .fold(0.0f32, |acc, (i, x)| {
                             let min = min[(line * c + i) / INT8_BLOCK_SIZE].to_f32();
                             let max = max[(line * c + i) / INT8_BLOCK_SIZE].to_f32();
                             let value = (*x.0 as f32) / 255.0;
                             acc + (value * (max - min) + min) * x.1.to_f32()
-                        },
-                    );
-                    ans[token * r + line] = product;
-                }
+                        });
+                ans[token * r + line] = product;
             }
 
             let ops = TensorOp::List(vec![TensorOp::matmul_vec_int8(
@@ -3359,34 +3392,30 @@ mod tests {
             }
 
             let mut truth = vec![0.0; t * r];
-            for token in 0..t {
-                for line in 0..r {
-                    let matrix = &matrix[line * c..(line + 1) * c];
-                    let input = &input_f16[token * c..(token + 1) * c];
-                    let product = matrix
-                        .iter()
-                        .zip(input.iter())
-                        .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
-                    truth[token * r + line] = product;
-                }
+            for (token, line) in (0..t).cartesian_product(0..r) {
+                let matrix = &matrix[line * c..(line + 1) * c];
+                let input = &input_f16[token * c..(token + 1) * c];
+                let product = matrix
+                    .iter()
+                    .zip(input.iter())
+                    .fold(0.0f32, |acc, x| acc + x.0.to_f32() * x.1.to_f32());
+                truth[token * r + line] = product;
             }
 
             let mut ans = vec![0.0; t * r];
-            for token in 0..t {
-                for line in 0..r {
-                    let matrix = &matrix_u8[line * c..(line + 1) * c];
-                    let input = &input_f16[token * c..(token + 1) * c];
-                    let product =
-                        matrix
-                            .iter()
-                            .zip(input.iter())
-                            .enumerate()
-                            .fold(0.0f32, |acc, (i, x)| {
-                                let amp = absmax[(line * c + i) / NF4_BLOCK_SIZE];
-                                acc + quant[*x.0 as usize] * amp.to_f32() * x.1.to_f32()
-                            });
-                    ans[token * r + line] = product;
-                }
+            for (token, line) in (0..t).cartesian_product(0..r) {
+                let matrix = &matrix_u8[line * c..(line + 1) * c];
+                let input = &input_f16[token * c..(token + 1) * c];
+                let product =
+                    matrix
+                        .iter()
+                        .zip(input.iter())
+                        .enumerate()
+                        .fold(0.0f32, |acc, (i, x)| {
+                            let amp = absmax[(line * c + i) / NF4_BLOCK_SIZE];
+                            acc + quant[*x.0 as usize] * amp.to_f32() * x.1.to_f32()
+                        });
+                ans[token * r + line] = product;
             }
 
             let ops = TensorOp::List(vec![TensorOp::matmul_vec_nf4(
