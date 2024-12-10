@@ -1817,9 +1817,7 @@ impl TensorOp {
     /// The V7 WKV kernel.
     ///
     /// Note that the state layout is different from the official implementation.
-    /// Here is a simple illustration shows the layout:
-    /// - Thread layouts are shown as `T0`, `T1`, etc.;
-    /// - Numbers with the same color are multiplied;
+    /// Here is an illustration of each head's layout:
     ///
     /// ![time-mix-v7][time-mix-v7]
     #[embed_doc_image("time-mix-v7", "assets/time-mix-v7.png")]
