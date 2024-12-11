@@ -1815,13 +1815,13 @@ impl TensorOp {
     }
 
     /// The V7 WKV kernel.
-    /// - `n`: [`k`, `v`, `a`, `kk`].
+    /// - `n`: Stack of `k`, `v`, `a`, `kk`.
     ///
     /// Note that the state layout is different from the official implementation.
     /// Here is an illustration of each head's layout:
     ///
     /// ![time-mix-v7][time-mix-v7]
-    #[embed_doc_image("time-mix-v7", "assets/time-mix-v7.png")]
+    #[embed_doc_image("time-mix-v7", "src/tensor/time-mix-v7.png")]
     pub fn time_mix_v7<'a, T: Float>(
         cursors: &TensorGpu<u32, ReadWrite>,
         state: impl Into<TensorGpuView<'a, f32>>,
