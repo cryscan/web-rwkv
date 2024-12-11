@@ -2938,7 +2938,6 @@ mod tests {
         let softmax = TensorOp::softmax(&x_dev)?;
 
         context.queue.submit(context.encode(&softmax));
-
         let x_host = x_dev.back().await.to_vec();
 
         let mut ans = vec![];
@@ -3156,7 +3155,7 @@ mod tests {
             let output_host = Vec::from(output_host);
 
             // profiler.end_frame().unwrap();
-            context.device.poll(wgpu::MaintainBase::Wait);
+            // context.device.poll(wgpu::MaintainBase::Wait);
 
             // if let Some(results) = profiler.process_finished_frame() {
             //     wgpu_profiler::chrometrace::write_chrometrace(
@@ -3526,6 +3525,46 @@ mod tests {
 
         test_matmul_nf4_inner(&context, 2560, 2048, 64).await?;
         test_matmul_nf4_inner(&context, 320, 64, 320).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_lerp() -> Result<()> {
+        let context = create_context().await?;
+        fastrand::seed(42);
+
+        const C: usize = 1000;
+        const T: usize = 3;
+        const B: usize = 2;
+
+        let x = [(); C * T * B].map(|_| fastrand::f32() - 0.5).to_vec();
+        let y = [(); C * T * B].map(|_| fastrand::f32() - 0.5).to_vec();
+        let f = [(); C * T * B].map(|_| fastrand::f32()).to_vec();
+
+        let shape = Shape::new(C, T, B, 1);
+        let x_dev = context.tensor_from_data(shape, x.clone())?;
+        let y_dev = context.tensor_from_data(shape, y.clone())?;
+        let f_dev = context.tensor_from_data(shape, f.clone())?;
+
+        let lerp = TensorOp::lerp(&x_dev, &y_dev, &f_dev, false)?;
+        context.queue.submit(context.encode(&lerp));
+
+        let y_host = y_dev.back().await.to_vec();
+
+        let mut ans = vec![];
+        for chunk in &itertools::multizip((&x, &y, &f)).chunks(C) {
+            for (x, y, f) in chunk {
+                ans.push(x * (1.0 - f) + y * f);
+            }
+        }
+
+        for (index, (a, b)) in itertools::zip_eq(y_host, ans).enumerate() {
+            assert!(
+                is_approx(a, b),
+                "Failed at index {index}, computed: {a} vs. answer: {b}"
+            );
+        }
 
         Ok(())
     }

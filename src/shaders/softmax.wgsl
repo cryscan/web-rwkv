@@ -32,6 +32,22 @@ fn reduce_sum(index: u32, stride: u32) {
     workgroupBarrier();
 }
 
+fn load_x(index: u32) -> vec4<f32> {
+#ifdef FP16
+    return unpack4x16float(x[index]);
+#else
+    return x[index];
+#endif
+}
+
+fn store_x(index: u32, value: vec4<f32>) {
+#ifdef FP16
+    x[index] = pack4x16float(value);
+#else
+    x[index] = value;
+#endif
+}
+
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
@@ -43,11 +59,7 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     var _max_4 = vec4<f32>(-1.0e30);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        let value = unpack4x16float(x[bb + i]);
-#else
-        let value = x[bb + i];
-#endif
+        let value = load_x(bb + i);
         _max_4 = max(_max_4, value);
     }
     sketch[index] = _max_4;
@@ -73,11 +85,7 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     var _sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        let value = unpack4x16float(x[bb + i]);
-#else
-        let value = x[bb + i];
-#endif
+        let value = load_x(bb + i);
         _sum += exp(value - maximum);
     }
     sketch[index] = _sum;
@@ -97,12 +105,7 @@ fn softmax(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     workgroupBarrier();
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        let value = unpack4x16float(x[bb + i]);
-        x[bb + i] = pack4x16float(exp(value - maximum) / sum);
-#else
-        let value = x[bb + i];
-        x[bb + i] = exp(value - maximum) / sum;
-#endif
+        let value = load_x(bb + i);
+        store_x(bb + i, exp(value - maximum) / sum);
     }
 }

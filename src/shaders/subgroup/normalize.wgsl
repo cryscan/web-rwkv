@@ -29,6 +29,22 @@ fn reduce_sum(index: u32, stride: u32) {
     workgroupBarrier();
 }
 
+fn load_x(index: u32) -> vec4<f32> {
+#ifdef FP16
+    return unpack4x16float(x[index]);
+#else
+    return x[index];
+#endif
+}
+
+fn store_x(index: u32, value: vec4<f32>) {
+#ifdef FP16
+    x[index] = pack4x16float(value);
+#else
+    x[index] = value;
+#endif
+}
+
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn recenter(
     @builtin(global_invocation_id) invocation_id: vec3<u32>,
@@ -46,11 +62,7 @@ fn recenter(
 
     var _sum_4: vec4<f32>;
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        let value = unpack4x16float(x[bb + i]);
-#else
-        let value = x[bb + i];
-#endif
+        let value = load_x(bb + i);
         _sum_4 += value;
     }
     _sum_4 = subgroupAdd(_sum_4);
@@ -85,13 +97,8 @@ fn recenter(
     workgroupBarrier();
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        let value = unpack4x16float(x[bb + i]);
-        x[bb + i] = pack4x16float(value - mean);
-#else
-        let value = x[bb + i];
-        x[bb + i] = value - mean;
-#endif
+        let value = load_x(bb + i);
+        store_x(bb + i, value - mean);
     }
 }
 
@@ -112,11 +119,7 @@ fn rms_norm(
 
     var _sum_4: vec4<f32>;
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        let value = unpack4x16float(x[bb + i]);
-#else
-        let value = x[bb + i];
-#endif
+        let value = load_x(bb + i);
         _sum_4 += value * value;
     }
     _sum_4 = subgroupAdd(_sum_4);
@@ -151,13 +154,8 @@ fn rms_norm(
     workgroupBarrier();
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        let value = unpack4x16float(x[bb + i]) * norm;
-        x[bb + i] = pack4x16float(fma(value, unpack4x16float(w[i]), unpack4x16float(b[i])));
-#else
-        let value = x[bb + i] * norm;
-        x[bb + i] = fma(value, unpack4x16float(w[i]), unpack4x16float(b[i]));
-#endif
+        let value = load_x(bb + i) * norm;
+        store_x(bb + i, fma(value, unpack4x16float(w[i]), unpack4x16float(b[i])));
     }
 }
 
@@ -178,11 +176,7 @@ fn l2_norm(
 
     var _sum_4: vec4<f32>;
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        let value = unpack4x16float(x[bb + i]);
-#else
-        let value = x[bb + i];
-#endif
+        let value = load_x(bb + i);
         _sum_4 += value * value;
     }
     _sum_4 = subgroupAdd(_sum_4);
@@ -217,10 +211,7 @@ fn l2_norm(
     workgroupBarrier();
 
     for (var i = index; i < stride; i += BLOCK_SIZE) {
-#ifdef FP16
-        x[bb + i] = pack4x16float(unpack4x16float(x[bb + i]) * norm);
-#else
-        x[bb + i] = x[bb + i] * norm;
-#endif
+        let value = load_x(bb + i) * norm;
+        store_x(bb + i, value);
     }
 }
