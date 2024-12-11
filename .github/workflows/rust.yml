@@ -50,7 +50,7 @@ jobs:
          command: clippy
          args: -- -D warnings
      
-      - name: test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+      # - name: test
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: test

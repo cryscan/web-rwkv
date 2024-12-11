@@ -282,10 +282,10 @@ impl<R: Reader> Loader<R> {
                 })
             }
             ModelVersion::V7 => {
-                let w = model.shape("blocks.0.att.w1").map(|shape| shape[0])?;
-                let a = model.shape("blocks.0.att.a1").map(|shape| shape[0])?;
-                let g = model.shape("blocks.0.att.g1").map(|shape| shape[0])?;
-                let v = model.shape("blocks.1.att.v1").map(|shape| shape[0])?;
+                let w = model.shape("blocks.0.att.w1")?[0];
+                let a = model.shape("blocks.0.att.a1")?[0];
+                let g = model.shape("blocks.0.att.g1")?[0];
+                let v = model.shape("blocks.1.att.v1")?[0];
                 ModelCustomInfo::V7(super::v7::CustomInfo { w, a, g, v })
             }
             _ => ModelCustomInfo::None,
