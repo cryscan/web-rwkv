@@ -24,14 +24,12 @@ struct Input {
 #ifdef FP16
 @group(0) @binding(5) var<storage, read> r: array<vec2<u32>>;           // (A, H, S)
 @group(0) @binding(6) var<storage, read> w: array<vec2<u32>>;           // (A, H, S)
-@group(0) @binding(7) var<storage, read> kv: array<vec2<u32>>;          // (2, A, H, S)
-@group(0) @binding(8) var<storage, read> ab: array<vec2<u32>>;          // (2, A, H, S)
+@group(0) @binding(7) var<storage, read> n: array<vec2<u32>>;           // (4, A, H, S)
 @group(0) @binding(9) var<storage, read_write> x: array<vec2<u32>>;     // (A, H, S)
 #else
 @group(0) @binding(5) var<storage, read> r: array<vec4<f32>>;           // (A, H, S)
 @group(0) @binding(6) var<storage, read> w: array<vec4<f32>>;           // (A, H, S)
-@group(0) @binding(7) var<storage, read> kv: array<vec4<f32>>;          // (2, A, H, S)
-@group(0) @binding(8) var<storage, read> ab: array<vec4<f32>>;          // (2, A, H, S)
+@group(0) @binding(7) var<storage, read> n: array<vec4<f32>>;           // (4, A, H, S)
 @group(0) @binding(9) var<storage, read_write> x: array<vec4<f32>>;     // (A, H, S)
 #endif
 
@@ -89,35 +87,36 @@ fn load_w(index: u32) -> vec4<f32> {
 
 fn load_k(index: u32) -> vec4<f32> {
 #ifdef FP16
-    return unpack4x16float(kv[index]);
+    return unpack4x16float(n[index]);
 #else
-    return kv[index];
+    return n[index];
 #endif
 }
 
 fn load_v(index: u32) -> vec4<f32> {
     let offset = shape[2] * shape[1] * shape[0] / 4u;
 #ifdef FP16
-    return unpack4x16float(kv[index + offset]);
+    return unpack4x16float(n[index + offset]);
 #else
-    return kv[index + offset];
+    return n[index + offset];
 #endif
 }
 
 fn load_a(index: u32) -> vec4<f32> {
+    let offset = shape[2] * shape[1] * shape[0] / 4u;
 #ifdef FP16
-    return unpack4x16float(ab[index]);
+    return unpack4x16float(n[index + 2u * offset]);
 #else
-    return ab[index];
+    return n[index + 2u * offset];
 #endif
 }
 
 fn load_kk(index: u32) -> vec4<f32> {
     let offset = shape[2] * shape[1] * shape[0] / 4u;
 #ifdef FP16
-    return unpack4x16float(ab[index + offset]);
+    return unpack4x16float(n[index + 3u * offset]);
 #else
-    return ab[index + offset];
+    return n[index + 3u * offset];
 #endif
 }
 

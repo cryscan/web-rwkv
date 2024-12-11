@@ -300,8 +300,7 @@ pub struct Runtime<F: Float> {
     pub att_kk: TensorGpu<F, ReadWrite>,
     pub att_vv: TensorGpu<F, ReadWrite>,
 
-    pub att_kv: TensorGpu<F, ReadWrite>,
-    pub att_ab: TensorGpu<F, ReadWrite>,
+    pub att_n: TensorGpu<F, ReadWrite>,
 
     /// Time decay LoRA intermediate.
     pub temp_w: TensorGpu<F, ReadWrite>,
@@ -325,8 +324,7 @@ impl<F: Float> Runtime<F> {
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
-        let att_kv_shape = Shape::new(info.num_emb, num_token, 2, 1);
-        let att_ab_shape = Shape::new(info.num_emb, num_token, 2, 1);
+        let att_n_shape = Shape::new(info.num_emb, num_token, 4, 1);
         let temp_w_shape = Shape::new(custom.w, num_token, 1, 1);
         let temp_a_shape = Shape::new(custom.a, num_token, 1, 1);
         let temp_g_shape = Shape::new(custom.g, num_token, 1, 1);
@@ -355,8 +353,7 @@ impl<F: Float> Runtime<F> {
             att_o: context.tensor_init(shape),
             att_kk: context.tensor_init(shape),
             att_vv: context.tensor_init(shape),
-            att_kv: context.tensor_init(att_kv_shape),
-            att_ab: context.tensor_init(att_ab_shape),
+            att_n: context.tensor_init(att_n_shape),
             temp_w: context.tensor_init(temp_w_shape),
             temp_a: context.tensor_init(temp_a_shape),
             temp_g: context.tensor_init(temp_g_shape),
@@ -778,17 +775,11 @@ fn dispatch_layer<F: Float>(
         TensorDimension::Size(num_token),
         TensorDimension::Size(1),
     )?;
-    let att_kv = buffer.att_kv.reshape(
+    let att_n = buffer.att_n.reshape(
         TensorDimension::Size(head_size),
         TensorDimension::Auto,
         TensorDimension::Size(num_token),
-        TensorDimension::Size(2),
-    )?;
-    let att_ab = buffer.att_ab.reshape(
-        TensorDimension::Size(head_size),
-        TensorDimension::Auto,
-        TensorDimension::Size(num_token),
-        TensorDimension::Size(2),
+        TensorDimension::Size(4),
     )?;
 
     let mut ops = vec![];
@@ -957,21 +948,20 @@ fn dispatch_layer<F: Float>(
 
     ops.extend([
         hook_op(Hook::PreAttTimeMix(index))?,
-        TensorOp::blit(&buffer.att_k, buffer.att_kv.view(.., .., 0, ..)?)?,
-        TensorOp::blit(&buffer.att_v, buffer.att_kv.view(.., .., 1, ..)?)?,
-        TensorOp::blit(&buffer.att_a, buffer.att_ab.view(.., .., 0, ..)?)?,
-        TensorOp::blit(&buffer.att_kk, buffer.att_ab.view(.., .., 1, ..)?)?,
+        TensorOp::blit(&buffer.att_k, buffer.att_n.view(.., .., 0, ..)?)?,
+        TensorOp::blit(&buffer.att_v, buffer.att_n.view(.., .., 1, ..)?)?,
+        TensorOp::blit(&buffer.att_a, buffer.att_n.view(.., .., 2, ..)?)?,
+        TensorOp::blit(&buffer.att_kk, buffer.att_n.view(.., .., 3, ..)?)?,
         TensorOp::time_mix_v7(
             &buffer.cursors,
             state.att(index)?,
             &att_r,
             &att_w,
-            &att_kv,
-            &att_ab,
+            &att_n,
             &att_x,
         )?,
         TensorOp::group_norm(&layer.att.gn.w, &layer.att.gn.b, &att_x, Model::GN_EPS)?,
-        TensorOp::time_first_v7(&layer.att.r_k, &att_r, &att_kv, &att_x)?,
+        TensorOp::time_first_v7(&layer.att.r_k, &att_r, &att_n, &att_x)?,
         hook_op(Hook::PostAttTimeMix(index))?,
         hook_op(Hook::PreAttGate(index))?,
         TensorOp::mul(&buffer.att_g, &buffer.att_x)?,

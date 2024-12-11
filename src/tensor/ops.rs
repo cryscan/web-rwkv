@@ -1815,6 +1815,7 @@ impl TensorOp {
     }
 
     /// The V7 WKV kernel.
+    /// - `n`: [`k`, `v`, `a`, `kk`].
     ///
     /// Note that the state layout is different from the official implementation.
     /// Here is an illustration of each head's layout:
@@ -1826,8 +1827,7 @@ impl TensorOp {
         state: impl Into<TensorGpuView<'a, f32>>,
         r: &TensorGpu<T, ReadWrite>,
         w: &TensorGpu<T, ReadWrite>,
-        kv: &TensorGpu<T, ReadWrite>,
-        ab: &TensorGpu<T, ReadWrite>,
+        n: &TensorGpu<T, ReadWrite>,
         x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 32;
@@ -1839,8 +1839,7 @@ impl TensorOp {
 
         r.check_shape(shape)?;
         w.check_shape(shape)?;
-        kv.check_shape([shape[0], shape[1], shape[2], 2])?;
-        ab.check_shape([shape[0], shape[1], shape[2], 2])?;
+        n.check_shape([shape[0], shape[1], shape[2], 4])?;
         state.check_shape([stride, shape[0] + 1, state.shape()[2], 1])?;
 
         let context = x.context();
@@ -1886,11 +1885,7 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 7,
-                    resource: kv.binding(),
-                },
-                BindGroupEntry {
-                    binding: 8,
-                    resource: ab.binding(),
+                    resource: n.binding(),
                 },
                 BindGroupEntry {
                     binding: 9,
@@ -1908,7 +1903,7 @@ impl TensorOp {
     pub fn time_first_v7<T: Float>(
         u: &TensorGpu<f16, ReadWrite>,
         r: &TensorGpu<T, ReadWrite>,
-        kv: &TensorGpu<T, ReadWrite>,
+        n: &TensorGpu<T, ReadWrite>,
         x: &TensorGpu<T, ReadWrite>,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 32;
@@ -1918,7 +1913,7 @@ impl TensorOp {
 
         r.check_shape(shape)?;
         u.check_shape([shape[0], shape[1], 1, 1])?;
-        kv.check_shape([shape[0], shape[1], shape[2], 2])?;
+        n.check_shape([shape[0], shape[1], shape[2], 4])?;
 
         let context = x.context();
         let pipeline = context.checkout_pipeline(
@@ -1951,7 +1946,7 @@ impl TensorOp {
                 },
                 BindGroupEntry {
                     binding: 7,
-                    resource: kv.binding(),
+                    resource: n.binding(),
                 },
                 BindGroupEntry {
                     binding: 9,
@@ -2539,30 +2534,30 @@ impl TensorOp {
     }
 
     pub fn lerp<'a, 'b, 'c, F0: Float, F1: Float, F2: Float>(
-        x: impl Into<TensorGpuView<'a, F0>>,
-        y: impl Into<TensorGpuView<'b, F1>>,
-        f: impl Into<TensorGpuView<'c, F2>>,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
+        factor: impl Into<TensorGpuView<'c, F2>>,
         reversed: bool,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let f: TensorGpuView<_> = f.into();
-        let x: TensorGpuView<_> = x.into();
-        let y: TensorGpuView<_> = y.into();
+        let factor: TensorGpuView<_> = factor.into();
+        let input: TensorGpuView<_> = input.into();
+        let output: TensorGpuView<_> = output.into();
 
         let shape = {
-            let [index, token, batch, _] = y.shape().into();
-            f.check_shape_any(&[
+            let [index, token, batch, _] = output.shape().into();
+            factor.check_shape_any(&[
                 [index, token, batch, 1],
                 [index, token, 1, 1],
                 [index, 1, batch, 1],
                 [index, 1, 1, 1],
             ])?;
-            x.check_shape([index, token, batch, 1])?;
-            y.shape()
+            input.check_shape([index, token, batch, 1])?;
+            output.shape()
         };
 
-        let context = y.context();
+        let context = output.context();
         let pipeline = context.checkout_pipeline(
             "lerp",
             include_str!("../shaders/lerp.wgsl"),
@@ -2570,9 +2565,9 @@ impl TensorOp {
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
-                .tensor(&f, Some("FACTOR"))
-                .tensor(&x, Some("IN"))
-                .tensor(&y, Some("OUT"))
+                .tensor(&factor, Some("FACTOR"))
+                .tensor(&input, Some("IN"))
+                .tensor(&output, Some("OUT"))
                 .bool("REVERSED", reversed),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
@@ -2581,27 +2576,27 @@ impl TensorOp {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: f.meta_binding(),
+                    resource: factor.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: x.meta_binding(),
+                    resource: input.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: y.meta_binding(),
+                    resource: output.meta_binding(),
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: f.binding(),
+                    resource: factor.binding(),
                 },
                 BindGroupEntry {
                     binding: 4,
-                    resource: x.binding(),
+                    resource: input.binding(),
                 },
                 BindGroupEntry {
                     binding: 5,
-                    resource: y.binding(),
+                    resource: output.binding(),
                 },
             ],
         })];

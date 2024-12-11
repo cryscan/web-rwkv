@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
         }
         ModelVersion::V7 => {
             let model = builder.build_v7().await?;
-            let bundle = v7::Bundle::<f16>::new(model, 1);
+            let bundle = v7::Bundle::<f16>::new(model, cli.batch);
             TokioRuntime::new(bundle).await
         }
     };
@@ -245,7 +245,7 @@ async fn main() -> Result<()> {
     );
 
     let mut num_token =
-        [100usize, 400, 200, 300].to_vec().repeat((batch + 3) / 4)[..batch].to_vec();
+        [100usize, 400, 200, 300].to_vec().repeat(batch.div_ceil(4))[..batch].to_vec();
 
     loop {
         #[cfg(not(debug_assertions))]
