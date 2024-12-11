@@ -196,6 +196,21 @@ $ cargo run --release --example converter -- --input /path/to/model.pth --output
   Maybe you are running a model that is just too big for your device. If the model doesn't fit into your VRam, the driver needs to constantly swap and transfer the model parameters, causing it to be 10x slower.
   Try to quantize your model first.
 
+##  Debugging Rust on Windows
+Source: [link](https://github.com/rust-lang/rust-analyzer/issues/18535).
+
+The default toolchain installed on Windows by `Rustup` is the `x86_64-pc-windows-msvc` toolchain. This toolchain does not include Rust-specific formatters for LLDB, as it is assumed that users will primarily use WinDbg or Microsoft Visual Studio's debugger for this target.
+If you prefer to use `CodeLLDB` for debugging, you have two options:
+
+1. Use the `x86_64-pc-windows-gnu` toolchain to compile your Rust project: This option ensures full LLDB visualization support for Rust types.
+2. Compile with the `x86_64-pc-windows-msvc` toolchain but use LLDB formatters from `x86_64-pc-windows-gnu`: To use this option, install the `x86_64-pc-windows-gnu` toolchain via `rustup toolchain add x86_64-pc-windows-gnu`.
+Then, configure CodeLLDB to load its formatters by adding the following entry to your workspace configuration:
+
+```json
+"lldb.script": { "lang.rust.toolchain": "x86_64-pc-windows-gnu" }
+```
+
+Note that this setup is less ideal due to differences in the debug information layout emitted by the Rust compiler for enum data types when targeting MSVC, which means enums may not be visualized correctly. However, LLDB formatters will work for standard collections like strings and vectors.
 
 ## Credits
 - Tokenizer is implemented by [@koute](https://github.com/koute/rwkv_tokenizer).
