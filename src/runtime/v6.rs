@@ -14,16 +14,17 @@ use wgpu::CommandBuffer;
 use super::{
     infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
-    model::{AsAny, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
+    model::{AsAny, EmbedDevice, ModelBuilder, ModelCustomInfo, ModelInfo, State as _},
     Dispatcher, Job,
 };
 use crate::{
     context::Context,
     num::Float,
+    runtime::model::Quant,
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{Activation, TensorCommand, TensorOp},
+        ops::{Activation, BinAct, TensorCommand, TensorOp},
         serialization::Seed,
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
@@ -43,6 +44,16 @@ pub struct Model {
 impl Model {
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
+
+    pub const DEFAULT_RESCALE: usize = 6;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CustomInfo {
+    /// Token shift LoRA adapter size.
+    pub time_mix: usize,
+    /// Time decay LoRA adapter size.
+    pub time_decay: usize,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
@@ -287,14 +298,18 @@ pub struct Runtime<F: Float> {
 
 impl<F: Float> Runtime<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
+        let ModelCustomInfo::V6(custom) = info.custom else {
+            unreachable!()
+        };
+
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
         let time_mix_shape = Shape::new(info.num_emb, num_token, 5, 1);
-        let time_mix_x_shape = Shape::new(info.time_mix_adapter_size, 5, num_token, 1);
-        let time_mix_t_shape = Shape::new(info.time_mix_adapter_size, num_token, 5, 1);
-        let time_decay_shape = Shape::new(info.time_decay_adapter_size, num_token, 1, 1);
+        let time_mix_x_shape = Shape::new(custom.time_mix, 5, num_token, 1);
+        let time_mix_t_shape = Shape::new(custom.time_mix, num_token, 5, 1);
+        let time_decay_shape = Shape::new(custom.time_decay, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
@@ -632,7 +647,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
                 }
                 None => EmbedDevice::Cpu,
             };
-            ops.append(&mut vec![
+            ops.extend([
                 hook_op(Hook::PostEmbedLoaded)?,
                 TensorOp::layer_norm(
                     &tensor.embed.layer_norm.w,
@@ -714,50 +729,52 @@ fn dispatch_layer<F: Float>(
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let Frame { state, buffer, .. } = &frame;
 
-    use TensorDimension::{Auto, Dimension};
-    let time_first =
-        layer
-            .att
-            .time_first
-            .reshape(Dimension(head_size), Auto, Dimension(1), Dimension(1))?;
-    let time_decay = buffer.time_decay.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+    let time_first = layer.att.time_first.reshape(
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(1),
+        TensorDimension::Size(1),
     )?;
-    let time_mix_x =
-        buffer
-            .time_mix_x
-            .reshape(Auto, Dimension(num_token), Dimension(1), Dimension(1))?;
+    let time_decay = buffer.time_decay.reshape(
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
+    )?;
+    let time_mix_x = buffer.time_mix_x.reshape(
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
+        TensorDimension::Size(1),
+    )?;
     let aux_x = buffer.aux_x.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
     )?;
     let att_k = buffer.att_k.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
     )?;
     let att_v = buffer.att_v.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
     )?;
     let att_r = buffer.att_r.reshape(
-        Dimension(head_size),
-        Auto,
-        Dimension(num_token),
-        Dimension(1),
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
     )?;
 
     let mut ops = vec![];
 
-    ops.append(&mut vec![
+    ops.extend([
         TensorOp::blit(&buffer.x, &buffer.att_x)?,
         hook_op(Hook::PreAtt(index))?,
         TensorOp::layer_norm(
@@ -870,7 +887,7 @@ fn dispatch_layer<F: Float>(
         TensorOp::blit(&buffer.aux_x, &buffer.att_x)?,
         hook_op(Hook::PostAttTimeMix(index))?,
         hook_op(Hook::PreAttGate(index))?,
-        TensorOp::mul_activate(&buffer.att_g, &buffer.att_x, Activation::Silu)?,
+        TensorOp::mul_activate(&buffer.att_g, &buffer.att_x, BinAct::x(Activation::Silu))?,
         hook_op(Hook::PostAttGate(index))?,
         hook_op(Hook::PreAttOut(index))?,
         layer.att.w_o.matmul_op(
@@ -884,7 +901,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostAtt(index))?,
     ]);
 
-    ops.append(&mut vec![
+    ops.extend([
         TensorOp::blit(&buffer.x, &buffer.ffn_x)?,
         hook_op(Hook::PreFfn(index))?,
         TensorOp::layer_norm(
@@ -965,7 +982,7 @@ fn dispatch_header<F: Float>(
     let header = &frame.header;
 
     if num_header > 0 {
-        ops.append(&mut vec![
+        ops.extend([
             hook_op(Hook::PreHead)?,
             TensorOp::layer_norm(
                 &head.layer_norm.w,
@@ -997,6 +1014,8 @@ impl<R: Reader> ModelBuilder<R> {
             embed_device,
             ..
         } = self;
+
+        let rescale = rescale.unwrap_or(Model::DEFAULT_RESCALE);
 
         let info = Loader::info(&model)?;
         let loader = Loader {
@@ -1077,17 +1096,17 @@ impl<R: Reader> ModelBuilder<R> {
                     .load_vector_f16(format!("{att}.ln_x.weight"))?
                     .reshape(
                         TensorDimension::Auto,
-                        TensorDimension::Dimension(info.num_head),
-                        TensorDimension::Dimension(1),
-                        TensorDimension::Dimension(1),
+                        TensorDimension::Size(info.num_head),
+                        TensorDimension::Size(1),
+                        TensorDimension::Size(1),
                     )?,
                 b: loader
                     .load_vector_f16(format!("{att}.ln_x.bias"))?
                     .reshape(
                         TensorDimension::Auto,
-                        TensorDimension::Dimension(info.num_head),
-                        TensorDimension::Dimension(1),
-                        TensorDimension::Dimension(1),
+                        TensorDimension::Size(info.num_head),
+                        TensorDimension::Size(1),
+                        TensorDimension::Size(1),
                     )?,
             };
 
@@ -1164,8 +1183,6 @@ pub async fn read_state<R: Reader>(
     info: &ModelInfo,
     model: R,
 ) -> Result<TensorCpu<f32>> {
-    use TensorDimension::{Auto, Dimension};
-
     let loader = Loader {
         context: context.clone(),
         model,
@@ -1180,12 +1197,12 @@ pub async fn read_state<R: Reader>(
         let matrix = loader.load_matrix_f16(format!("blocks.{layer}.att.time_state"))?;
         let state: TensorGpu<_, _> = context.tensor_init([head_size, info.num_head, head_size, 1]);
         let reshaped: TensorGpu<f16, _> = state.reshape(
-            Dimension(info.num_emb),
-            Dimension(head_size),
-            Dimension(1),
-            Auto,
+            TensorDimension::Size(info.num_emb),
+            TensorDimension::Size(head_size),
+            TensorDimension::Size(1),
+            TensorDimension::Auto,
         )?;
-        ops.append(&mut vec![
+        ops.extend([
             TensorOp::transpose(&matrix, &state)?,
             TensorOp::blit(&reshaped, data.view(.., 1..head_size + 1, layer, ..)?)?,
         ]);

@@ -73,7 +73,7 @@ fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let bi = compute_index(cursor.batch, 2u, index);
         let pi = compute_index(cursor.batch, 3u, index);
 
-        let bti = t * stride + index;
+        let ti = t * stride + index;
 
         var aa = state[ai];
         var bb = state[bi];
@@ -82,15 +82,15 @@ fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 #ifdef FP16
         state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[(cursor.token + cursor.len - 1u) * stride + index]);
 
-        let kk = unpack4x16float(k[bti]);
-        let vv = unpack4x16float(v[bti]);
-        let rr = 1.0 / (1.0 + exp(-unpack4x16float(r[bti])));
+        let kk = unpack4x16float(k[ti]);
+        let vv = unpack4x16float(v[ti]);
+        let rr = 1.0 / (1.0 + exp(-unpack4x16float(r[ti])));
 #else
         state[compute_index(cursor.batch, 0u, index)] = x[(cursor.token + cursor.len - 1u) * stride + index];
 
-        let kk = k[bti];
-        let vv = v[bti];
-        let rr = 1.0 / (1.0 + exp(-r[bti]));
+        let kk = k[ti];
+        let vv = v[ti];
+        let rr = 1.0 / (1.0 + exp(-r[ti]));
 #endif
 
         var ww = u + kk;
@@ -99,9 +99,9 @@ fn time_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         var e2 = exp(ww - q);
 
 #ifdef FP16
-        x[bti] = pack4x16float(rr * (e1 * aa + e2 * vv) / (e1 * bb + e2));
+        x[ti] = pack4x16float(rr * (e1 * aa + e2 * vv) / (e1 * bb + e2));
 #else
-        x[bti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
+        x[ti] = rr * (e1 * aa + e2 * vv) / (e1 * bb + e2);
 #endif
 
         ww = w + pp;

@@ -14,12 +14,13 @@ use wgpu::CommandBuffer;
 use super::{
     infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
-    model::{AsAny, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
+    model::{AsAny, EmbedDevice, ModelBuilder, ModelCustomInfo, ModelInfo, State as _},
     Dispatcher, Job,
 };
 use crate::{
     context::Context,
     num::Float,
+    runtime::model::Quant,
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
@@ -41,10 +42,19 @@ pub struct Model {
 }
 
 impl Model {
+    pub const L2_EPS: f32 = 1.0e-12;
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
 
-    pub const DEFAULT_RESCALE: usize = 6;
+    pub const DEFAULT_RESCALE: usize = usize::MAX;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CustomInfo {
+    pub w: usize,
+    pub a: usize,
+    pub g: usize,
+    pub v: usize,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
@@ -65,39 +75,52 @@ pub struct LayerNorm {
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 #[serde_seed(seed = "Seed", context = "Context")]
 pub struct Att {
-    pub time_decay: TensorGpu<f32, ReadWrite>,
-    pub time_first: TensorGpu<f32, ReadWrite>,
+    pub x_r: TensorGpu<f16, ReadWrite>,
+    pub x_w: TensorGpu<f16, ReadWrite>,
+    pub x_k: TensorGpu<f16, ReadWrite>,
+    pub x_v: TensorGpu<f16, ReadWrite>,
+    pub x_a: TensorGpu<f16, ReadWrite>,
+    pub x_g: TensorGpu<f16, ReadWrite>,
 
-    pub time_mix_k: TensorGpu<f16, ReadWrite>,
-    pub time_mix_v: TensorGpu<f16, ReadWrite>,
-    pub time_mix_r: TensorGpu<f16, ReadWrite>,
-    pub time_mix_g: TensorGpu<f16, ReadWrite>,
+    pub w0: TensorGpu<f16, ReadWrite>,
+    pub a0: TensorGpu<f16, ReadWrite>,
+    pub v0: TensorGpu<f16, ReadWrite>,
+
+    pub w1: Matrix,
+    pub w2: Matrix,
+    pub a1: Matrix,
+    pub a2: Matrix,
+    pub g1: Matrix,
+    pub g2: Matrix,
+    pub v1: Matrix,
+    pub v2: Matrix,
+
+    pub r_k: TensorGpu<f16, ReadWrite>,
+    pub k_k: TensorGpu<f16, ReadWrite>,
+    pub k_a: TensorGpu<f16, ReadWrite>,
 
     pub w_k: Matrix,
     pub w_v: Matrix,
     pub w_r: Matrix,
-    pub w_g: Matrix,
     pub w_o: Matrix,
 
-    pub group_norm: LayerNorm,
+    pub gn: LayerNorm,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 #[serde_seed(seed = "Seed", context = "Context")]
 pub struct Ffn {
-    pub time_mix_k: TensorGpu<f16, ReadWrite>,
-    pub time_mix_r: TensorGpu<f16, ReadWrite>,
+    pub x_k: TensorGpu<f16, ReadWrite>,
 
     pub w_k: Matrix,
     pub w_v: Matrix,
-    pub w_r: Matrix,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 #[serde_seed(seed = "Seed", context = "Context")]
 pub struct Layer {
-    pub att_layer_norm: LayerNorm,
-    pub ffn_layer_norm: LayerNorm,
+    pub att_ln: LayerNorm,
+    pub ffn_ln: LayerNorm,
     pub att: Att,
     pub ffn: Ffn,
 }
@@ -105,7 +128,7 @@ pub struct Layer {
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 #[serde_seed(seed = "Seed", context = "Context")]
 pub struct Embed {
-    pub layer_norm: LayerNorm,
+    pub ln: LayerNorm,
     pub w: TensorCpu<f16>,
     pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
@@ -113,7 +136,7 @@ pub struct Embed {
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 #[serde_seed(seed = "Seed", context = "Context")]
 pub struct Head {
-    pub layer_norm: LayerNorm,
+    pub ln: LayerNorm,
     pub w: Matrix,
 }
 
@@ -249,38 +272,63 @@ impl DeepClone for State {
 
 #[derive(Debug, Clone)]
 pub struct Runtime<F: Float> {
-    pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
+    pub tokens: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<f16, ReadWrite>,
 
     pub x: TensorGpu<F, ReadWrite>,
     pub aux_x: TensorGpu<f32, ReadWrite>,
 
     pub att_x: TensorGpu<F, ReadWrite>,
+    pub att_v0: TensorGpu<F, ReadWrite>,
+
+    pub att_rx: TensorGpu<F, ReadWrite>,
+    pub att_wx: TensorGpu<F, ReadWrite>,
     pub att_kx: TensorGpu<F, ReadWrite>,
     pub att_vx: TensorGpu<F, ReadWrite>,
-    pub att_rx: TensorGpu<F, ReadWrite>,
+    pub att_ax: TensorGpu<F, ReadWrite>,
     pub att_gx: TensorGpu<F, ReadWrite>,
-    pub att_k: TensorGpu<f32, ReadWrite>,
-    pub att_v: TensorGpu<f32, ReadWrite>,
-    pub att_r: TensorGpu<f32, ReadWrite>,
+
+    pub att_r: TensorGpu<F, ReadWrite>,
+    pub att_w: TensorGpu<F, ReadWrite>,
+    pub att_k: TensorGpu<F, ReadWrite>,
+    pub att_v: TensorGpu<F, ReadWrite>,
+    pub att_a: TensorGpu<F, ReadWrite>,
     pub att_g: TensorGpu<F, ReadWrite>,
     pub att_o: TensorGpu<F, ReadWrite>,
 
+    pub att_kk: TensorGpu<F, ReadWrite>,
+    pub att_vv: TensorGpu<F, ReadWrite>,
+
+    pub att_n: TensorGpu<F, ReadWrite>,
+
+    /// Time decay LoRA intermediate.
+    pub temp_w: TensorGpu<F, ReadWrite>,
+    pub temp_a: TensorGpu<F, ReadWrite>,
+    pub temp_g: TensorGpu<F, ReadWrite>,
+    pub temp_v: TensorGpu<F, ReadWrite>,
+
     pub ffn_x: TensorGpu<F, ReadWrite>,
     pub ffn_kx: TensorGpu<F, ReadWrite>,
-    pub ffn_rx: TensorGpu<F, ReadWrite>,
     pub ffn_k: TensorGpu<F, ReadWrite>,
     pub ffn_v: TensorGpu<F, ReadWrite>,
-    pub ffn_r: TensorGpu<F, ReadWrite>,
 }
 
 impl<F: Float> Runtime<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
+        let ModelCustomInfo::V7(custom) = info.custom else {
+            unreachable!()
+        };
+
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
+        let att_n_shape = Shape::new(info.num_emb, num_token, 4, 1);
+        let temp_w_shape = Shape::new(custom.w, num_token, 1, 1);
+        let temp_a_shape = Shape::new(custom.a, num_token, 1, 1);
+        let temp_g_shape = Shape::new(custom.g, num_token, 1, 1);
+        let temp_v_shape = Shape::new(custom.v, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
@@ -289,21 +337,31 @@ impl<F: Float> Runtime<F> {
             x: context.tensor_init(shape),
             aux_x: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
+            att_v0: context.tensor_init(shape),
+            att_rx: context.tensor_init(shape),
+            att_wx: context.tensor_init(shape),
             att_kx: context.tensor_init(shape),
             att_vx: context.tensor_init(shape),
-            att_rx: context.tensor_init(shape),
+            att_ax: context.tensor_init(shape),
             att_gx: context.tensor_init(shape),
+            att_r: context.tensor_init(shape),
+            att_w: context.tensor_init(shape),
             att_k: context.tensor_init(shape),
             att_v: context.tensor_init(shape),
-            att_r: context.tensor_init(shape),
+            att_a: context.tensor_init(shape),
             att_g: context.tensor_init(shape),
             att_o: context.tensor_init(shape),
+            att_kk: context.tensor_init(shape),
+            att_vv: context.tensor_init(shape),
+            att_n: context.tensor_init(att_n_shape),
+            temp_w: context.tensor_init(temp_w_shape),
+            temp_a: context.tensor_init(temp_a_shape),
+            temp_g: context.tensor_init(temp_g_shape),
+            temp_v: context.tensor_init(temp_v_shape),
             ffn_x: context.tensor_init(shape),
             ffn_kx: context.tensor_init(shape),
-            ffn_rx: context.tensor_init(shape),
             ffn_k: context.tensor_init(hidden_shape),
             ffn_v: context.tensor_init(shape),
-            ffn_r: context.tensor_init(shape),
         }
     }
 }
@@ -336,6 +394,12 @@ pub enum Hook {
     PostAttTokenShift(usize),
     PreAttLinear(usize),
     PostAttLinear(usize),
+    PreAttAdapt(usize),
+    PostAttAdapt(usize),
+    PreAttControl(usize),
+    PostAttControl(usize),
+    PreAttDeltaRule(usize),
+    PostAttDeltaRule(usize),
     PreAttTimeMix(usize),
     PostAttTimeMix(usize),
     PreAttGate(usize),
@@ -500,6 +564,7 @@ impl<F: Float> super::model::Bundle for Bundle<F> {
         self.state.clone()
     }
 
+    #[inline]
     fn model(&self) -> impl Serialize + 'static {
         self.model.clone()
     }
@@ -607,8 +672,8 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
             ops.extend([
                 hook_op(Hook::PostEmbedLoaded)?,
                 TensorOp::layer_norm(
-                    &tensor.embed.layer_norm.w,
-                    &tensor.embed.layer_norm.b,
+                    &tensor.embed.ln.w,
+                    &tensor.embed.ln.b,
                     &buffer.input,
                     Model::LN_EPS,
                 )?,
@@ -686,31 +751,13 @@ fn dispatch_layer<F: Float>(
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let Frame { state, buffer, .. } = &frame;
 
-    let time_first = layer.att.time_first.reshape(
-        TensorDimension::Size(head_size),
-        TensorDimension::Auto,
-        TensorDimension::Size(1),
-        TensorDimension::Size(1),
-    )?;
-    let time_decay = layer.att.time_decay.reshape(
-        TensorDimension::Size(head_size),
-        TensorDimension::Auto,
-        TensorDimension::Size(1),
-        TensorDimension::Size(1),
-    )?;
-    let aux_x = buffer.aux_x.reshape(
+    let att_kk = buffer.att_kk.reshape(
         TensorDimension::Size(head_size),
         TensorDimension::Auto,
         TensorDimension::Size(num_token),
         TensorDimension::Size(1),
     )?;
-    let att_k = buffer.att_k.reshape(
-        TensorDimension::Size(head_size),
-        TensorDimension::Auto,
-        TensorDimension::Size(num_token),
-        TensorDimension::Size(1),
-    )?;
-    let att_v = buffer.att_v.reshape(
+    let att_x = buffer.att_x.reshape(
         TensorDimension::Size(head_size),
         TensorDimension::Auto,
         TensorDimension::Size(num_token),
@@ -722,6 +769,18 @@ fn dispatch_layer<F: Float>(
         TensorDimension::Size(num_token),
         TensorDimension::Size(1),
     )?;
+    let att_w = buffer.att_w.reshape(
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(1),
+    )?;
+    let att_n = buffer.att_n.reshape(
+        TensorDimension::Size(head_size),
+        TensorDimension::Auto,
+        TensorDimension::Size(num_token),
+        TensorDimension::Size(4),
+    )?;
 
     let mut ops = vec![];
 
@@ -729,8 +788,8 @@ fn dispatch_layer<F: Float>(
         TensorOp::blit(&buffer.x, &buffer.att_x)?,
         hook_op(Hook::PreAtt(index))?,
         TensorOp::layer_norm(
-            &layer.att_layer_norm.w,
-            &layer.att_layer_norm.b,
+            &layer.att_ln.w,
+            &layer.att_ln.b,
             &buffer.att_x,
             Model::LN_EPS,
         )?,
@@ -738,38 +797,60 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreAttTokenShift(index))?,
         TensorOp::token_shift(
             &buffer.cursors,
-            &layer.att.time_mix_k,
-            state.att(index)?,
-            &buffer.att_x,
-            &buffer.att_kx,
-            false,
-        )?,
-        TensorOp::token_shift(
-            &buffer.cursors,
-            &layer.att.time_mix_v,
-            state.att(index)?,
-            &buffer.att_x,
-            &buffer.att_vx,
-            false,
-        )?,
-        TensorOp::token_shift(
-            &buffer.cursors,
-            &layer.att.time_mix_r,
+            &layer.att.x_r,
             state.att(index)?,
             &buffer.att_x,
             &buffer.att_rx,
-            false,
+            true,
         )?,
         TensorOp::token_shift(
             &buffer.cursors,
-            &layer.att.time_mix_g,
+            &layer.att.x_w,
+            state.att(index)?,
+            &buffer.att_x,
+            &buffer.att_wx,
+            true,
+        )?,
+        TensorOp::token_shift(
+            &buffer.cursors,
+            &layer.att.x_k,
+            state.att(index)?,
+            &buffer.att_x,
+            &buffer.att_kx,
+            true,
+        )?,
+        TensorOp::token_shift(
+            &buffer.cursors,
+            &layer.att.x_v,
+            state.att(index)?,
+            &buffer.att_x,
+            &buffer.att_vx,
+            true,
+        )?,
+        TensorOp::token_shift(
+            &buffer.cursors,
+            &layer.att.x_a,
+            state.att(index)?,
+            &buffer.att_x,
+            &buffer.att_ax,
+            true,
+        )?,
+        TensorOp::token_shift(
+            &buffer.cursors,
+            &layer.att.x_g,
             state.att(index)?,
             &buffer.att_x,
             &buffer.att_gx,
-            false,
+            true,
         )?,
         hook_op(Hook::PostAttTokenShift(index))?,
         hook_op(Hook::PreAttLinear(index))?,
+        layer.att.w_r.matmul_op(
+            &buffer.att_rx,
+            &buffer.att_r,
+            Activation::None,
+            turbo(num_token),
+        )?,
         layer.att.w_k.matmul_op(
             &buffer.att_kx,
             &buffer.att_k,
@@ -782,41 +863,108 @@ fn dispatch_layer<F: Float>(
             Activation::None,
             turbo(num_token),
         )?,
-        layer.att.w_r.matmul_op(
-            &buffer.att_rx,
-            &buffer.att_r,
+        hook_op(Hook::PostAttLinear(index))?,
+        hook_op(Hook::PreAttAdapt(index))?,
+        layer.att.w1.matmul_op(
+            &buffer.att_wx,
+            &buffer.temp_w,
+            Activation::Tanh,
+            turbo(num_token),
+        )?,
+        layer.att.w2.matmul_op(
+            &buffer.temp_w,
+            &buffer.att_w,
             Activation::None,
             turbo(num_token),
         )?,
-        layer.att.w_g.matmul_op(
+        TensorOp::add_activate(
+            &layer.att.w0,
+            &buffer.att_w,
+            BinAct::out(Activation::Sigmoid),
+        )?,
+        layer.att.a1.matmul_op(
+            &buffer.att_ax,
+            &buffer.temp_a,
+            Activation::None,
+            turbo(num_token),
+        )?,
+        layer.att.a2.matmul_op(
+            &buffer.temp_a,
+            &buffer.att_a,
+            Activation::None,
+            turbo(num_token),
+        )?,
+        TensorOp::add_activate(
+            &layer.att.a0,
+            &buffer.att_a,
+            BinAct::out(Activation::Sigmoid),
+        )?,
+        layer.att.g1.matmul_op(
             &buffer.att_gx,
+            &buffer.temp_g,
+            Activation::Sigmoid,
+            turbo(num_token),
+        )?,
+        layer.att.g2.matmul_op(
+            &buffer.temp_g,
             &buffer.att_g,
             Activation::None,
             turbo(num_token),
         )?,
-        hook_op(Hook::PostAttLinear(index))?,
+        hook_op(Hook::PostAttAdapt(index))?,
+        hook_op(Hook::PreAttControl(index))?,
+        TensorOp::blit(&buffer.att_k, &buffer.att_kk)?,
+        TensorOp::mul(&layer.att.k_k, &buffer.att_kk)?,
+        TensorOp::l2_norm(&att_kk, Model::L2_EPS)?,
+        TensorOp::control_k_v7(&layer.att.k_a, &buffer.att_a, &buffer.att_k)?,
+        hook_op(Hook::PostAttControl(index))?,
+    ]);
+
+    ops.push(hook_op(Hook::PreAttDeltaRule(index))?);
+    match index {
+        0 => ops.push(TensorOp::blit(&buffer.att_v, &buffer.att_v0)?),
+        _ => ops.extend([
+            layer.att.v1.matmul_op(
+                &buffer.att_vx,
+                &buffer.temp_v,
+                Activation::None,
+                turbo(num_token),
+            )?,
+            layer.att.v2.matmul_op(
+                &buffer.temp_v,
+                &buffer.att_vv,
+                Activation::None,
+                turbo(num_token),
+            )?,
+            TensorOp::add_activate(
+                &layer.att.v0,
+                &buffer.att_vv,
+                BinAct::out(Activation::Sigmoid),
+            )?,
+            TensorOp::lerp(&buffer.att_v0, &buffer.att_v, &buffer.att_vv, true)?,
+        ]),
+    };
+    ops.push(hook_op(Hook::PostAttDeltaRule(index))?);
+
+    ops.extend([
         hook_op(Hook::PreAttTimeMix(index))?,
-        TensorOp::blit(&buffer.att_x, &buffer.aux_x)?,
-        TensorOp::time_mix_v5(
+        TensorOp::blit(&buffer.att_k, buffer.att_n.view(.., .., 0, ..)?)?,
+        TensorOp::blit(&buffer.att_v, buffer.att_n.view(.., .., 1, ..)?)?,
+        TensorOp::blit(&buffer.att_a, buffer.att_n.view(.., .., 2, ..)?)?,
+        TensorOp::blit(&buffer.att_kk, buffer.att_n.view(.., .., 3, ..)?)?,
+        TensorOp::time_mix_v7(
             &buffer.cursors,
-            &time_decay,
-            &time_first,
             state.att(index)?,
-            &att_k,
-            &att_v,
             &att_r,
-            &aux_x,
+            &att_w,
+            &att_n,
+            &att_x,
         )?,
-        TensorOp::group_norm(
-            &layer.att.group_norm.w,
-            &layer.att.group_norm.b,
-            &aux_x,
-            Model::GN_EPS,
-        )?,
-        TensorOp::blit(&buffer.aux_x, &buffer.att_x)?,
+        TensorOp::group_norm(&layer.att.gn.w, &layer.att.gn.b, &att_x, Model::GN_EPS)?,
+        TensorOp::time_first_v7(&layer.att.r_k, &att_r, &att_n, &att_x)?,
         hook_op(Hook::PostAttTimeMix(index))?,
         hook_op(Hook::PreAttGate(index))?,
-        TensorOp::mul_activate(&buffer.att_g, &buffer.att_x, BinAct::x(Activation::Silu))?,
+        TensorOp::mul(&buffer.att_g, &buffer.att_x)?,
         hook_op(Hook::PostAttGate(index))?,
         hook_op(Hook::PreAttOut(index))?,
         layer.att.w_o.matmul_op(
@@ -834,8 +982,8 @@ fn dispatch_layer<F: Float>(
         TensorOp::blit(&buffer.x, &buffer.ffn_x)?,
         hook_op(Hook::PreFfn(index))?,
         TensorOp::layer_norm(
-            &layer.ffn_layer_norm.w,
-            &layer.ffn_layer_norm.b,
+            &layer.ffn_ln.w,
+            &layer.ffn_ln.b,
             &buffer.ffn_x,
             Model::LN_EPS,
         )?,
@@ -843,19 +991,11 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreFfnTokenShift(index))?,
         TensorOp::token_shift(
             &buffer.cursors,
-            &layer.ffn.time_mix_k,
+            &layer.ffn.x_k,
             state.ffn(index)?,
             &buffer.ffn_x,
             &buffer.ffn_kx,
-            false,
-        )?,
-        TensorOp::token_shift(
-            &buffer.cursors,
-            &layer.ffn.time_mix_r,
-            state.ffn(index)?,
-            &buffer.ffn_x,
-            &buffer.ffn_rx,
-            false,
+            true,
         )?,
         hook_op(Hook::PostFfnTokenShift(index))?,
         hook_op(Hook::PreFfnLinear(index))?,
@@ -872,18 +1012,11 @@ fn dispatch_layer<F: Float>(
             Activation::None,
             turbo(num_token),
         )?,
-        layer.ffn.w_r.matmul_op(
-            &buffer.ffn_rx,
-            &buffer.ffn_r,
-            Activation::None,
-            turbo(num_token),
-        )?,
         hook_op(Hook::PostFfnLinear(index))?,
         hook_op(Hook::PreFfnChannelMix(index))?,
-        TensorOp::channel_mix(
+        TensorOp::channel_mix_v7(
             &buffer.cursors,
             state.ffn(index)?,
-            &buffer.ffn_r,
             &buffer.ffn_v,
             &buffer.ffn_x,
         )?,
@@ -913,12 +1046,7 @@ fn dispatch_header<F: Float>(
     if num_header > 0 {
         ops.extend([
             hook_op(Hook::PreHead)?,
-            TensorOp::layer_norm(
-                &head.layer_norm.w,
-                &head.layer_norm.b,
-                &head_x,
-                Model::LN_EPS,
-            )?,
+            TensorOp::layer_norm(&head.ln.w, &head.ln.b, &head_x, Model::LN_EPS)?,
             hook_op(Hook::PostHeadLayerNorm)?,
             head.w.matmul_op(
                 head_x.view(.., .., .., ..)?,
@@ -933,7 +1061,7 @@ fn dispatch_header<F: Float>(
 }
 
 impl<R: Reader> ModelBuilder<R> {
-    pub async fn build_v5(self) -> Result<Model> {
+    pub async fn build_v7(self) -> Result<Model> {
         let ModelBuilder {
             context,
             model,
@@ -954,7 +1082,7 @@ impl<R: Reader> ModelBuilder<R> {
         };
 
         let embed = Embed {
-            layer_norm: LayerNorm {
+            ln: LayerNorm {
                 w: loader.load_vector_f16("blocks.0.ln0.weight")?,
                 b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
@@ -966,11 +1094,11 @@ impl<R: Reader> ModelBuilder<R> {
         };
 
         let head = Head {
-            layer_norm: LayerNorm {
+            ln: LayerNorm {
                 w: loader.load_vector_f16("ln_out.weight")?,
                 b: loader.load_vector_f16("ln_out.bias")?,
             },
-            w: Matrix::Fp16(loader.load_matrix_f16("head.weight")?),
+            w: Matrix::Fp16(loader.load_matrix_f16_padded("head.weight")?),
         };
 
         context.queue.submit(None);
@@ -986,20 +1114,43 @@ impl<R: Reader> ModelBuilder<R> {
             let quant = quant.get(&layer).copied().unwrap_or_default();
             let discount = 2.0_f32.powi(-((layer / rescale) as i32));
 
-            let att_layer_norm = LayerNorm {
+            let att_ln = LayerNorm {
                 w: loader.load_vector_f16(format!("blocks.{layer}.ln1.weight"))?,
                 b: loader.load_vector_f16(format!("blocks.{layer}.ln1.bias"))?,
             };
 
             let att = format!("blocks.{layer}.att");
-            let time_decay = loader.load_vector_exp_exp_f32(format!("{att}.time_decay"))?;
-            let time_first = loader.load_vector_f32(format!("{att}.time_first"))?;
-            let time_mix_k = loader.load_vector_f16(format!("{att}.time_mix_k"))?;
-            let time_mix_v = loader.load_vector_f16(format!("{att}.time_mix_v"))?;
-            let time_mix_r = loader.load_vector_f16(format!("{att}.time_mix_r"))?;
-            let time_mix_g = loader.load_vector_f16(format!("{att}.time_mix_g"))?;
+            let x_r = loader.load_vector_f16(format!("{att}.x_r"))?;
+            let x_w = loader.load_vector_f16(format!("{att}.x_w"))?;
+            let x_k = loader.load_vector_f16(format!("{att}.x_k"))?;
+            let x_v = loader.load_vector_f16(format!("{att}.x_v"))?;
+            let x_a = loader.load_vector_f16(format!("{att}.x_a"))?;
+            let x_g = loader.load_vector_f16(format!("{att}.x_g"))?;
 
-            let group_norm = LayerNorm {
+            let w0 = loader.load_vector_f16(format!("{att}.w0"))?;
+            let a0 = loader.load_vector_f16(format!("{att}.a0"))?;
+
+            let w1 = Matrix::Fp16(loader.load_matrix_f16(format!("{att}.w1"))?);
+            let w2 = Matrix::Fp16(loader.load_matrix_f16(format!("{att}.w2"))?);
+            let a1 = Matrix::Fp16(loader.load_matrix_f16(format!("{att}.a1"))?);
+            let a2 = Matrix::Fp16(loader.load_matrix_f16(format!("{att}.a2"))?);
+            let g1 = Matrix::Fp16(loader.load_matrix_f16(format!("{att}.g1"))?);
+            let g2 = Matrix::Fp16(loader.load_matrix_f16(format!("{att}.g2"))?);
+
+            let (v0, v1, v2) = match layer {
+                0 => (a0.clone(), a1.clone(), a2.clone()), // placeholder, actually not used
+                _ => (
+                    loader.load_vector_f16(format!("{att}.v0"))?,
+                    Matrix::Fp16(loader.load_matrix_f16(format!("{att}.v1"))?),
+                    Matrix::Fp16(loader.load_matrix_f16(format!("{att}.v2"))?),
+                ),
+            };
+
+            let r_k = loader.load_matrix_f16(format!("{att}.r_k"))?;
+            let k_k = loader.load_vector_f16(format!("{att}.k_k"))?;
+            let k_a = loader.load_vector_f16(format!("{att}.k_a"))?;
+
+            let gn = LayerNorm {
                 w: loader
                     .load_vector_f16(format!("{att}.ln_x.weight"))?
                     .reshape(
@@ -1019,33 +1170,43 @@ impl<R: Reader> ModelBuilder<R> {
             };
 
             let att = Att {
-                time_decay,
-                time_first,
-                time_mix_k,
-                time_mix_v,
-                time_mix_r,
-                time_mix_g,
+                x_r,
+                x_w,
+                x_k,
+                x_v,
+                x_a,
+                x_g,
+                w0,
+                a0,
+                v0,
+                w1,
+                w2,
+                a1,
+                a2,
+                g1,
+                g2,
+                v1,
+                v2,
+                r_k,
+                k_k,
+                k_a,
                 w_k: load_matrix(format!("{att}.key.weight"), quant)?,
                 w_v: load_matrix(format!("{att}.value.weight"), quant)?,
                 w_r: load_matrix(format!("{att}.receptance.weight"), quant)?,
-                w_g: load_matrix(format!("{att}.gate.weight"), quant)?,
                 w_o: load_matrix_discount(format!("{att}.output.weight"), quant, discount)?,
-                group_norm,
+                gn,
             };
 
-            let ffn_layer_norm = LayerNorm {
+            let ffn_ln = LayerNorm {
                 w: loader.load_vector_f16(format!("blocks.{layer}.ln2.weight"))?,
                 b: loader.load_vector_f16(format!("blocks.{layer}.ln2.bias"))?,
             };
 
             let ffn = format!("blocks.{layer}.ffn");
-            let time_mix_k = loader.load_vector_f16(format!("{ffn}.time_mix_k"))?;
-            let time_mix_r = loader.load_vector_f16(format!("{ffn}.time_mix_r"))?;
+            let x_k = loader.load_vector_f16(format!("{ffn}.x_k"))?;
 
             let ffn = Ffn {
-                time_mix_k,
-                time_mix_r,
-                w_r: load_matrix(format!("{ffn}.receptance.weight"), quant)?,
+                x_k,
                 w_k: load_matrix(format!("{ffn}.key.weight"), quant)?,
                 w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount)?,
             };
@@ -1054,8 +1215,8 @@ impl<R: Reader> ModelBuilder<R> {
             context.device.poll(wgpu::MaintainBase::Wait);
 
             layers.push(Layer {
-                att_layer_norm,
-                ffn_layer_norm,
+                att_ln,
+                ffn_ln,
                 att,
                 ffn,
             })

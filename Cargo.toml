@@ -30,6 +30,7 @@ anyhow = "1.0"
 bytemuck = { version = "1.19", features = ["extern_crate_alloc"] }
 derive-getters = "0.5"
 document-features = "0.2.8"
+embed-doc-image = "0.1.4"
 flume = "0.11"
 futures = "0.3"
 gpp = "0.6.2"

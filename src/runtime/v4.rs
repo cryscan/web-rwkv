@@ -43,6 +43,8 @@ pub struct Model {
 impl Model {
     pub const LN_EPS: f32 = 1.0e-5;
     pub const GN_EPS: f32 = 64.0e-5;
+
+    pub const DEFAULT_RESCALE: usize = 6;
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
@@ -584,7 +586,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
                 }
                 None => EmbedDevice::Cpu,
             };
-            ops.append(&mut vec![
+            ops.extend([
                 hook_op(Hook::PostEmbedLoaded)?,
                 TensorOp::layer_norm(
                     &tensor.embed.layer_norm.w,
@@ -659,7 +661,7 @@ fn dispatch_layer<F: Float>(
 
     let mut ops = vec![];
 
-    ops.append(&mut vec![
+    ops.extend([
         TensorOp::blit(&buffer.x, &buffer.att_x)?,
         hook_op(Hook::PreAtt(index))?,
         TensorOp::layer_norm(
@@ -741,7 +743,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostAtt(index))?,
     ]);
 
-    ops.append(&mut vec![
+    ops.extend([
         TensorOp::blit(&buffer.x, &buffer.ffn_x)?,
         hook_op(Hook::PreFfn(index))?,
         TensorOp::layer_norm(
@@ -822,7 +824,7 @@ fn dispatch_header<F: Float>(
     let header = &frame.header;
 
     if num_header > 0 {
-        ops.append(&mut vec![
+        ops.extend([
             hook_op(Hook::PreHead)?,
             TensorOp::layer_norm(
                 &head.layer_norm.w,
@@ -861,6 +863,8 @@ impl<R: Reader> ModelBuilder<R> {
             model,
             lora,
         };
+
+        let rescale = rescale.unwrap_or(Model::DEFAULT_RESCALE);
 
         let embed = Embed {
             layer_norm: LayerNorm {

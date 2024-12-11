@@ -216,6 +216,21 @@ pub trait TensorShape: Sized {
             .then_some(())
             .ok_or(TensorError::Shape(self.shape(), shape))
     }
+
+    fn check_shape_any<S>(&self, shapes: &[S]) -> Result<(), TensorError>
+    where
+        S: Into<Shape> + ToOwned<Owned = S>,
+    {
+        let mut error = TensorError::Shape(self.shape(), Shape::default());
+        for shape in shapes {
+            let shape: Shape = shape.to_owned().into();
+            match self.check_shape(shape) {
+                Ok(_) => return Ok(()),
+                Err(err) => error = err,
+            };
+        }
+        Err(error)
+    }
 }
 
 pub trait TensorReshape: Sized {
@@ -978,7 +993,7 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<T>>> for TensorStack<T> {
             (Shape::new(shape[0], 0, 1, 1), vec![]),
             |(mut shape, mut data), tensor| {
                 shape[1] += tensor.shape[1];
-                data.append(&mut tensor.data.to_vec());
+                data.extend(tensor.data.to_vec());
                 (shape, data)
             },
         );

@@ -48,6 +48,38 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16float(x.x), unpack2x16float(x.y));
 }
 
+fn load_r(index: u32) -> vec4<f32> {
+#ifdef FP16
+    return unpack4x16float(r[index]);
+#else
+    return r[index];
+#endif
+}
+
+fn load_v(index: u32) -> vec4<f32> {
+#ifdef FP16
+    return unpack4x16float(v[index]);
+#else
+    return v[index];
+#endif
+}
+
+fn load_x(index: u32) -> vec4<f32> {
+#ifdef FP16
+    return unpack4x16float(x[index]);
+#else
+    return x[index];
+#endif
+}
+
+fn store_x(index: u32, value: vec4<f32>) {
+#ifdef FP16
+    x[index] = pack4x16float(value);
+#else
+    x[index] = value;
+#endif
+}
+
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin(num_workgroups) num_blocks: vec3<u32>) {
     let stride = shape[0] / 4u;
@@ -63,20 +95,14 @@ fn channel_mix(@builtin(global_invocation_id) invocation_id: vec3<u32>, @builtin
     }
 
     if token + 1u == cursor.len {
-#ifdef FP16
-        state[compute_index(cursor.batch, 0u, index)] = unpack4x16float(x[bti]);
-#else
-        state[compute_index(cursor.batch, 0u, index)] = x[bti];
-#endif
+        state[compute_index(cursor.batch, 0u, index)] = load_x(bti);
     }
 
-#ifdef FP16
-    let rr = 1.0 / (1.0 + exp(-unpack4x16float(r[bti])));
-    let vv = unpack4x16float(v[bti]);
-    x[bti] = pack4x16float(rr * vv);
+#ifdef V7
+    store_x(bti, load_v(bti));
 #else
-    let rr = 1.0 / (1.0 + exp(-r[bti]));
-    let vv = v[bti];
-    x[bti] = rr * vv;
+    let rr = 1.0 / (1.0 + exp(-load_r(bti)));
+    let vv = load_v(bti);
+    store_x(bti, rr * vv);
 #endif
 }

@@ -27,6 +27,8 @@ const NUM_SUBGROUPS: u32 = BLOCK_SIZE / MIN_SUBGROUP_SIZE;
 
 var<workgroup> sketch: array<vec4<f32>, NUM_SUBGROUPS>;
 
+// ACTIVATION_DEFINE
+
 fn compute_index(view: View, batch: u32, token: u32, index: u32) -> u32 {
     let stride = view.stride.x >> 2u;
     let offset = vec3<u32>(view.offset.zy, view.offset.x >> 2u);
@@ -51,11 +53,6 @@ fn reduce_sum(index: u32, stride: u32) {
         sketch[index] += sketch[index + stride];
     }
     workgroupBarrier();
-}
-
-fn squared_relu(x: vec4<f32>) -> vec4<f32> {
-    let p = max(x, vec4<f32>(0.0));
-    return p * p;
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)

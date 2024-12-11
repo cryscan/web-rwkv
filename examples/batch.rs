@@ -33,7 +33,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax,
-        v4, v5, v6, TokioRuntime,
+        v4, v5, v6, v7, TokioRuntime,
     },
     tokenizer::Tokenizer,
 };
@@ -207,7 +207,11 @@ async fn main() -> Result<()> {
             let bundle = v6::Bundle::<f16>::new(model, cli.batch);
             TokioRuntime::new(bundle).await
         }
-        ModelVersion::V7 => todo!(),
+        ModelVersion::V7 => {
+            let model = builder.build_v7().await?;
+            let bundle = v7::Bundle::<f16>::new(model, cli.batch);
+            TokioRuntime::new(bundle).await
+        }
     };
 
     #[cfg(not(debug_assertions))]
@@ -241,7 +245,7 @@ async fn main() -> Result<()> {
     );
 
     let mut num_token =
-        [100usize, 400, 200, 300].to_vec().repeat((batch + 3) / 4)[..batch].to_vec();
+        [100usize, 400, 200, 300].to_vec().repeat(batch.div_ceil(4))[..batch].to_vec();
 
     loop {
         #[cfg(not(debug_assertions))]

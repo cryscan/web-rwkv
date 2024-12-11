@@ -10,15 +10,15 @@ struct Cursor {
     len: u32,
 };
 
-@group(0) @binding(0) var<uniform> vx: View;                                // [C, A, 1] | [C, A, I]
-@group(0) @binding(1) var<uniform> vt: View;                                // [C, 1, I] | [C, A, I]
+@group(0) @binding(0) var<uniform> vx: View;                                // [C, A, I?]
+@group(0) @binding(1) var<uniform> vt: View;                                // [C, A?, I]
 @group(0) @binding(2) var<uniform> vs: View;                                // [C, _, B] / [C, 5L, B]
 @group(0) @binding(3) var<storage, read> cursors: array<u32>;               // [A]
 
 #ifdef TIME_MIX_FP16
-@group(0) @binding(4) var<storage, read> time_mix: array<vec2<u32>>;        // (I, 1, C) | (I, A, C)
+@group(0) @binding(4) var<storage, read> time_mix: array<vec2<u32>>;        // (I, A?, C)
 #else
-@group(0) @binding(4) var<storage, read> time_mix: array<vec4<f32>>;        // (I, 1, C) | (I, A, C)
+@group(0) @binding(4) var<storage, read> time_mix: array<vec4<f32>>;        // (I, A?, C)
 #endif
 
 @group(0) @binding(5) var<storage, read> sx: array<vec4<f32>>;              // (B, 1, C)

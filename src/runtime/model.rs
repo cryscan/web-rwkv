@@ -43,8 +43,8 @@ pub struct ModelInfo {
     pub num_hidden: usize,
     pub num_vocab: usize,
     pub num_head: usize,
-    pub time_mix_adapter_size: usize,
-    pub time_decay_adapter_size: usize,
+    #[wasm_bindgen(skip)]
+    pub custom: ModelCustomInfo,
 }
 
 impl ModelInfo {
@@ -69,6 +69,15 @@ impl ModelInfo {
     pub fn num_vocab_padded(&self) -> usize {
         self.num_vocab.next_multiple_of(PAD_MAT[1])
     }
+}
+
+/// Info about the model's inner LoRA dimensions.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ModelCustomInfo {
+    #[default]
+    None,
+    V6(super::v6::CustomInfo),
+    V7(super::v7::CustomInfo),
 }
 
 pub trait AsAny {
@@ -142,7 +151,7 @@ pub enum EmbedDevice {
 pub struct ModelBuilder<R: Reader> {
     pub context: Context,
     pub model: R,
-    pub rescale: usize,
+    pub rescale: Option<usize>,
     pub lora: Vec<Lora<R>>,
     pub quant: HashMap<usize, Quant>,
     pub embed_device: EmbedDevice,
@@ -153,7 +162,7 @@ impl<R: Reader> ModelBuilder<R> {
         Self {
             context: context.clone(),
             model,
-            rescale: 6,
+            rescale: None,
             lora: vec![],
             quant: Default::default(),
             embed_device: Default::default(),
@@ -163,8 +172,8 @@ impl<R: Reader> ModelBuilder<R> {
     /// Half the layer and activation every `value` layers.
     pub fn rescale(mut self, value: usize) -> Self {
         self.rescale = match value {
-            0 => usize::MAX,
-            x => x,
+            0 => Some(usize::MAX),
+            x => Some(x),
         };
         self
     }

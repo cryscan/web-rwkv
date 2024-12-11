@@ -8,9 +8,9 @@ struct View {
 @group(0) @binding(1) var<uniform> destination: View;
 
 #ifdef IN_FP16
-@group(0) @binding(2) var<storage, read> input: array<vec2<u32>>;      // (B, T, C)
+@group(0) @binding(2) var<storage, read> input: array<vec2<u32>>;      // (B?, T?, C)
 #else
-@group(0) @binding(2) var<storage, read> input: array<vec4<f32>>;      // (B, T, C)
+@group(0) @binding(2) var<storage, read> input: array<vec4<f32>>;      // (B?, T?, C)
 #endif
 #ifdef OUT_FP16
 @group(0) @binding(3) var<storage, read_write> output: array<vec2<u32>>;    // (B, T, C)
@@ -43,15 +43,15 @@ fn add(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if index < stride {
 #ifdef IN_FP16
-        let x = unpack4x16float(input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)]);
+        let x = unpack4x16float(input[compute_index(source, select(batch, 0u, source.shape.z == 1u), select(token, 0u, source.shape.y == 1u), index)]);
 #else
-        let x = input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)];
+        let x = input[compute_index(source, select(batch, 0u, source.shape.z == 1u), select(token, 0u, source.shape.y == 1u), index)];
 #endif
         let bti = compute_index(destination, batch, token, index);
 #ifdef OUT_FP16
-        output[bti] = pack4x16float(ACT(x) + unpack4x16float(output[bti]));
+        output[bti] = pack4x16float(ACT_OUT(ACT_X(x) + ACT_Y(unpack4x16float(output[bti]))));
 #else
-        output[bti] = ACT(x) + output[bti];
+        output[bti] = ACT_OUT(ACT_X(x) + ACT_Y(output[bti]));
 #endif
     }
 }
@@ -65,15 +65,15 @@ fn mul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if index < stride {
 #ifdef IN_FP16
-        let x = unpack4x16float(input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)]);
+        let x = unpack4x16float(input[compute_index(source, select(batch, 0u, source.shape.z == 1u), select(token, 0u, source.shape.y == 1u), index)]);
 #else
-        let x = input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)];
+        let x = input[compute_index(source, select(batch, 0u, source.shape.z == 1u), select(token, 0u, source.shape.y == 1u), index)];
 #endif
         let bti = compute_index(destination, batch, token, index);
 #ifdef OUT_FP16
-        output[bti] = pack4x16float(ACT(x) * unpack4x16float(output[bti]));
+        output[bti] = pack4x16float(ACT_OUT(ACT_X(x) * ACT_Y(unpack4x16float(output[bti]))));
 #else
-        output[bti] = ACT(x) * output[bti];
+        output[bti] = ACT_OUT(ACT_X(x) * ACT_Y(output[bti]));
 #endif
     }
 }

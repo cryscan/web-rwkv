@@ -41,9 +41,9 @@ fn mul_exp(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
 
     if index < stride {
 #ifdef IN_FP16
-        let x = unpack4x16float(input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)]);
+        let x = unpack4x16float(input[compute_index(source, select(batch, 0u, source.shape.z == 1u), select(token, 0u, source.shape.y == 1u), index)]);
 #else
-        let x = input[compute_index(source, batch, select(token, 0u, source.shape.y == 1u), index)];
+        let x = input[compute_index(source, select(batch, 0u, source.shape.z == 1u), select(token, 0u, source.shape.y == 1u), index)];
 #endif
         let bti = compute_index(destination, batch, token, index);
 #ifdef OUT_FP16

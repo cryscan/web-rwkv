@@ -7,7 +7,7 @@ use regex::Regex;
 use safetensors::{Dtype, SafeTensorError, SafeTensors};
 use web_rwkv_derive::{Deref, DerefMut};
 
-use super::model::{ModelError, ModelInfo, ModelVersion, Quant};
+use super::model::{ModelCustomInfo, ModelError, ModelInfo, ModelVersion, Quant};
 use crate::{
     context::Context,
     num::Scalar,
@@ -199,8 +199,16 @@ impl<R: Reader> Loader<R> {
 
         let embed = model.shape("emb.weight")?;
         let ffn = model.shape("blocks.0.ffn.key.weight")?;
-        let time_first = model.shape("blocks.0.att.time_first")?;
 
+        let v4 = [
+            "blocks.0.att.time_decay",
+            "blocks.0.att.time_first",
+            "blocks.0.att.time_mix_k",
+            "blocks.0.att.time_mix_v",
+            "blocks.0.att.time_mix_r",
+        ]
+        .into_iter()
+        .all(|name| model.contains(name));
         let v5 = [
             "blocks.0.att.gate.weight",
             "blocks.0.att.ln_x.weight",
@@ -224,27 +232,64 @@ impl<R: Reader> Loader<R> {
         ]
         .into_iter()
         .all(|name| model.contains(name));
+        let v7 = [
+            "blocks.0.att.x_r",
+            "blocks.0.att.x_w",
+            "blocks.0.att.x_k",
+            "blocks.0.att.x_v",
+            "blocks.0.att.x_a",
+            "blocks.0.att.x_g",
+            "blocks.0.att.w0",
+            "blocks.0.att.w1",
+            "blocks.0.att.w2",
+            "blocks.0.att.a0",
+            "blocks.0.att.a1",
+            "blocks.0.att.a2",
+            "blocks.0.att.g1",
+            "blocks.0.att.g2",
+            "blocks.0.att.r_k",
+            "blocks.0.att.k_k",
+            "blocks.0.att.k_a",
+        ]
+        .into_iter()
+        .all(|name| model.contains(name));
 
-        let version = match (v5, v6) {
-            (false, false) => ModelVersion::V4,
-            (true, false) => ModelVersion::V5,
-            (true, true) => ModelVersion::V6,
+        let version = match (v4, v5, v6, v7) {
+            (true, false, false, false) => ModelVersion::V4,
+            (_, true, false, false) => ModelVersion::V5,
+            (_, _, true, false) => ModelVersion::V6,
+            (_, _, _, true) => ModelVersion::V7,
             _ => return Err(ModelError::InvalidVersion.into()),
         };
 
         let num_emb = embed[1];
         let num_hidden = ffn[0];
         let num_vocab = embed[0];
-        let num_head = time_first[0];
 
-        let time_mix_adapter_size = model
-            .shape("blocks.0.att.time_mix_w1")
-            .map(|shape| shape[0] / 5)
-            .unwrap_or_default();
-        let time_decay_adapter_size = model
-            .shape("blocks.0.att.time_decay_w1")
-            .map(|shape| shape[0])
-            .unwrap_or_default();
+        let num_head = match version {
+            ModelVersion::V4 => 1,
+            ModelVersion::V5 | ModelVersion::V6 => model.shape("blocks.0.att.time_first")?[0],
+            ModelVersion::V7 => model.shape("blocks.0.att.r_k")?[0],
+        };
+
+        let custom = match version {
+            ModelVersion::V6 => {
+                let time_mix = model.shape("blocks.0.att.time_mix_w1")?[0] / 5;
+                let time_decay = model.shape("blocks.0.att.time_decay_w1")?[0];
+                ModelCustomInfo::V6(super::v6::CustomInfo {
+                    time_mix,
+                    time_decay,
+                })
+            }
+            ModelVersion::V7 => {
+                let w = model.shape("blocks.0.att.w1")?[0];
+                let a = model.shape("blocks.0.att.a1")?[0];
+                let g = model.shape("blocks.0.att.g1")?[0];
+                let v = model.shape("blocks.1.att.v1")?[0];
+                ModelCustomInfo::V7(super::v7::CustomInfo { w, a, g, v })
+            }
+            _ => ModelCustomInfo::None,
+        };
 
         Ok(ModelInfo {
             version,
@@ -253,8 +298,7 @@ impl<R: Reader> Loader<R> {
             num_hidden,
             num_vocab,
             num_head,
-            time_mix_adapter_size,
-            time_decay_adapter_size,
+            custom,
         })
     }
 
@@ -329,12 +373,16 @@ impl<R: Reader> Loader<R> {
     }
 
     pub fn load_vector_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| x.to_f32())
-            .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+            .reshape(
+                TensorDimension::Auto,
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+            )?
             .to(context);
 
         let mut ops = vec![];
@@ -344,10 +392,10 @@ impl<R: Reader> Loader<R> {
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
-                Dimension(shape[0]),
-                Dimension(shape[1]),
-                Dimension(shape[2]),
-                Dimension(shape[3]),
+                TensorDimension::Size(shape[0]),
+                TensorDimension::Size(shape[1]),
+                TensorDimension::Size(shape[2]),
+                TensorDimension::Size(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -359,13 +407,17 @@ impl<R: Reader> Loader<R> {
     }
 
     pub fn load_vector_exp_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             // .map(|x| -x.to_f32().exp())
             .map(|x| x.to_f32())
-            .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+            .reshape(
+                TensorDimension::Auto,
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+            )?
             .to(context);
 
         let mut ops = vec![];
@@ -375,10 +427,10 @@ impl<R: Reader> Loader<R> {
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
-                Dimension(shape[0]),
-                Dimension(shape[1]),
-                Dimension(shape[2]),
-                Dimension(shape[3]),
+                TensorDimension::Size(shape[0]),
+                TensorDimension::Size(shape[1]),
+                TensorDimension::Size(shape[2]),
+                TensorDimension::Size(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -396,14 +448,18 @@ impl<R: Reader> Loader<R> {
         &self,
         name: impl AsRef<str>,
     ) -> Result<TensorGpu<f32, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
             // .map(|x| -x.to_f32().exp())
             // .map(|x| x.exp())
             .map(|x| x.to_f32())
-            .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+            .reshape(
+                TensorDimension::Auto,
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+            )?
             .to(context);
 
         let mut ops = vec![];
@@ -413,10 +469,10 @@ impl<R: Reader> Loader<R> {
 
             let shape = lora.tensor.shape();
             let tensor = tensor.reshape(
-                Dimension(shape[0]),
-                Dimension(shape[1]),
-                Dimension(shape[2]),
-                Dimension(shape[3]),
+                TensorDimension::Size(shape[0]),
+                TensorDimension::Size(shape[1]),
+                TensorDimension::Size(shape[2]),
+                TensorDimension::Size(shape[3]),
             )?;
 
             let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
@@ -431,18 +487,27 @@ impl<R: Reader> Loader<R> {
     }
 
     pub fn load_vector_f16(&self, name: impl AsRef<str>) -> Result<TensorGpu<f16, ReadWrite>> {
-        use TensorDimension::{Auto, Dimension};
         let context = &self.context;
         let lora = self.lora_vectors(name.as_ref())?;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = if lora.is_empty() {
             TensorCpu::from_reader(tensor)?
-                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+                .reshape(
+                    TensorDimension::Auto,
+                    TensorDimension::Size(1),
+                    TensorDimension::Size(1),
+                    TensorDimension::Size(1),
+                )?
                 .to(context)
         } else {
             let tensor_f32: TensorGpu<f32, _> = TensorCpu::<f16>::from_reader(tensor)?
                 .map(|x| x.to_f32())
-                .reshape(Auto, Dimension(1), Dimension(1), Dimension(1))?
+                .reshape(
+                    TensorDimension::Auto,
+                    TensorDimension::Size(1),
+                    TensorDimension::Size(1),
+                    TensorDimension::Size(1),
+                )?
                 .to(context);
             let tensor_f16: TensorGpu<f16, _> = context.tensor_init(tensor_f32.shape());
 
@@ -453,20 +518,17 @@ impl<R: Reader> Loader<R> {
 
                 let shape = lora.tensor.shape();
                 let tensor = tensor_f32.reshape(
-                    Dimension(shape[0]),
-                    Dimension(shape[1]),
-                    Dimension(shape[2]),
-                    Dimension(shape[3]),
+                    TensorDimension::Size(shape[0]),
+                    TensorDimension::Size(shape[1]),
+                    TensorDimension::Size(shape[2]),
+                    TensorDimension::Size(shape[3]),
                 )?;
 
                 let op = TensorOp::blend(&factor, &lora.tensor, &tensor)?;
                 ops.push(op);
             }
 
-            let op = TensorOp::blit(
-                tensor_f32.view(.., .., .., ..)?,
-                tensor_f16.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blit(&tensor_f32, &tensor_f16)?;
             ops.push(op);
 
             context.queue.submit(context.encode(&TensorOp::List(ops)));
@@ -484,12 +546,7 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-            let op = TensorOp::blend_lora(
-                &factor,
-                lora.x.view(.., .., .., ..)?,
-                lora.y.view(.., .., .., ..)?,
-                tensor.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blend_lora(&factor, &lora.x, &lora.y, &tensor)?;
             ops.push(op);
         }
         for lora in self.lora_vectors(name.as_ref())? {
@@ -518,12 +575,7 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-            let op = TensorOp::blend_lora(
-                &factor,
-                lora.x.view(.., .., .., ..)?,
-                lora.y.view(.., .., .., ..)?,
-                tensor.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blend_lora(&factor, &lora.x, &lora.y, &tensor)?;
             ops.push(op);
         }
         for lora in self.lora_vectors(name.as_ref())? {
@@ -551,12 +603,7 @@ impl<R: Reader> Loader<R> {
         for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-            let op = TensorOp::blend_lora(
-                &factor,
-                lora.x.view(.., .., .., ..)?,
-                lora.y.view(.., .., .., ..)?,
-                matrix.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blend_lora(&factor, &lora.x, &lora.y, matrix)?;
             ops.push(op);
         }
         for lora in self.lora_vectors(name.as_ref())? {
@@ -576,25 +623,24 @@ impl<R: Reader> Loader<R> {
         name: impl AsRef<str>,
         discount: f32,
     ) -> Result<()> {
-        use TensorDimension::{Dimension, Full};
         let context = &self.context;
 
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = TensorCpu::<f16>::from_reader(tensor)?
             .map(|x| f16::from_f32(discount * x.to_f32()))
-            .reshape(Full, Full, Dimension(1), Dimension(1))?;
+            .reshape(
+                TensorDimension::Full,
+                TensorDimension::Full,
+                TensorDimension::Size(1),
+                TensorDimension::Size(1),
+            )?;
         matrix.load(&tensor)?;
 
         let mut ops = vec![];
         for lora in self.lora_matrices(name.as_ref())? {
             let factor = vec![discount * lora.alpha / lora.rank as f32, 1.0, 0.0, 0.0];
             let factor = context.tensor_from_data([4, 1, 1, 1], factor)?;
-            let op = TensorOp::blend_lora(
-                &factor,
-                lora.x.view(.., .., .., ..)?,
-                lora.y.view(.., .., .., ..)?,
-                matrix.view(.., .., .., ..)?,
-            )?;
+            let op = TensorOp::blend_lora(&factor, &lora.x, &lora.y, matrix)?;
             ops.push(op);
         }
         for lora in self.lora_vectors(name.as_ref())? {
