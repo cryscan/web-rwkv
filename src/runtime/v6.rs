@@ -14,12 +14,13 @@ use wgpu::CommandBuffer;
 use super::{
     infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
     loader::{Loader, Reader},
-    model::{AsAny, EmbedDevice, ModelBuilder, ModelCustomInfo, ModelInfo, Quant, State as _},
+    model::{AsAny, EmbedDevice, ModelBuilder, ModelCustomInfo, ModelInfo, State as _},
     Dispatcher, Job,
 };
 use crate::{
     context::Context,
     num::Float,
+    runtime::model::Quant,
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,

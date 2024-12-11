@@ -669,7 +669,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
                 }
                 None => EmbedDevice::Cpu,
             };
-            ops.append(&mut vec![
+            ops.extend([
                 hook_op(Hook::PostEmbedLoaded)?,
                 TensorOp::layer_norm(
                     &tensor.embed.ln.w,
