@@ -24,7 +24,7 @@ use crate::{
     tensor::{
         kind::ReadWrite,
         matrix::Matrix,
-        ops::{Activation, BinAct, TensorCommand, TensorOp},
+        ops::{Activation, TensorCommand, TensorOp},
         serialization::Seed,
         shape::{Shape, TensorDimension},
         DeepClone, IntoPackedCursors, TensorCpu, TensorError, TensorGpu, TensorGpuView, TensorInit,
@@ -893,7 +893,9 @@ fn dispatch_layer<F: Float>(
         TensorOp::add_activate(
             &layer.att.a0,
             &buffer.att_a,
-            BinAct::out(Activation::Sigmoid),
+            Activation::None,
+            Activation::None,
+            Activation::Sigmoid,
         )?,
         layer.att.g1.matmul_op(
             &buffer.att_gx,
@@ -935,7 +937,9 @@ fn dispatch_layer<F: Float>(
             TensorOp::add_activate(
                 &layer.att.v0,
                 &buffer.att_vv,
-                BinAct::out(Activation::Sigmoid),
+                Activation::None,
+                Activation::None,
+                Activation::Sigmoid,
             )?,
             TensorOp::lerp(&buffer.att_v0, &buffer.att_v, &buffer.att_vv, true)?,
         ]),

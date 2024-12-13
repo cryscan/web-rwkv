@@ -64,12 +64,12 @@ impl Matrix {
         &self,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, active),
-            Matrix::Int8 { w, m } => TensorOp::matmul_vec_int8(w, m, input, output, active),
-            Matrix::NF4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, active),
+            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, act),
+            Matrix::Int8 { w, m } => TensorOp::matmul_vec_int8(w, m, input, output, act),
+            Matrix::NF4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, act),
         }
     }
 
@@ -77,12 +77,12 @@ impl Matrix {
         &self,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => TensorOp::matmul_mat_fp16(matrix, input, output, active),
-            Matrix::Int8 { w, m } => TensorOp::matmul_mat_int8(w, m, input, output, active),
-            Matrix::NF4 { w, q, m } => TensorOp::matmul_mat_nf4(w, q, m, input, output, active),
+            Matrix::Fp16(matrix) => TensorOp::matmul_mat_fp16(matrix, input, output, act),
+            Matrix::Int8 { w, m } => TensorOp::matmul_mat_int8(w, m, input, output, act),
+            Matrix::NF4 { w, q, m } => TensorOp::matmul_mat_nf4(w, q, m, input, output, act),
         }
     }
 
@@ -90,12 +90,12 @@ impl Matrix {
         &self,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
         turbo: bool,
     ) -> Result<TensorOp, TensorError> {
         match turbo {
-            true => self.matmul_mat_op(input, output, active),
-            false => self.matmul_vec_op(input, output, active),
+            true => self.matmul_mat_op(input, output, act),
+            false => self.matmul_vec_op(input, output, act),
         }
     }
 

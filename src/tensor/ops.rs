@@ -166,36 +166,6 @@ impl std::fmt::Display for Activation {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct BinAct {
-    pub x: Activation,
-    pub y: Activation,
-    pub out: Activation,
-}
-
-impl BinAct {
-    pub fn x(x: Activation) -> Self {
-        Self {
-            x,
-            ..Default::default()
-        }
-    }
-
-    pub fn y(y: Activation) -> Self {
-        Self {
-            y,
-            ..Default::default()
-        }
-    }
-
-    pub fn out(out: Activation) -> Self {
-        Self {
-            out,
-            ..Default::default()
-        }
-    }
-}
-
 impl Macros {
     /// Define a `u32` macro `NF4_BLOCK_SIZE`.
     pub fn nf4(mut self, block_size: u32) -> Self {
@@ -748,7 +718,7 @@ impl TensorOp {
         matrix: &TensorGpu<f16, ReadWrite>,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -775,7 +745,7 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
@@ -788,7 +758,7 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -838,7 +808,7 @@ impl TensorOp {
         minmax: &TensorGpu<f16, ReadWrite>,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -868,7 +838,7 @@ impl TensorOp {
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
@@ -882,7 +852,7 @@ impl TensorOp {
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -936,7 +906,7 @@ impl TensorOp {
         absmax: &TensorGpu<f16, ReadWrite>,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -966,7 +936,7 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         #[cfg(feature = "subgroup-ops")]
         let pipeline = context.checkout_pipeline(
@@ -980,7 +950,7 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1038,7 +1008,7 @@ impl TensorOp {
         matrix: impl Into<TensorGpuView<'c, f16>>,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
@@ -1065,7 +1035,7 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1123,7 +1093,7 @@ impl TensorOp {
         minmax: &TensorGpu<f16, ReadWrite>,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
@@ -1153,7 +1123,7 @@ impl TensorOp {
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1215,7 +1185,7 @@ impl TensorOp {
         absmax: &TensorGpu<f16, ReadWrite>,
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 8;
 
@@ -1245,7 +1215,7 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1304,7 +1274,9 @@ impl TensorOp {
     pub fn add_activate<'a, 'b, F0: Float, F1: Float>(
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: BinAct,
+        act_x: Activation,
+        act_y: Activation,
+        act_out: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1333,9 +1305,9 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT_X", active.x)
-                .activate("ACT_Y", active.y)
-                .activate("ACT_OUT", active.out),
+                .activate("ACT_X", act_x)
+                .activate("ACT_Y", act_y)
+                .activate("ACT_OUT", act_out),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1378,7 +1350,13 @@ impl TensorOp {
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
-        Self::add_activate(input, output, Default::default())
+        Self::add_activate(
+            input,
+            output,
+            Activation::None,
+            Activation::None,
+            Activation::None,
+        )
     }
 
     /// Multiply `input` to `output`.
@@ -1388,7 +1366,9 @@ impl TensorOp {
     pub fn mul_activate<'a, 'b, F0: Float, F1: Float>(
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
-        active: BinAct,
+        act_x: Activation,
+        act_y: Activation,
+        act_out: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -1417,9 +1397,9 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT_X", active.x)
-                .activate("ACT_Y", active.y)
-                .activate("ACT_OUT", active.out),
+                .activate("ACT_X", act_x)
+                .activate("ACT_Y", act_y)
+                .activate("ACT_OUT", act_out),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
@@ -1462,7 +1442,13 @@ impl TensorOp {
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
     ) -> Result<Self, TensorError> {
-        Self::mul_activate(input, output, Default::default())
+        Self::mul_activate(
+            input,
+            output,
+            Activation::None,
+            Activation::None,
+            Activation::None,
+        )
     }
 
     pub fn token_shift<'a, 'b, F: Float>(
@@ -2177,7 +2163,7 @@ impl TensorOp {
 
     pub fn activate<'a, F: Float>(
         x: impl Into<TensorGpuView<'a, F>>,
-        active: Activation,
+        act: Activation,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -2193,7 +2179,7 @@ impl TensorOp {
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&x, None)
-                .activate("ACT", active),
+                .activate("ACT", act),
         );
         let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
             label: None,
