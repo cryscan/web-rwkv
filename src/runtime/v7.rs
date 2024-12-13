@@ -303,10 +303,10 @@ pub struct Runtime<F: Float> {
     pub att_n: TensorGpu<F, ReadWrite>,
 
     /// Time decay LoRA intermediate.
-    pub temp_w: TensorGpu<F, ReadWrite>,
-    pub temp_a: TensorGpu<F, ReadWrite>,
-    pub temp_g: TensorGpu<F, ReadWrite>,
-    pub temp_v: TensorGpu<F, ReadWrite>,
+    pub aux_w: TensorGpu<F, ReadWrite>,
+    pub aux_a: TensorGpu<F, ReadWrite>,
+    pub aux_g: TensorGpu<F, ReadWrite>,
+    pub aux_v: TensorGpu<F, ReadWrite>,
 
     pub ffn_x: TensorGpu<F, ReadWrite>,
     pub ffn_kx: TensorGpu<F, ReadWrite>,
@@ -324,11 +324,6 @@ impl<F: Float> Runtime<F> {
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
         let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
-        let att_n_shape = Shape::new(info.num_emb, num_token, 4, 1);
-        let temp_w_shape = Shape::new(custom.w, num_token, 1, 1);
-        let temp_a_shape = Shape::new(custom.a, num_token, 1, 1);
-        let temp_g_shape = Shape::new(custom.g, num_token, 1, 1);
-        let temp_v_shape = Shape::new(custom.v, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
@@ -353,11 +348,11 @@ impl<F: Float> Runtime<F> {
             att_o: context.tensor_init(shape),
             att_kk: context.tensor_init(shape),
             att_vv: context.tensor_init(shape),
-            att_n: context.tensor_init(att_n_shape),
-            temp_w: context.tensor_init(temp_w_shape),
-            temp_a: context.tensor_init(temp_a_shape),
-            temp_g: context.tensor_init(temp_g_shape),
-            temp_v: context.tensor_init(temp_v_shape),
+            att_n: context.tensor_init([shape[0], shape[1], 4, 1]),
+            aux_w: context.tensor_init([custom.w, shape[1], 1, 1]),
+            aux_a: context.tensor_init([custom.a, shape[1], 1, 1]),
+            aux_g: context.tensor_init([custom.g, shape[1], 1, 1]),
+            aux_v: context.tensor_init([custom.v, shape[1], 1, 1]),
             ffn_x: context.tensor_init(shape),
             ffn_kx: context.tensor_init(shape),
             ffn_k: context.tensor_init(hidden_shape),
@@ -867,12 +862,12 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PreAttAdapt(index))?,
         layer.att.w1.matmul_op(
             &buffer.att_wx,
-            &buffer.temp_w,
+            &buffer.aux_w,
             Activation::Tanh,
             turbo(num_token),
         )?,
         layer.att.w2.matmul_op(
-            &buffer.temp_w,
+            &buffer.aux_w,
             &buffer.att_w,
             Activation::None,
             turbo(num_token),
@@ -880,12 +875,12 @@ fn dispatch_layer<F: Float>(
         TensorOp::add(&layer.att.w0, &buffer.att_w)?,
         layer.att.a1.matmul_op(
             &buffer.att_ax,
-            &buffer.temp_a,
+            &buffer.aux_a,
             Activation::None,
             turbo(num_token),
         )?,
         layer.att.a2.matmul_op(
-            &buffer.temp_a,
+            &buffer.aux_a,
             &buffer.att_a,
             Activation::None,
             turbo(num_token),
@@ -899,12 +894,12 @@ fn dispatch_layer<F: Float>(
         )?,
         layer.att.g1.matmul_op(
             &buffer.att_gx,
-            &buffer.temp_g,
+            &buffer.aux_g,
             Activation::Sigmoid,
             turbo(num_token),
         )?,
         layer.att.g2.matmul_op(
-            &buffer.temp_g,
+            &buffer.aux_g,
             &buffer.att_g,
             Activation::None,
             turbo(num_token),
@@ -924,12 +919,12 @@ fn dispatch_layer<F: Float>(
         _ => ops.extend([
             layer.att.v1.matmul_op(
                 &buffer.att_vx,
-                &buffer.temp_v,
+                &buffer.aux_v,
                 Activation::None,
                 turbo(num_token),
             )?,
             layer.att.v2.matmul_op(
-                &buffer.temp_v,
+                &buffer.aux_v,
                 &buffer.att_vv,
                 Activation::None,
                 turbo(num_token),
