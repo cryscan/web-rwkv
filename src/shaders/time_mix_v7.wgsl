@@ -65,6 +65,10 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 
 // ACTIVATION_DEFINE
 
+fn act_w(x: vec4<f32>) -> vec4<f32> {
+    return exp(-0.606531 * sigmoid(x));   // 0.606531 = exp(-0.5)
+}
+
 fn load_u(index: u32) -> vec4<f32> {
     return unpack4x16float(u[index]);
 }
@@ -156,7 +160,7 @@ fn time_mix(in: Input) {
         workgroupBarrier();
         if index < stride {
             shared_r[in.tid.x] = load_r(ti);
-            shared_w[in.tid.x] = exp(-0.606531 * load_w(ti));   // 0.606531 = exp(-0.5)
+            shared_w[in.tid.x] = act_w(load_w(ti));
             shared_k[in.tid.x] = load_k(ti);
             let a = load_a(ti);
             let kk = load_kk(ti);

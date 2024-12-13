@@ -877,11 +877,7 @@ fn dispatch_layer<F: Float>(
             Activation::None,
             turbo(num_token),
         )?,
-        TensorOp::add_activate(
-            &layer.att.w0,
-            &buffer.att_w,
-            BinAct::out(Activation::Sigmoid),
-        )?,
+        TensorOp::add(&layer.att.w0, &buffer.att_w)?,
         layer.att.a1.matmul_op(
             &buffer.att_ax,
             &buffer.temp_a,

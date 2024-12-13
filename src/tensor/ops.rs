@@ -520,10 +520,11 @@ impl TensorOp {
         let pipeline = context.checkout_pipeline(
             "group_norm",
             include_str!("../shaders/layer_norm.wgsl"),
-            "group_norm",
+            "layer_norm",
             None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
+                .bool("GROUP_NORM", true)
                 .tensor(x, None)
                 .f32("EPS", eps),
         );

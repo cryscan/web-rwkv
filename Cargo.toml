@@ -77,7 +77,9 @@ simple_logger = { version = "5.0.0", features = ["stderr"] }
 tokio = { version = "1.41", features = ["full"] }
 
 [features]
-default = ["subgroup-ops", "tokio"]
+default = ["native"]
+
+classic = ["tokio"]
 native = ["subgroup-ops", "tokio"]
 web = []
 
