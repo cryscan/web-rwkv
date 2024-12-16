@@ -2,6 +2,7 @@
 [![crates.io](https://img.shields.io/crates/v/web-rwkv)](https://crates.io/crates/web-rwkv)
 [![docs.rs](https://docs.rs/web-rwkv/badge.svg)](https://docs.rs/web-rwkv)
 
+<p align='center'><image src="assets/logo-zx2.png" height=256></p>
 <p align='center'><image src="assets/logo-ba.png"></p>
 
 This is an inference engine for the [language model of RWKV](https://github.com/BlinkDL/RWKV-LM) implemented in pure WebGPU.
