@@ -4,7 +4,10 @@ use itertools::Itertools;
 use shape::ShapedIndex;
 use thiserror::Error;
 use web_rwkv_derive::JsError;
-use wgpu::{BindingResource, Buffer, BufferBinding, BufferUsages};
+use wgpu::{
+    BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType,
+    BufferUsages, ShaderStages,
+};
 
 use self::{
     kind::{Kind, ReadWrite, Uniform},
@@ -20,101 +23,6 @@ pub mod matrix;
 pub mod ops;
 pub mod serialization;
 pub mod shape;
-
-/// Buffer of the tensor on GPU.
-#[derive(Debug, Clone)]
-pub struct TensorGpuData {
-    pub context: Context,
-    pub meta: Arc<Buffer>,
-    pub buffer: Arc<Buffer>,
-}
-
-impl TensorGpuData {
-    #[inline]
-    pub fn meta_binding(&self) -> BindingResource {
-        BindingResource::Buffer(BufferBinding {
-            buffer: &self.meta,
-            offset: 0,
-            size: None,
-        })
-    }
-
-    #[inline]
-    pub fn binding(&self) -> BindingResource {
-        BindingResource::Buffer(BufferBinding {
-            buffer: &self.buffer,
-            offset: 0,
-            size: None,
-        })
-    }
-}
-
-pub mod kind {
-    use web_rwkv_derive::Kind;
-    use wgpu::BufferUsages;
-
-    use super::sealed;
-
-    pub trait Kind: sealed::Sealed {
-        fn buffer_usages() -> BufferUsages;
-    }
-
-    /// Tensor is a uniform buffer.
-    #[derive(Debug, Kind)]
-    #[usage(UNIFORM, COPY_DST, COPY_SRC)]
-    pub struct Uniform;
-
-    /// Tensor is a storage buffer with can be copied to other buffers.
-    #[derive(Debug, Kind)]
-    #[usage(STORAGE, COPY_DST, COPY_SRC)]
-    pub struct ReadWrite;
-}
-
-pub trait Device: sealed::Sealed {
-    type Data: Clone;
-}
-
-#[derive(Debug)]
-pub struct Cpu<T: Scalar>(PhantomData<T>);
-
-#[derive(Debug)]
-pub struct Gpu<K: Kind>(PhantomData<K>);
-
-impl<T: Scalar> Device for Cpu<T> {
-    type Data = Arc<[T]>;
-}
-
-impl<K: Kind> Device for Gpu<K> {
-    type Data = TensorGpuData;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error, JsError)]
-pub enum TensorError {
-    #[error("list must not be empty")]
-    Empty,
-    #[error("data type mismatch")]
-    Type,
-    #[error("data size not match: {0} vs. {1}")]
-    Size(usize, usize),
-    #[error("batch size not match: {0} vs. {1}")]
-    Batch(usize, usize),
-    #[error("tensor shape not match: {0} vs. {1}")]
-    Shape(Shape, Shape),
-    #[error("cannot deduce dimension")]
-    Deduce,
-    #[error("batch {batch} out of range of max {max}")]
-    BatchOutOfRange { batch: usize, max: usize },
-    #[error("slice {start}..{end} out of range for dimension size {dim}")]
-    SliceOutOfRange {
-        dim: usize,
-        start: usize,
-        end: usize,
-    },
-    #[error("slice not contiguous")]
-    SliceInvalid,
-    #[error("cannot split along the axis {0}")]
-    SplitInvalid(usize),
-}
 
 /// Data defining a tensor view in shader.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -175,6 +83,34 @@ impl IntoPackedCursors for Vec<Cursor> {
             .collect_vec()
             .concat()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error, JsError)]
+pub enum TensorError {
+    #[error("list must not be empty")]
+    Empty,
+    #[error("data type mismatch")]
+    Type,
+    #[error("data size not match: {0} vs. {1}")]
+    Size(usize, usize),
+    #[error("batch size not match: {0} vs. {1}")]
+    Batch(usize, usize),
+    #[error("tensor shape not match: {0} vs. {1}")]
+    Shape(Shape, Shape),
+    #[error("cannot deduce dimension")]
+    Deduce,
+    #[error("batch {batch} out of range of max {max}")]
+    BatchOutOfRange { batch: usize, max: usize },
+    #[error("slice {start}..{end} out of range for dimension size {dim}")]
+    SliceOutOfRange {
+        dim: usize,
+        start: usize,
+        end: usize,
+    },
+    #[error("slice not contiguous")]
+    SliceInvalid,
+    #[error("cannot split along the axis {0}")]
+    SplitInvalid(usize),
 }
 
 pub trait DeepClone: Sized {
@@ -243,16 +179,95 @@ pub trait TensorReshape: Sized {
     ) -> Result<Self, TensorError>;
 }
 
+pub trait TensorResourceKey {
+    fn resource_key(&self) -> ResourceKey;
+}
+
 /// A tensor on either CPU or GPU.
 #[derive(Debug)]
 pub struct Tensor<D: Device, T: Scalar> {
     shape: Shape,
     data: D::Data,
+    id: uid::Id<TensorId>,
     phantom: PhantomData<T>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TensorId;
+
+/// A unique identifier of tensor views. Useful in caches.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ResourceKey {
+    pub id: uid::Id<TensorId>,
+    pub view: View,
+}
+
+pub trait Device: sealed::Sealed {
+    type Data: Clone;
+}
+
+#[derive(Debug)]
+pub struct Cpu<T: Scalar>(PhantomData<T>);
+
+#[derive(Debug)]
+pub struct Gpu<K: Kind>(PhantomData<K>);
+
+impl<T: Scalar> Device for Cpu<T> {
+    type Data = Arc<[T]>;
+}
+
+impl<K: Kind> Device for Gpu<K> {
+    type Data = TensorGpuData;
+}
+
+/// Buffer of the tensor on GPU.
+#[derive(Debug, Clone)]
+pub struct TensorGpuData {
+    pub context: Context,
+    pub meta: Arc<Buffer>,
+    pub buffer: Arc<Buffer>,
+}
+
+pub mod kind {
+    use web_rwkv_derive::Kind;
+    use wgpu::BufferUsages;
+
+    use super::sealed;
+
+    pub trait Kind: sealed::Sealed {
+        fn buffer_usages() -> BufferUsages;
+    }
+
+    /// Tensor is a uniform buffer.
+    #[derive(Debug, Kind)]
+    #[usage(UNIFORM, COPY_DST, COPY_SRC)]
+    pub struct Uniform;
+
+    /// Tensor is a storage buffer with can be copied to other buffers.
+    #[derive(Debug, Kind)]
+    #[usage(STORAGE, COPY_DST, COPY_SRC)]
+    pub struct ReadWrite;
+}
+
+impl TensorGpuData {
+    #[inline]
+    pub fn meta_binding(&self) -> BindingResource {
+        BindingResource::Buffer(BufferBinding {
+            buffer: &self.meta,
+            offset: 0,
+            size: None,
+        })
+    }
+
+    #[inline]
+    pub fn binding(&self) -> BindingResource {
+        BindingResource::Buffer(BufferBinding {
+            buffer: &self.buffer,
+            offset: 0,
+            size: None,
+        })
+    }
+}
 
 pub type TensorCpu<T> = Tensor<Cpu<T>, T>;
 pub type TensorGpu<T, K> = Tensor<Gpu<K>, T>;
@@ -262,6 +277,7 @@ impl<D: Device, T: Scalar> Clone for Tensor<D, T> {
         Self {
             shape: self.shape,
             data: self.data.clone(),
+            id: self.id,
             phantom: PhantomData,
         }
     }
@@ -307,6 +323,11 @@ impl<D: Device, T: Scalar> Tensor<D, T> {
     pub fn data(&self) -> &D::Data {
         &self.data
     }
+
+    #[inline]
+    pub fn id(&self) -> uid::Id<TensorId> {
+        self.id
+    }
 }
 
 impl<D: Device, F: Float> Tensor<D, F> {
@@ -326,6 +347,7 @@ impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
         Ok(Self {
             shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         })
     }
@@ -337,6 +359,7 @@ impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
         Self {
             shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         }
     }
@@ -415,6 +438,7 @@ impl<T: Scalar, K: Kind> TensorInitContext<T> for TensorGpu<T, K> {
                 meta,
                 buffer,
             },
+            id: uid::Id::new(),
             phantom: PhantomData,
         }
     }
@@ -434,6 +458,7 @@ impl<T: Scalar, K: Kind> TensorInto<TensorGpu<T, K>> for TensorCpu<T> {
                 meta,
                 buffer,
             },
+            id: uid::Id::new(),
             phantom: PhantomData,
         }
     }
@@ -488,6 +513,18 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
     }
 }
 
+impl<T: Scalar, K: Kind> TensorResourceKey for TensorGpu<T, K> {
+    fn resource_key(&self) -> ResourceKey {
+        let id = self.id;
+        let view = View {
+            shape: self.shape,
+            stride: self.shape,
+            offset: [0, 0, 0, 0].into(),
+        };
+        ResourceKey { id, view }
+    }
+}
+
 impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn back_in_place(&self) -> TensorCpu<T> {
@@ -497,6 +534,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
             return TensorCpu {
                 shape: self.shape,
                 data: Arc::new([]),
+                id: uid::Id::new(),
                 phantom: PhantomData,
             };
         }
@@ -526,6 +564,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         TensorCpu {
             shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         }
     }
@@ -536,6 +575,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
             return TensorCpu {
                 shape: self.shape,
                 data: Arc::new([]),
+                id: uid::Id::new(),
                 phantom: PhantomData,
             };
         }
@@ -567,6 +607,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         TensorCpu {
             shape: self.shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         }
     }
@@ -577,6 +618,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
             return TensorCpu {
                 shape: self.shape,
                 data: Arc::new([]),
+                id: uid::Id::new(),
                 phantom: PhantomData,
             };
         }
@@ -609,6 +651,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         TensorCpu {
             shape: self.shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         }
     }
@@ -645,6 +688,52 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
     pub fn destroy(self) {
         self.buffer.destroy();
+    }
+}
+
+impl<T: Scalar> TensorGpu<T, Uniform> {
+    #[inline]
+    pub fn layout(&self, binding: u32) -> BindGroupLayoutEntry {
+        BindGroupLayoutEntry {
+            binding,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    }
+}
+
+impl<T: Scalar> TensorGpu<T, ReadWrite> {
+    #[inline]
+    pub fn meta_layout(&self, binding: u32) -> BindGroupLayoutEntry {
+        BindGroupLayoutEntry {
+            binding,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    }
+
+    #[inline]
+    pub fn layout(&self, binding: u32, read_only: bool) -> BindGroupLayoutEntry {
+        BindGroupLayoutEntry {
+            binding,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
     }
 }
 
@@ -732,6 +821,7 @@ impl<T: Scalar> TensorCpu<T> {
         Self {
             shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         }
     }
@@ -760,6 +850,7 @@ impl<T: Scalar> TensorCpu<T> {
         Ok(Self {
             shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         })
     }
@@ -798,6 +889,7 @@ impl<T: Scalar> TensorCpu<T> {
         Ok(Self {
             shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         })
     }
@@ -819,6 +911,7 @@ impl<T: Scalar> TensorCpu<T> {
         Ok(Self {
             shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         })
     }
@@ -830,7 +923,6 @@ pub struct TensorGpuView<'a, T: Scalar> {
     tensor: &'a TensorGpu<T, ReadWrite>,
     meta: Arc<Buffer>,
     view: View,
-    id: uid::Id<TensorId>,
 }
 
 impl<T: Scalar> TensorShape for TensorGpuView<'_, T> {
@@ -857,6 +949,16 @@ impl<T: Scalar> TensorGpuView<'_, T> {
     }
 
     #[inline]
+    pub fn meta_layout(&self, binding: u32) -> BindGroupLayoutEntry {
+        self.tensor.meta_layout(binding)
+    }
+
+    #[inline]
+    pub fn layout(&self, binding: u32, read_only: bool) -> BindGroupLayoutEntry {
+        self.tensor.layout(binding, read_only)
+    }
+
+    #[inline]
     pub fn meta_binding(&self) -> BindingResource {
         BindingResource::Buffer(BufferBinding {
             buffer: &self.meta,
@@ -869,11 +971,6 @@ impl<T: Scalar> TensorGpuView<'_, T> {
     pub fn binding(&self) -> BindingResource {
         self.data().binding()
     }
-
-    #[inline]
-    pub fn id(&self) -> uid::Id<TensorId> {
-        self.id
-    }
 }
 
 impl<T: Scalar> TensorScalar for TensorGpuView<'_, T> {
@@ -884,6 +981,15 @@ impl<F: Float> TensorGpuView<'_, F> {
     #[inline]
     pub const fn def(&self) -> &'static str {
         F::DEF
+    }
+}
+
+impl<T: Scalar> TensorResourceKey for TensorGpuView<'_, T> {
+    fn resource_key(&self) -> ResourceKey {
+        ResourceKey {
+            id: self.tensor.id,
+            view: self.view,
+        }
     }
 }
 
@@ -910,12 +1016,10 @@ impl<T: Scalar> TensorGpu<T, ReadWrite> {
             shape: (end - start).into(),
         };
         let meta = self.context.checkout_view_uniform(view);
-        let id = uid::Id::new();
         Ok(TensorGpuView {
             tensor: self,
             meta,
             view,
-            id,
         })
     }
 }
@@ -1003,6 +1107,7 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<T>>> for TensorStack<T> {
             tensor: Tensor {
                 shape,
                 data,
+                id: uid::Id::new(),
                 phantom: PhantomData,
             },
             cursors,

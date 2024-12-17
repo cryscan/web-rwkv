@@ -6,16 +6,17 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
-    Adapter, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
-    BufferDescriptor, BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device,
-    DeviceDescriptor, Features, Instance, Limits, MemoryHints, PipelineLayoutDescriptor,
-    PowerPreference, Queue, RequestAdapterOptions, ShaderModuleDescriptor,
+    Adapter, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, Buffer, BufferDescriptor,
+    BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features,
+    Instance, Limits, MemoryHints, PipelineLayoutDescriptor, PowerPreference, Queue,
+    RequestAdapterOptions, ShaderModuleDescriptor,
 };
 
 use crate::tensor::{
-    cache::ResourceCache,
+    cache::{ResourceCache, SharedResourceCache},
     shape::{IntoBytes, Shape},
-    View,
+    ResourceKey, View,
 };
 
 pub trait InstanceExt {
@@ -56,9 +57,10 @@ pub struct ContextInternal {
     pub device: Device,
     pub queue: Queue,
 
-    pipelines: ResourceCache<PipelineKey, CachedPipeline>,
+    pipelines: SharedResourceCache<PipelineKey, CachedPipeline>,
     shapes: ResourceCache<View, Buffer>,
     buffers: ResourceCache<BufferKey, Buffer>,
+    bindings: SharedResourceCache<BindGroupKey, BindGroup>,
 
     #[cfg(not(target_arch = "wasm32"))]
     event: flume::Sender<ContextEvent>,
@@ -75,6 +77,12 @@ impl Drop for Context {
             self.queue.submit(None);
             self.device.poll(wgpu::Maintain::Wait);
         }
+    }
+}
+
+impl PartialEq for Context {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
     }
 }
 
@@ -136,6 +144,7 @@ impl ContextBuilder {
             pipelines: Default::default(),
             shapes: Default::default(),
             buffers: ResourceCache::new(4),
+            bindings: SharedResourceCache::new(64),
             #[cfg(not(target_arch = "wasm32"))]
             event,
         });
@@ -201,14 +210,16 @@ impl Macros {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct PipelineKey {
+pub struct PipelineKey {
     name: String,
     entry_point: String,
     macros: Vec<(String, String)>,
 }
 
 impl PipelineKey {
-    fn new(name: String, entry_point: String, macros: Macros) -> Self {
+    pub fn new(name: impl AsRef<str>, entry_point: impl AsRef<str>, macros: Macros) -> Self {
+        let name = name.as_ref().into();
+        let entry_point = entry_point.as_ref().into();
         let macros = macros.compile();
         Self {
             name,
@@ -224,16 +235,61 @@ pub struct CachedPipeline {
     pub layout: BindGroupLayout,
 }
 
-impl PartialEq for Context {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BufferKey {
     size: usize,
     usage: BufferUsages,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BindGroupKey {
+    pipeline: PipelineKey,
+    bindings: Vec<(u32, ResourceKey)>,
+}
+
+pub struct BindGroupBuilder<'a, 'b> {
+    context: &'b Context,
+    layout: &'b BindGroupLayout,
+    key: BindGroupKey,
+    entries: Vec<BindGroupEntry<'a>>,
+}
+
+impl<'a, 'b> BindGroupBuilder<'a, 'b> {
+    pub fn new(key: &PipelineKey, context: &'b Context, layout: &'b BindGroupLayout) -> Self {
+        Self {
+            context,
+            layout,
+            key: BindGroupKey {
+                pipeline: key.clone(),
+                bindings: vec![],
+            },
+            entries: vec![],
+        }
+    }
+
+    /// Mark a resource as being touched.
+    /// How resources are touched determines whether the bind group can be found in cache.
+    pub fn touch(mut self, binding: u32, resource: ResourceKey) -> Self {
+        self.key.bindings.push((binding, resource));
+        self
+    }
+
+    /// Insert an entry into the bind group.
+    pub fn bind(mut self, binding: u32, resource: BindingResource<'a>) -> Self {
+        self.entries.push(BindGroupEntry { binding, resource });
+        self
+    }
+
+    pub fn build(self) -> Arc<BindGroup> {
+        let name = self.key.pipeline.name.clone();
+        self.context.bindings.checkout(self.key, || {
+            self.context.device.create_bind_group(&BindGroupDescriptor {
+                label: Some(&name),
+                layout: self.layout,
+                entries: &self.entries,
+            })
+        })
+    }
 }
 
 impl Eq for Context {}
@@ -241,53 +297,45 @@ impl Eq for Context {}
 impl ContextInternal {
     pub fn checkout_pipeline(
         &self,
-        name: impl AsRef<str>,
+        key: &PipelineKey,
         source: impl AsRef<str>,
-        entry_point: impl AsRef<str>,
-        layout: Option<&[BindGroupLayoutEntry]>,
-        macros: Macros,
+        entries: &[BindGroupLayoutEntry],
     ) -> Arc<CachedPipeline> {
-        let name = name.as_ref();
-        let entry_point = entry_point.as_ref();
-        let key = PipelineKey::new(name.into(), entry_point.into(), macros.clone());
-
-        self.pipelines.checkout(key, || {
+        self.pipelines.checkout(key.clone(), || {
             use gpp::{process_str, Context};
             let mut context = Context::new();
-            context.macros = macros.0.into_iter().collect();
+            context.macros = key.macros.iter().cloned().collect();
 
             let shader = process_str(source.as_ref(), &mut context).unwrap();
             let module = &self.device.create_shader_module(ShaderModuleDescriptor {
-                label: Some(name),
+                label: Some(&key.name),
                 source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
             });
 
-            let layout = layout.map(|entries| {
-                let layout = self
-                    .device
-                    .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                        label: None,
-                        entries,
-                    });
-                self.device
-                    .create_pipeline_layout(&PipelineLayoutDescriptor {
-                        label: None,
-                        bind_group_layouts: &[&layout],
-                        push_constant_ranges: &[],
-                    })
-            });
+            let layout = self
+                .device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: Some(&key.name),
+                    entries,
+                });
+            let pipeline_layout = self
+                .device
+                .create_pipeline_layout(&PipelineLayoutDescriptor {
+                    label: Some(&key.name),
+                    bind_group_layouts: &[&layout],
+                    push_constant_ranges: &[],
+                });
 
             let pipeline = self
                 .device
                 .create_compute_pipeline(&ComputePipelineDescriptor {
-                    label: Some(name),
-                    layout: layout.as_ref(),
+                    label: Some(&key.name),
+                    layout: Some(&pipeline_layout),
                     module,
-                    entry_point: Some(entry_point),
+                    entry_point: Some(&key.entry_point),
                     compilation_options: Default::default(),
                     cache: None,
                 });
-            let layout = pipeline.get_bind_group_layout(0);
             CachedPipeline { pipeline, layout }
         })
     }
@@ -362,6 +410,7 @@ impl ContextInternal {
         self.pipelines.maintain();
         self.shapes.maintain();
         self.buffers.maintain();
+        self.bindings.maintain();
     }
 
     /// Clear resource caches.

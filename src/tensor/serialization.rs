@@ -31,6 +31,7 @@ impl<T: Scalar> From<TensorBlob> for TensorCpu<T> {
         Self {
             shape,
             data,
+            id: uid::Id::new(),
             phantom: PhantomData,
         }
     }

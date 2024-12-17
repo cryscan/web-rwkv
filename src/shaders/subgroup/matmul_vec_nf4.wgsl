@@ -80,6 +80,13 @@ fn unpack_matrix_1(v: u32) -> vec4<f32> {
     );
 }
 
+fn reduce_sum(index: u32, stride: u32) {
+    if index < stride {
+        sketch[index] += sketch[index + stride];
+    }
+    workgroupBarrier();
+}
+
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn matmul(
     @builtin(global_invocation_id) invocation_id: vec3<u32>,

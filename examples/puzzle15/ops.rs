@@ -1,8 +1,7 @@
 use web_rwkv::{
-    context::Macros,
+    context::{BindGroupBuilder, Macros, PipelineKey},
     num::Float,
-    tensor::{ops::TensorOp, TensorError, TensorGpuView, TensorShape},
-    wgpu::{BindGroupDescriptor, BindGroupEntry},
+    tensor::{ops::TensorOp, TensorError, TensorGpuView, TensorResourceKey, TensorShape},
 };
 
 pub trait TensorOpExt: Sized {
@@ -25,6 +24,7 @@ impl TensorOpExt for TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = {
             let [index, token, batch, _] = output.shape().into();
             input
@@ -34,39 +34,33 @@ impl TensorOpExt for TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "mul_exp",
-            include_str!("mul_exp.wgsl"),
             "mul_exp",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("mul_exp.wgsl"),
+            &[
+                input.meta_layout(0),
+                output.meta_layout(1),
+                input.layout(2, true),
+                output.layout(3, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, input.resource_key())
+            .touch(3, output.resource_key())
+            .bind(0, input.meta_binding())
+            .bind(1, output.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,

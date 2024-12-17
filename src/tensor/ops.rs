@@ -3,18 +3,16 @@ use std::{hash::Hash, sync::Arc};
 use embed_doc_image::embed_doc_image;
 use half::f16;
 use serde::{Deserialize, Serialize};
-use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, CommandBuffer, CommandEncoder, ComputePass,
-};
+use wgpu::{BindGroup, CommandBuffer, CommandEncoder, ComputePass};
 
 use super::{
     kind::{Kind, ReadWrite, Uniform},
     Shape, TensorError, TensorGpu, TensorGpuView, TensorScalar, TensorShape,
 };
 use crate::{
-    context::{CachedPipeline, Macros},
+    context::{BindGroupBuilder, CachedPipeline, Macros, PipelineKey},
     num::{Float, Scalar},
-    tensor::{shape::TensorDimension, TensorReshape},
+    tensor::{shape::TensorDimension, TensorReshape, TensorResourceKey},
 };
 
 pub trait TensorCommand<T: Scalar, K: Kind> {
@@ -81,7 +79,7 @@ impl crate::context::Context {
     pub fn encode(&self, op: &TensorOp) -> Vec<CommandBuffer> {
         struct Atom<'a> {
             pipeline: &'a CachedPipeline,
-            bindings: &'a [BindGroup],
+            bindings: &'a [Arc<BindGroup>],
             dispatch: &'a [u32; 3],
         }
 
@@ -95,7 +93,7 @@ impl crate::context::Context {
         ) {
             pass.set_pipeline(&pipeline.pipeline);
             for (index, bind) in bindings.iter().enumerate() {
-                pass.set_bind_group(index as u32, bind, &[]);
+                pass.set_bind_group(index as u32, &**bind, &[]);
             }
             pass.dispatch_workgroups(dispatch[0], dispatch[1], dispatch[2]);
         }
@@ -276,7 +274,7 @@ fn silu(x: vec4<f32>) -> vec4<f32> {
 pub enum TensorOp {
     Atom {
         pipeline: Arc<CachedPipeline>,
-        bindings: Vec<BindGroup>,
+        bindings: Vec<Arc<BindGroup>>,
         dispatch: [u32; 3],
     },
     List(Vec<TensorOp>),
@@ -296,41 +294,42 @@ impl TensorOp {
     pub fn softmax(x: &TensorGpu<impl Float, ReadWrite>) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = x.shape();
         let context = x.context();
+        let shape = x.shape();
+
         #[cfg(not(feature = "subgroup-ops"))]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "softmax",
-            include_str!("../shaders/softmax.wgsl"),
             "softmax",
-            None,
             Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
         #[cfg(feature = "subgroup-ops")]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "softmax",
-            include_str!("../shaders/subgroup/softmax.wgsl"),
             "softmax",
-            None,
             Macros::new()
                 .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: x.binding(),
-                },
-            ],
-        })];
+
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/softmax.wgsl"),
+            &[x.meta_layout(0), x.layout(1, false)],
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/subgroup/softmax.wgsl"),
+            &[x.meta_layout(0), x.layout(1, false)],
+        );
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -350,6 +349,7 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
+        let context = output.context();
         let shape = {
             let [index, token, batch, _] = output.shape().into();
             let [_, vocab, _, _] = input.shape().into();
@@ -359,38 +359,32 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "embed",
-            include_str!("../shaders/embed.wgsl"),
             "embed",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(output, None),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: tokens.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/embed.wgsl"),
+            &[
+                output.meta_layout(0),
+                tokens.layout(1, true),
+                input.layout(2, true),
+                output.layout(3, false),
             ],
-        })];
+        );
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, tokens.resource_key())
+            .touch(2, input.resource_key())
+            .touch(3, output.resource_key())
+            .bind(0, output.meta_binding())
+            .bind(1, tokens.binding())
+            .bind(2, input.binding())
+            .bind(3, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -416,6 +410,7 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
+        let context = x.context();
         let shape = {
             let [index, token, batch, _] = x.shape().into();
             x.check_shape([index, token, batch, 1])?;
@@ -424,40 +419,33 @@ impl TensorOp {
             x.shape()
         };
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "layer_norm",
-            include_str!("../shaders/layer_norm.wgsl"),
             "layer_norm",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
                 .f32("EPS", eps),
         );
-
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: w.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: b.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/layer_norm.wgsl"),
+            &[
+                x.meta_layout(0),
+                w.layout(1, true),
+                b.layout(2, true),
+                x.layout(3, false),
             ],
-        })];
+        );
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, w.resource_key())
+            .touch(2, b.resource_key())
+            .touch(3, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, w.binding())
+            .bind(2, b.binding())
+            .bind(3, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -478,6 +466,7 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 32;
 
+        let context = x.context();
         let shape = {
             let [index, head, token, _] = x.shape().into();
             x.check_shape([index, head, token, 1])?;
@@ -486,40 +475,34 @@ impl TensorOp {
             x.shape()
         };
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "group_norm",
-            include_str!("../shaders/layer_norm.wgsl"),
             "layer_norm",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .bool("GROUP_NORM", true)
                 .tensor(x, None)
                 .f32("EPS", eps),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: w.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: b.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/layer_norm.wgsl"),
+            &[
+                x.meta_layout(0),
+                w.layout(1, true),
+                b.layout(2, true),
+                x.layout(3, false),
             ],
-        })];
+        );
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, w.resource_key())
+            .touch(2, b.resource_key())
+            .touch(3, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, w.binding())
+            .bind(2, b.binding())
+            .bind(3, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -532,26 +515,22 @@ impl TensorOp {
     pub fn recenter(x: &TensorGpu<impl Float, ReadWrite>) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
+        let context = x.context();
         let shape = x.shape();
 
-        let context = x.context();
         #[cfg(not(feature = "subgroup-ops"))]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "recenter",
-            include_str!("../shaders/normalize.wgsl"),
             "recenter",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
                 .f32("EPS", 0.0),
         );
         #[cfg(feature = "subgroup-ops")]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "recenter",
-            include_str!("../shaders/subgroup/normalize.wgsl"),
             "recenter",
-            None,
             Macros::new()
                 .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
@@ -559,20 +538,24 @@ impl TensorOp {
                 .f32("EPS", 0.0),
         );
 
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: x.binding(),
-                },
-            ],
-        })];
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/normalize.wgsl"),
+            &[x.meta_layout(0), x.layout(3, false)],
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/subgroup/normalize.wgsl"),
+            &[x.meta_layout(0), x.layout(3, false)],
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(3, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -593,6 +576,7 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
+        let context = x.context();
         let shape = {
             let [index, token, batch, _] = x.shape().into();
             x.check_shape([index, token, batch, 1])?;
@@ -601,24 +585,19 @@ impl TensorOp {
             x.shape()
         };
 
-        let context = x.context();
         #[cfg(not(feature = "subgroup-ops"))]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "rms_norm",
-            include_str!("../shaders/normalize.wgsl"),
             "rms_norm",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
                 .f32("EPS", eps),
         );
         #[cfg(feature = "subgroup-ops")]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "rms_norm",
-            include_str!("../shaders/subgroup/normalize.wgsl"),
             "rms_norm",
-            None,
             Macros::new()
                 .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
@@ -626,28 +605,38 @@ impl TensorOp {
                 .f32("EPS", eps),
         );
 
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: w.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: b.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: x.binding(),
-                },
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/normalize.wgsl"),
+            &[
+                x.meta_layout(0),
+                w.layout(1, true),
+                b.layout(2, true),
+                x.layout(3, false),
             ],
-        })];
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/subgroup/normalize.wgsl"),
+            &[
+                x.meta_layout(0),
+                w.layout(1, true),
+                b.layout(2, true),
+                x.layout(3, false),
+            ],
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, w.resource_key())
+            .touch(2, b.resource_key())
+            .touch(3, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, w.binding())
+            .bind(2, b.binding())
+            .bind(3, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -661,26 +650,22 @@ impl TensorOp {
     pub fn l2_norm(x: &TensorGpu<impl Float, ReadWrite>, eps: f32) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
+        let context = x.context();
         let shape = x.shape();
 
-        let context = x.context();
         #[cfg(not(feature = "subgroup-ops"))]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "l2_norm",
-            include_str!("../shaders/normalize.wgsl"),
             "l2_norm",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
                 .f32("EPS", eps),
         );
         #[cfg(feature = "subgroup-ops")]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "l2_norm",
-            include_str!("../shaders/subgroup/normalize.wgsl"),
             "l2_norm",
-            None,
             Macros::new()
                 .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
@@ -688,20 +673,24 @@ impl TensorOp {
                 .f32("EPS", eps),
         );
 
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: x.binding(),
-                },
-            ],
-        })];
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/normalize.wgsl"),
+            &[x.meta_layout(0), x.layout(3, false)],
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/subgroup/normalize.wgsl"),
+            &[x.meta_layout(0), x.layout(3, false)],
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(3, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -725,6 +714,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
@@ -734,13 +724,10 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
         #[cfg(not(feature = "subgroup-ops"))]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_vec_fp16",
-            include_str!("../shaders/matmul_vec_fp16.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
@@ -748,11 +735,9 @@ impl TensorOp {
                 .activate("ACT", act),
         );
         #[cfg(feature = "subgroup-ops")]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_vec_fp16",
-            include_str!("../shaders/subgroup/matmul_vec_fp16.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
@@ -760,36 +745,45 @@ impl TensorOp {
                 .tensor(&output, Some("OUT"))
                 .activate("ACT", act),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: matrix.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: matrix.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: output.binding(),
-                },
+
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/matmul_vec_fp16.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                matrix.layout(3, true),
+                input.layout(4, true),
+                output.layout(5, false),
             ],
-        })];
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/subgroup/matmul_vec_fp16.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                matrix.layout(3, true),
+                input.layout(4, true),
+                output.layout(5, false),
+            ],
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, matrix.resource_key())
+            .touch(4, input.resource_key())
+            .touch(5, output.resource_key())
+            .bind(0, matrix.meta_binding())
+            .bind(1, input.meta_binding())
+            .bind(2, output.meta_binding())
+            .bind(3, matrix.binding())
+            .bind(4, input.binding())
+            .bind(5, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -815,6 +809,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = matrix.context();
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
@@ -826,13 +821,10 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = matrix.context();
         #[cfg(not(feature = "subgroup-ops"))]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_vec_int8",
-            include_str!("../shaders/matmul_vec_int8.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .int8(Self::INT8_BLOCK_SIZE)
@@ -841,11 +833,9 @@ impl TensorOp {
                 .activate("ACT", act),
         );
         #[cfg(feature = "subgroup-ops")]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_vec_int8",
-            include_str!("../shaders/matmul_vec_int8.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
@@ -854,40 +844,49 @@ impl TensorOp {
                 .tensor(&output, Some("OUT"))
                 .activate("ACT", act),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: matrix.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: matrix.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: minmax.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: output.binding(),
-                },
+
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/matmul_vec_int8.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                matrix.layout(3, true),
+                minmax.layout(4, true),
+                input.layout(5, true),
+                output.layout(6, false),
             ],
-        })];
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/subgroup/matmul_vec_int8.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                matrix.layout(3, true),
+                minmax.layout(4, true),
+                input.layout(5, true),
+                output.layout(6, false),
+            ],
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, matrix.resource_key())
+            .touch(4, minmax.resource_key())
+            .touch(5, input.resource_key())
+            .touch(6, output.resource_key())
+            .bind(0, matrix.meta_binding())
+            .bind(1, input.meta_binding())
+            .bind(2, output.meta_binding())
+            .bind(3, matrix.binding())
+            .bind(4, minmax.binding())
+            .bind(5, input.binding())
+            .bind(6, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -913,6 +912,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = matrix.context();
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
@@ -924,13 +924,10 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = matrix.context();
         #[cfg(not(feature = "subgroup-ops"))]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_vec_nf4",
-            include_str!("../shaders/matmul_vec_nf4.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .nf4(Self::NF4_BLOCK_SIZE)
@@ -939,11 +936,9 @@ impl TensorOp {
                 .activate("ACT", act),
         );
         #[cfg(feature = "subgroup-ops")]
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_vec_nf4",
-            include_str!("../shaders/matmul_vec_nf4.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .subgroup(context.min_subgroup_size(), context.max_subgroup_size())
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
@@ -952,44 +947,53 @@ impl TensorOp {
                 .tensor(&output, Some("OUT"))
                 .activate("ACT", act),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: matrix.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: quant.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: matrix.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: absmax.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: output.binding(),
-                },
+
+        #[cfg(not(feature = "subgroup-ops"))]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/matmul_vec_nf4.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                quant.layout(3),
+                matrix.layout(4, true),
+                absmax.layout(5, true),
+                input.layout(6, true),
+                output.layout(7, false),
             ],
-        })];
+        );
+        #[cfg(feature = "subgroup-ops")]
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/subgroup/matmul_vec_nf4.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                quant.layout(3),
+                matrix.layout(4, true),
+                absmax.layout(5, true),
+                input.layout(6, true),
+                output.layout(7, false),
+            ],
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, quant.resource_key())
+            .touch(4, matrix.resource_key())
+            .touch(5, absmax.resource_key())
+            .touch(6, input.resource_key())
+            .touch(7, output.resource_key())
+            .bind(0, matrix.meta_binding())
+            .bind(1, input.meta_binding())
+            .bind(2, output.meta_binding())
+            .bind(3, quant.binding())
+            .bind(4, matrix.binding())
+            .bind(5, absmax.binding())
+            .bind(6, input.binding())
+            .bind(7, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1016,6 +1020,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
@@ -1025,48 +1030,39 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_mat_fp16",
-            include_str!("../shaders/matmul_mat_fp16.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
                 .activate("ACT", act),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: matrix.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: matrix.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/matmul_mat_fp16.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                matrix.layout(3, true),
+                input.layout(4, true),
+                output.layout(5, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, matrix.resource_key())
+            .touch(4, input.resource_key())
+            .touch(5, output.resource_key())
+            .bind(0, matrix.meta_binding())
+            .bind(1, input.meta_binding())
+            .bind(2, output.meta_binding())
+            .bind(3, matrix.binding())
+            .bind(4, input.binding())
+            .bind(5, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1101,6 +1097,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
@@ -1112,12 +1109,9 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_mat_int8",
-            include_str!("../shaders/matmul_mat_int8.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .int8(Self::INT8_BLOCK_SIZE)
@@ -1125,40 +1119,33 @@ impl TensorOp {
                 .tensor(&output, Some("OUT"))
                 .activate("ACT", act),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: matrix.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: minmax.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: matrix.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/matmul_mat_int8.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                minmax.layout(3, true),
+                matrix.layout(4, true),
+                input.layout(5, true),
+                output.layout(6, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, matrix.resource_key())
+            .touch(4, minmax.resource_key())
+            .touch(5, input.resource_key())
+            .touch(6, output.resource_key())
+            .bind(0, matrix.meta_binding())
+            .bind(1, input.meta_binding())
+            .bind(2, output.meta_binding())
+            .bind(3, minmax.binding())
+            .bind(4, matrix.binding())
+            .bind(5, input.binding())
+            .bind(6, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1193,6 +1180,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = {
             let [m, n, b, _] = output.shape().into();
             let [k, _, _, _] = input.shape().into();
@@ -1204,12 +1192,9 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "matmul_mat_nf4",
-            include_str!("../shaders/matmul_mat_nf4.wgsl"),
             "matmul",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .nf4(Self::NF4_BLOCK_SIZE)
@@ -1217,44 +1202,36 @@ impl TensorOp {
                 .tensor(&output, Some("OUT"))
                 .activate("ACT", act),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: matrix.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: quant.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: absmax.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: matrix.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/matmul_mat_nf4.wgsl"),
+            &[
+                matrix.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                quant.layout(3),
+                absmax.layout(4, true),
+                matrix.layout(5, true),
+                input.layout(6, true),
+                output.layout(7, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, quant.resource_key())
+            .touch(4, absmax.resource_key())
+            .touch(5, matrix.resource_key())
+            .touch(6, input.resource_key())
+            .touch(7, output.resource_key())
+            .bind(0, matrix.meta_binding())
+            .bind(1, input.meta_binding())
+            .bind(2, output.meta_binding())
+            .bind(3, quant.binding())
+            .bind(4, absmax.binding())
+            .bind(5, matrix.binding())
+            .bind(6, input.binding())
+            .bind(7, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1283,6 +1260,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = {
             let [index, token, batch, _] = output.shape().into();
             input.check_shape_any(&[
@@ -1295,12 +1273,9 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "add",
-            include_str!("../shaders/binary.wgsl"),
             "add",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
@@ -1309,28 +1284,25 @@ impl TensorOp {
                 .activate("ACT_Y", act_y)
                 .activate("ACT_OUT", act_out),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/binary.wgsl"),
+            &[
+                input.meta_layout(0),
+                output.meta_layout(1),
+                input.layout(2, true),
+                output.layout(3, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, input.resource_key())
+            .touch(3, output.resource_key())
+            .bind(0, input.meta_binding())
+            .bind(1, output.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1375,6 +1347,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = {
             let [index, token, batch, _] = output.shape().into();
             input.check_shape_any(&[
@@ -1387,12 +1360,9 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "mul",
-            include_str!("../shaders/binary.wgsl"),
             "mul",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
@@ -1401,28 +1371,25 @@ impl TensorOp {
                 .activate("ACT_Y", act_y)
                 .activate("ACT_OUT", act_out),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/binary.wgsl"),
+            &[
+                input.meta_layout(0),
+                output.meta_layout(1),
+                input.layout(2, true),
+                output.layout(3, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, input.resource_key())
+            .touch(3, output.resource_key())
+            .bind(0, input.meta_binding())
+            .bind(1, output.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1464,6 +1431,7 @@ impl TensorOp {
         let time_mix: TensorGpuView<_> = time_mix.into();
         let state: TensorGpuView<_> = state.into();
 
+        let context = output.context();
         let shape = {
             let [index, token, count, _] = output.shape().into();
             let [_, head, batch, _] = state.shape().into();
@@ -1473,12 +1441,9 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "token_shift",
-            include_str!("../shaders/token_shift.wgsl"),
             "token_shift",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&time_mix, Some("TIME_MIX"))
@@ -1486,44 +1451,36 @@ impl TensorOp {
                 .tensor(output, Some("OUT"))
                 .bool("REVERSED", reversed),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: time_mix.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: cursors.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: time_mix.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: state.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/token_shift.wgsl"),
+            &[
+                output.meta_layout(0),
+                time_mix.meta_layout(1),
+                state.meta_layout(2),
+                cursors.layout(3, true),
+                time_mix.layout(4, true),
+                state.layout(5, true),
+                input.layout(6, true),
+                output.layout(7, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, cursors.resource_key())
+            .touch(4, time_mix.resource_key())
+            .touch(5, state.resource_key())
+            .touch(6, input.resource_key())
+            .touch(7, output.resource_key())
+            .bind(0, output.meta_binding())
+            .bind(1, time_mix.meta_binding())
+            .bind(2, state.meta_binding())
+            .bind(3, cursors.binding())
+            .bind(4, time_mix.binding())
+            .bind(5, state.binding())
+            .bind(6, input.binding())
+            .bind(7, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1551,6 +1508,7 @@ impl TensorOp {
 
         let state: TensorGpuView<_> = state.into();
 
+        let context = x.context();
         let shape = x.shape();
         k.check_shape(shape)?;
         v.check_shape(shape)?;
@@ -1559,60 +1517,48 @@ impl TensorOp {
         time_first.check_shape([shape[0], 1, 1, 1])?;
         state.check_shape([shape[0], 4, state.shape()[2], 1])?;
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "time_mix_v4",
-            include_str!("../shaders/time_mix_v4.wgsl"),
             "time_mix",
-            None,
             Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: cursors.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: time_decay.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: time_first.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: state.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: k.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 8,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 9,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/time_mix_v4.wgsl"),
+            &[
+                x.meta_layout(0),
+                state.meta_layout(1),
+                cursors.layout(2, true),
+                time_decay.layout(3, true),
+                time_first.layout(4, true),
+                state.layout(5, false),
+                k.layout(6, true),
+                v.layout(7, true),
+                r.layout(8, true),
+                x.layout(9, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, cursors.resource_key())
+            .touch(3, time_decay.resource_key())
+            .touch(4, time_first.resource_key())
+            .touch(5, state.resource_key())
+            .touch(6, k.resource_key())
+            .touch(7, v.resource_key())
+            .touch(8, r.resource_key())
+            .touch(9, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, state.meta_binding())
+            .bind(2, cursors.binding())
+            .bind(3, time_decay.binding())
+            .bind(4, time_first.binding())
+            .bind(5, state.binding())
+            .bind(6, k.binding())
+            .bind(7, v.binding())
+            .bind(8, r.binding())
+            .bind(9, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1636,6 +1582,7 @@ impl TensorOp {
 
         let state: TensorGpuView<_> = state.into();
 
+        let context = x.context();
         let shape = x.shape();
         let stride = shape[0] * shape[1];
 
@@ -1646,63 +1593,51 @@ impl TensorOp {
         time_first.check_shape([shape[0], shape[1], 1, 1])?;
         state.check_shape([stride, shape[0] + 1, state.shape()[2], 1])?;
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "time_mix_v5",
-            include_str!("../shaders/time_mix_v5.wgsl"),
             "time_mix",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .u32("HEAD_SIZE", shape[0] as u32 / 4)
                 .tensor(x, None),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: cursors.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: time_decay.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: time_first.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: state.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: k.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 8,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 9,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/time_mix_v5.wgsl"),
+            &[
+                x.meta_layout(0),
+                state.meta_layout(1),
+                cursors.layout(2, true),
+                time_decay.layout(3, true),
+                time_first.layout(4, true),
+                state.layout(5, false),
+                k.layout(6, true),
+                v.layout(7, true),
+                r.layout(8, true),
+                x.layout(9, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, cursors.resource_key())
+            .touch(3, time_decay.resource_key())
+            .touch(4, time_first.resource_key())
+            .touch(5, state.resource_key())
+            .touch(6, k.resource_key())
+            .touch(7, v.resource_key())
+            .touch(8, r.resource_key())
+            .touch(9, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, state.meta_binding())
+            .bind(2, cursors.binding())
+            .bind(3, time_decay.binding())
+            .bind(4, time_first.binding())
+            .bind(5, state.binding())
+            .bind(6, k.binding())
+            .bind(7, v.binding())
+            .bind(8, r.binding())
+            .bind(9, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1726,6 +1661,7 @@ impl TensorOp {
 
         let state: TensorGpuView<_> = state.into();
 
+        let context = x.context();
         let shape = x.shape();
         let stride = shape[0] * shape[1];
 
@@ -1736,63 +1672,51 @@ impl TensorOp {
         time_first.check_shape([shape[0], shape[1], 1, 1])?;
         state.check_shape([stride, shape[0] + 1, state.shape()[2], 1])?;
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "time_mix_v6",
-            include_str!("../shaders/time_mix_v6.wgsl"),
             "time_mix",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .u32("HEAD_SIZE", shape[0] as u32 / 4)
                 .tensor(x, None),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: cursors.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: time_decay.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: time_first.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: state.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: k.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 8,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 9,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/time_mix_v6.wgsl"),
+            &[
+                x.meta_layout(0),
+                state.meta_layout(1),
+                cursors.layout(2, true),
+                time_decay.layout(3, true),
+                time_first.layout(4, true),
+                state.layout(5, false),
+                k.layout(6, true),
+                v.layout(7, true),
+                r.layout(8, true),
+                x.layout(9, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, cursors.resource_key())
+            .touch(3, time_decay.resource_key())
+            .touch(4, time_first.resource_key())
+            .touch(5, state.resource_key())
+            .touch(6, k.resource_key())
+            .touch(7, v.resource_key())
+            .touch(8, r.resource_key())
+            .touch(9, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, state.meta_binding())
+            .bind(2, cursors.binding())
+            .bind(3, time_decay.binding())
+            .bind(4, time_first.binding())
+            .bind(5, state.binding())
+            .bind(6, k.binding())
+            .bind(7, v.binding())
+            .bind(8, r.binding())
+            .bind(9, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1821,6 +1745,7 @@ impl TensorOp {
 
         let state: TensorGpuView<_> = state.into();
 
+        let context = x.context();
         let shape = x.shape();
         let stride = shape[0] * shape[1];
 
@@ -1829,12 +1754,9 @@ impl TensorOp {
         n.check_shape([shape[0], shape[1], shape[2], 4])?;
         state.check_shape([stride, shape[0] + 1, state.shape()[2], 1])?;
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "time_mix_v7",
-            include_str!("../shaders/time_mix_v7.wgsl"),
             "time_mix",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .u32("HEAD_SIZE", shape[0] as u32 / 4)
@@ -1842,44 +1764,38 @@ impl TensorOp {
                 .tensor(x, None)
                 .activate("ACT", Activation::None),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: cursors.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: state.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: w.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: n.binding(),
-                },
-                BindGroupEntry {
-                    binding: 9,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/time_mix_v7.wgsl"),
+            &[
+                x.meta_layout(0),
+                state.meta_layout(1),
+                cursors.layout(2, true),
+                state.layout(3, false),
+                r.layout(5, true),
+                w.layout(6, true),
+                n.layout(7, true),
+                x.layout(9, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, cursors.resource_key())
+            .touch(3, state.resource_key())
+            .touch(5, r.resource_key())
+            .touch(6, w.resource_key())
+            .touch(7, n.resource_key())
+            .touch(9, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, state.meta_binding())
+            .bind(2, cursors.binding())
+            .bind(3, state.binding())
+            .bind(5, r.binding())
+            .bind(6, w.binding())
+            .bind(7, n.binding())
+            .bind(9, x.binding())
+            .build()];
+
         Ok(Self::Atom {
             pipeline,
             bindings,
@@ -1895,6 +1811,7 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 32;
 
+        let context = x.context();
         let shape = x.shape();
         let stride = shape[0] * shape[1];
 
@@ -1902,12 +1819,9 @@ impl TensorOp {
         u.check_shape([shape[0], shape[1], 1, 1])?;
         n.check_shape([shape[0], shape[1], shape[2], 4])?;
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "time_first_v7",
-            include_str!("../shaders/time_mix_v7.wgsl"),
             "time_first",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .u32("HEAD_SIZE", shape[0] as u32 / 4)
@@ -1915,32 +1829,29 @@ impl TensorOp {
                 .tensor(x, None)
                 .activate("ACT", Activation::None),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: u.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 7,
-                    resource: n.binding(),
-                },
-                BindGroupEntry {
-                    binding: 9,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/time_mix_v7.wgsl"),
+            &[
+                x.meta_layout(0),
+                u.layout(4, true),
+                r.layout(5, true),
+                n.layout(7, true),
+                x.layout(9, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(4, u.resource_key())
+            .touch(5, r.resource_key())
+            .touch(7, n.resource_key())
+            .touch(9, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(4, u.binding())
+            .bind(5, r.binding())
+            .bind(7, n.binding())
+            .bind(9, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -1964,6 +1875,7 @@ impl TensorOp {
         let a: TensorGpuView<_> = a.into();
         let k: TensorGpuView<_> = k.into();
 
+        let context = k.context();
         let shape = {
             let [index, token, batch, _] = k.shape().into();
             a.check_shape([index, token, batch, 1])?;
@@ -1971,47 +1883,38 @@ impl TensorOp {
             k.shape()
         };
 
-        let context = k.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "control_k_v7",
-            include_str!("../shaders/control_k_v7.wgsl"),
             "main",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&a, Some("A"))
                 .tensor(&k, Some("K")),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: p.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: a.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: k.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: p.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: a.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: k.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/control_k_v7.wgsl"),
+            &[
+                p.meta_layout(0),
+                a.meta_layout(1),
+                k.meta_layout(2),
+                p.layout(3, true),
+                a.layout(4, true),
+                k.layout(5, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, p.resource_key())
+            .touch(4, a.resource_key())
+            .touch(5, k.resource_key())
+            .bind(0, p.meta_binding())
+            .bind(1, a.meta_binding())
+            .bind(2, k.meta_binding())
+            .bind(3, p.binding())
+            .bind(4, a.binding())
+            .bind(5, k.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2035,53 +1938,45 @@ impl TensorOp {
 
         let state: TensorGpuView<_> = state.into();
 
+        let context = x.context();
         let shape = x.shape();
         v.check_shape(shape)?;
         r.check_shape(shape)?;
         state.check_shape([shape[0], 1, state.shape()[2], 1])?;
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "channel_mix",
-            include_str!("../shaders/channel_mix.wgsl"),
             "channel_mix",
-            None,
             Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE).tensor(x, None),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: cursors.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: state.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: r.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/channel_mix.wgsl"),
+            &[
+                x.meta_layout(0),
+                state.meta_layout(1),
+                cursors.layout(2, true),
+                state.layout(3, false),
+                r.layout(4, true),
+                v.layout(5, true),
+                x.layout(6, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, cursors.resource_key())
+            .touch(3, state.resource_key())
+            .touch(4, r.resource_key())
+            .touch(5, v.resource_key())
+            .touch(6, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, state.meta_binding())
+            .bind(2, cursors.binding())
+            .bind(3, state.binding())
+            .bind(4, r.binding())
+            .bind(5, v.binding())
+            .bind(6, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2104,51 +1999,44 @@ impl TensorOp {
 
         let state: TensorGpuView<_> = state.into();
 
+        let context = x.context();
         let shape = x.shape();
         v.check_shape(shape)?;
         state.check_shape([shape[0], 1, state.shape()[2], 1])?;
 
-        let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "channel_mix",
-            include_str!("../shaders/channel_mix.wgsl"),
             "channel_mix",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
                 .bool("V7", true),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: state.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: cursors.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: state.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: v.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: x.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/channel_mix.wgsl"),
+            &[
+                x.meta_layout(0),
+                state.meta_layout(1),
+                cursors.layout(2, true),
+                state.layout(3, false),
+                v.layout(5, true),
+                x.layout(6, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, cursors.resource_key())
+            .touch(3, state.resource_key())
+            .touch(5, v.resource_key())
+            .touch(6, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, state.meta_binding())
+            .bind(2, cursors.binding())
+            .bind(3, state.binding())
+            .bind(5, v.binding())
+            .bind(6, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2169,32 +2057,28 @@ impl TensorOp {
 
         let x: TensorGpuView<_> = x.into();
 
-        let shape = x.shape();
         let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let shape = x.shape();
+
+        let key = PipelineKey::new(
             "activate",
-            include_str!("../shaders/activation.wgsl"),
             "act",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&x, None)
                 .activate("ACT", act),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: x.binding(),
-                },
-            ],
-        })];
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/activation.wgsl"),
+            &[x.meta_layout(0), x.layout(1, false)],
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2215,6 +2099,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = input.context();
         let shape = output.shape();
         input.check_shape(shape)?;
 
@@ -2223,40 +2108,34 @@ impl TensorOp {
             _ => [16, 16],
         };
 
-        let context = input.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "blit",
-            include_str!("../shaders/blit.wgsl"),
             "blit",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE_X", block_size[0])
                 .u32("BLOCK_SIZE_Y", block_size[1])
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/blit.wgsl"),
+            &[
+                input.meta_layout(0),
+                output.meta_layout(1),
+                input.layout(2, true),
+                output.layout(3, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, input.resource_key())
+            .touch(3, output.resource_key())
+            .bind(0, input.meta_binding())
+            .bind(1, output.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2279,42 +2158,37 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = input.context();
         let shape = output.shape();
         input.check_shape([shape[0], input.shape()[1], input.shape()[2], 1])?;
 
-        let context = input.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "broadcast",
-            include_str!("../shaders/reshape.wgsl"),
             "broadcast",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/reshape.wgsl"),
+            &[
+                input.meta_layout(0),
+                output.meta_layout(1),
+                input.layout(2, true),
+                output.layout(3, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, input.resource_key())
+            .touch(3, output.resource_key())
+            .bind(0, input.meta_binding())
+            .bind(1, output.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2337,42 +2211,37 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = input.context();
         let shape = input.shape();
         output.check_shape([shape[0], shape[2], shape[1], 1])?;
 
-        let context = input.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "transpose",
-            include_str!("../shaders/reshape.wgsl"),
             "transpose",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/reshape.wgsl"),
+            &[
+                input.meta_layout(0),
+                output.meta_layout(1),
+                input.layout(2, true),
+                output.layout(3, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, input.resource_key())
+            .touch(3, output.resource_key())
+            .bind(0, input.meta_binding())
+            .bind(1, output.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2390,6 +2259,7 @@ impl TensorOp {
         input: &TensorGpu<impl Float, ReadWrite>,
         output: &TensorGpu<impl Float, ReadWrite>,
     ) -> Result<Self, TensorError> {
+        let context = output.context();
         let shape = output.shape();
         input.check_shape(shape)?;
         factor.check_shape([4, 1, 1, 1])?;
@@ -2399,44 +2269,37 @@ impl TensorOp {
             _ => [16, 16],
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "blend",
-            include_str!("../shaders/blend.wgsl"),
             "blend",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE_X", block_size[0])
                 .u32("BLOCK_SIZE_Y", block_size[1])
                 .tensor(input, Some("IN"))
                 .tensor(output, Some("OUT")),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: factor.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/blend.wgsl"),
+            &[
+                input.meta_layout(0),
+                output.meta_layout(1),
+                factor.layout(2),
+                input.layout(3, true),
+                output.layout(4, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, factor.resource_key())
+            .touch(3, input.resource_key())
+            .touch(4, output.resource_key())
+            .bind(0, input.meta_binding())
+            .bind(1, output.meta_binding())
+            .bind(2, factor.binding())
+            .bind(3, input.binding())
+            .bind(4, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2461,53 +2324,44 @@ impl TensorOp {
         let xb: TensorGpuView<_> = xb.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = output.shape();
         factor.check_shape([4, 1, 1, 1])?;
         xa.check_shape([xa.shape()[0], shape[0], shape[2], 1])?;
         xb.check_shape([xb.shape()[0], shape[1], shape[2], 1])?;
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "blend_lora",
-            include_str!("../shaders/blend_lora.wgsl"),
             "blend_lora",
-            None,
             Macros::new().u32("BLOCK_SIZE", BLOCK_SIZE),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: xa.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: xb.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: factor.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: xa.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: xb.binding(),
-                },
-                BindGroupEntry {
-                    binding: 6,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/blend_lora.wgsl"),
+            &[
+                xa.meta_layout(0),
+                xb.meta_layout(1),
+                output.meta_layout(2),
+                factor.layout(3),
+                xa.layout(4, true),
+                xb.layout(5, true),
+                output.layout(6, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, factor.resource_key())
+            .touch(4, xa.resource_key())
+            .touch(5, xb.resource_key())
+            .touch(6, output.resource_key())
+            .bind(0, xa.meta_binding())
+            .bind(1, xb.meta_binding())
+            .bind(2, output.meta_binding())
+            .bind(3, factor.binding())
+            .bind(4, xa.binding())
+            .bind(5, xb.binding())
+            .bind(6, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2532,6 +2386,7 @@ impl TensorOp {
         let input: TensorGpuView<_> = input.into();
         let output: TensorGpuView<_> = output.into();
 
+        let context = output.context();
         let shape = {
             let [index, token, batch, _] = output.shape().into();
             factor.check_shape_any(&[
@@ -2544,12 +2399,9 @@ impl TensorOp {
             output.shape()
         };
 
-        let context = output.context();
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "lerp",
-            include_str!("../shaders/lerp.wgsl"),
             "lerp",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&factor, Some("FACTOR"))
@@ -2557,36 +2409,30 @@ impl TensorOp {
                 .tensor(&output, Some("OUT"))
                 .bool("REVERSED", reversed),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: factor.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: factor.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 5,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/lerp.wgsl"),
+            &[
+                factor.meta_layout(0),
+                input.meta_layout(1),
+                output.meta_layout(2),
+                factor.layout(3, true),
+                input.layout(4, true),
+                output.layout(5, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(3, factor.resource_key())
+            .touch(4, input.resource_key())
+            .touch(5, output.resource_key())
+            .bind(0, factor.meta_binding())
+            .bind(1, input.meta_binding())
+            .bind(2, output.meta_binding())
+            .bind(3, factor.binding())
+            .bind(4, input.binding())
+            .bind(5, output.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2606,33 +2452,29 @@ impl TensorOp {
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
-        let shape = x.shape();
         let context = x.context();
-        let pipeline = context.checkout_pipeline(
+        let shape = x.shape();
+
+        let key = PipelineKey::new(
             "discount",
-            include_str!("../shaders/discount.wgsl"),
             "discount",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
                 .f32("FACTOR", factor)
                 .f32("BIAS", bias),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: x.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: x.binding(),
-                },
-            ],
-        })];
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/discount.wgsl"),
+            &[x.meta_layout(0), x.layout(1, false)],
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, x.resource_key())
+            .bind(0, x.meta_binding())
+            .bind(1, x.binding())
+            .build()];
 
         Ok(Self::Atom {
             pipeline,
@@ -2660,33 +2502,31 @@ impl TensorOp {
         input.check_shape(shape)?;
         minmax.check_shape(minmax_shape)?;
 
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "quant_mat_int8_minmax",
-            include_str!("../shaders/quant_mat_int8.wgsl"),
             "compute_minmax",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .int8(Self::INT8_BLOCK_SIZE),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: minmax.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: minmax.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/quant_mat_int8.wgsl"),
+            &[
+                minmax.meta_layout(0),
+                input.layout(1, true),
+                minmax.layout(2, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, input.resource_key())
+            .touch(2, minmax.resource_key())
+            .bind(0, minmax.meta_binding())
+            .bind(1, input.binding())
+            .bind(2, minmax.binding())
+            .build()];
+
         let compute_minmax = Self::Atom {
             pipeline,
             bindings,
@@ -2703,37 +2543,35 @@ impl TensorOp {
             TensorDimension::Size(1),
             TensorDimension::Size(1),
         )?;
-        let pipeline = context.checkout_pipeline(
+
+        let key = PipelineKey::new(
             "quant_mat_int8",
-            include_str!("../shaders/quant_mat_int8.wgsl"),
             "quantize",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .int8(Self::INT8_BLOCK_SIZE),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: minmax.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/quant_mat_int8.wgsl"),
+            &[
+                output.meta_layout(0),
+                input.layout(1, true),
+                minmax.layout(2, false),
+                output.layout(3, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, input.resource_key())
+            .touch(2, minmax.resource_key())
+            .touch(3, output.resource_key())
+            .bind(0, output.meta_binding())
+            .bind(1, input.binding())
+            .bind(2, minmax.binding())
+            .bind(3, output.binding())
+            .build()];
+
         let quantize = Self::Atom {
             pipeline,
             bindings,
@@ -2766,41 +2604,31 @@ impl TensorOp {
 
         let absmax_f32: TensorGpu<f32, ReadWrite> = context.tensor_init(absmax_shape);
 
-        let pipeline = context.checkout_pipeline(
+        let key = PipelineKey::new(
             "quant_mat_nf4_absmax",
-            include_str!("../shaders/quant_mat_nf4.wgsl"),
             "compute_absmax",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .nf4(Self::NF4_BLOCK_SIZE),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: absmax_f32.meta_binding(),
-                },
-                // BindGroupEntry {
-                //     binding: 1,
-                //     resource: quant.binding(),
-                // },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: absmax_f32.binding(),
-                },
-                // BindGroupEntry {
-                //     binding: 4,
-                //     resource: output.binding(),
-                // },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/quant_mat_nf4.wgsl"),
+            &[
+                absmax_f32.meta_layout(0),
+                input.layout(2, true),
+                absmax_f32.layout(3, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(2, input.resource_key())
+            .touch(3, absmax_f32.resource_key())
+            .bind(0, absmax_f32.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, absmax_f32.binding())
+            .build()];
+
         let compute_absmax = Self::Atom {
             pipeline,
             bindings,
@@ -2817,41 +2645,37 @@ impl TensorOp {
             TensorDimension::Size(1),
             TensorDimension::Size(1),
         )?;
-        let pipeline = context.checkout_pipeline(
+
+        let key = PipelineKey::new(
             "quant_mat_nf4",
-            include_str!("../shaders/quant_mat_nf4.wgsl"),
             "quantize",
-            None,
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .nf4(Self::NF4_BLOCK_SIZE),
         );
-        let bindings = vec![context.device.create_bind_group(&BindGroupDescriptor {
-            label: None,
-            layout: &pipeline.layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: output.meta_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: quant.binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: input.binding(),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: absmax_f32.binding(),
-                },
-                BindGroupEntry {
-                    binding: 4,
-                    resource: output.binding(),
-                },
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("../shaders/quant_mat_nf4.wgsl"),
+            &[
+                output.meta_layout(0),
+                quant.layout(1),
+                input.layout(2, true),
+                absmax_f32.layout(3, false),
+                output.layout(4, false),
             ],
-        })];
+        );
+
+        let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
+            .touch(1, quant.resource_key())
+            .touch(2, input.resource_key())
+            .touch(3, absmax_f32.resource_key())
+            .bind(0, output.meta_binding())
+            .bind(1, quant.binding())
+            .bind(2, input.binding())
+            .bind(3, absmax_f32.binding())
+            .bind(4, output.binding())
+            .build()];
+
         let quantize = Self::Atom {
             pipeline,
             bindings,
