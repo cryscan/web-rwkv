@@ -60,7 +60,7 @@ pub struct ContextInternal {
     pipelines: SharedResourceCache<PipelineKey, CachedPipeline>,
     shapes: ResourceCache<View, Buffer>,
     buffers: ResourceCache<BufferKey, Buffer>,
-    bindings: ResourceCache<BindGroupKey, BindGroup>,
+    bindings: SharedResourceCache<BindGroupKey, BindGroup>,
 
     #[cfg(not(target_arch = "wasm32"))]
     event: flume::Sender<ContextEvent>,
@@ -144,7 +144,7 @@ impl ContextBuilder {
             pipelines: Default::default(),
             shapes: Default::default(),
             buffers: ResourceCache::new(4),
-            bindings: ResourceCache::new(4),
+            bindings: SharedResourceCache::new(64),
             #[cfg(not(target_arch = "wasm32"))]
             event,
         });
@@ -410,6 +410,7 @@ impl ContextInternal {
         self.pipelines.maintain();
         self.shapes.maintain();
         self.buffers.maintain();
+        self.bindings.maintain();
     }
 
     /// Clear resource caches.

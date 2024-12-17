@@ -57,8 +57,8 @@ where
                 _ => true,
             });
             items.iter_mut().for_each(|item| match item.ref_count() {
-                0 | 1 => item.life = 0,
-                _ => item.life += 1,
+                0 | 1 => item.life += 1,
+                _ => item.life = 0,
             });
         }
     }
@@ -156,8 +156,8 @@ where
         });
         for item in map.values_mut() {
             match item.ref_count() {
-                0 | 1 => item.life = 0,
-                _ => item.life += 1,
+                0 | 1 => item.life += 1,
+                _ => item.life = 0,
             }
         }
     }
