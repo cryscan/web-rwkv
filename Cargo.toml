@@ -9,7 +9,7 @@ keywords = ["deep-learning", "language", "model", "rwkv"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/cryscan/web-rwkv"
 rust-version = "1.83.0"
-version = "0.9.6"
+version = "0.10.0"
 
 [package]
 authors.workspace = true
@@ -56,7 +56,7 @@ wgpu = "23.0.0"
 
 [dependencies.web-rwkv-derive]
 path = "crates/web-rwkv-derive"
-version = "0.9"
+version = "0.10"
 
 [dependencies.tokio]
 default-features = false
@@ -71,7 +71,6 @@ crossterm = "0.28"
 dialoguer = "0.11.0"
 fastrand = "2.2"
 memmap2 = "0.9"
-pollster = "0.4.0"
 ratatui = { version = "0.29", features = ["all-widgets"] }
 simple_logger = { version = "5.0.0", features = ["stderr"] }
 tokio = { version = "1.41", features = ["full"] }
