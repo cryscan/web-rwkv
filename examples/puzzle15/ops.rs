@@ -42,7 +42,16 @@ impl TensorOpExt for TensorOp {
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT")),
         );
-        let pipeline = context.checkout_pipeline(&key, include_str!("mul_exp.wgsl"), None);
+        let pipeline = context.checkout_pipeline(
+            &key,
+            include_str!("mul_exp.wgsl"),
+            &[
+                input.meta_layout(0),
+                output.meta_layout(1),
+                input.layout(2, true),
+                output.layout(3, false),
+            ],
+        );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
             .touch(2, input.resource_key())

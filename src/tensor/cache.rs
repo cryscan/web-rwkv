@@ -35,7 +35,7 @@ impl<K, V> Default for ResourceCache<K, V> {
 
 impl<K, V> ResourceCache<K, V>
 where
-    K: Clone + PartialEq + Eq + Hash,
+    K: PartialEq + Eq + Hash,
 {
     pub fn new(limit: usize) -> Self {
         Self {
@@ -134,7 +134,7 @@ impl<K, V> Default for SharedResourceCache<K, V> {
 
 impl<K, V> SharedResourceCache<K, V>
 where
-    K: Clone + PartialEq + Eq + Hash,
+    K: PartialEq + Eq + Hash,
 {
     pub fn new(limit: usize) -> Self {
         Self {

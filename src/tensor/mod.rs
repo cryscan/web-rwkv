@@ -4,7 +4,10 @@ use itertools::Itertools;
 use shape::ShapedIndex;
 use thiserror::Error;
 use web_rwkv_derive::JsError;
-use wgpu::{BindingResource, Buffer, BufferBinding, BufferUsages};
+use wgpu::{
+    BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType,
+    BufferUsages, ShaderStages,
+};
 
 use self::{
     kind::{Kind, ReadWrite, Uniform},
@@ -688,6 +691,52 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     }
 }
 
+impl<T: Scalar> TensorGpu<T, Uniform> {
+    #[inline]
+    pub fn layout(&self, binding: u32) -> BindGroupLayoutEntry {
+        BindGroupLayoutEntry {
+            binding,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    }
+}
+
+impl<T: Scalar> TensorGpu<T, ReadWrite> {
+    #[inline]
+    pub fn meta_layout(&self, binding: u32) -> BindGroupLayoutEntry {
+        BindGroupLayoutEntry {
+            binding,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    }
+
+    #[inline]
+    pub fn layout(&self, binding: u32, read_only: bool) -> BindGroupLayoutEntry {
+        BindGroupLayoutEntry {
+            binding,
+            visibility: ShaderStages::COMPUTE,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }
+    }
+}
+
 impl<T: Scalar> From<TensorCpu<T>> for Vec<T> {
     #[inline]
     fn from(value: TensorCpu<T>) -> Self {
@@ -897,6 +946,16 @@ impl<T: Scalar> TensorGpuView<'_, T> {
     #[inline]
     pub fn data(&self) -> &TensorGpuData {
         &self.tensor.data
+    }
+
+    #[inline]
+    pub fn meta_layout(&self, binding: u32) -> BindGroupLayoutEntry {
+        self.tensor.meta_layout(binding)
+    }
+
+    #[inline]
+    pub fn layout(&self, binding: u32, read_only: bool) -> BindGroupLayoutEntry {
+        self.tensor.layout(binding, read_only)
     }
 
     #[inline]

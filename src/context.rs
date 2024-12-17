@@ -60,7 +60,7 @@ pub struct ContextInternal {
     pipelines: SharedResourceCache<PipelineKey, CachedPipeline>,
     shapes: ResourceCache<View, Buffer>,
     buffers: ResourceCache<BufferKey, Buffer>,
-    bindings: SharedResourceCache<BindGroupKey, BindGroup>,
+    bindings: ResourceCache<BindGroupKey, BindGroup>,
 
     #[cfg(not(target_arch = "wasm32"))]
     event: flume::Sender<ContextEvent>,
@@ -144,7 +144,7 @@ impl ContextBuilder {
             pipelines: Default::default(),
             shapes: Default::default(),
             buffers: ResourceCache::new(4),
-            bindings: SharedResourceCache::new(4),
+            bindings: ResourceCache::new(4),
             #[cfg(not(target_arch = "wasm32"))]
             event,
         });
@@ -299,7 +299,7 @@ impl ContextInternal {
         &self,
         key: &PipelineKey,
         source: impl AsRef<str>,
-        layout: Option<&[BindGroupLayoutEntry]>,
+        entries: &[BindGroupLayoutEntry],
     ) -> Arc<CachedPipeline> {
         self.pipelines.checkout(key.clone(), || {
             use gpp::{process_str, Context};
@@ -312,32 +312,30 @@ impl ContextInternal {
                 source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
             });
 
-            let layout = layout.map(|entries| {
-                let layout = self
-                    .device
-                    .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                        label: None,
-                        entries,
-                    });
-                self.device
-                    .create_pipeline_layout(&PipelineLayoutDescriptor {
-                        label: None,
-                        bind_group_layouts: &[&layout],
-                        push_constant_ranges: &[],
-                    })
-            });
+            let layout = self
+                .device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: Some(&key.name),
+                    entries,
+                });
+            let pipeline_layout = self
+                .device
+                .create_pipeline_layout(&PipelineLayoutDescriptor {
+                    label: Some(&key.name),
+                    bind_group_layouts: &[&layout],
+                    push_constant_ranges: &[],
+                });
 
             let pipeline = self
                 .device
                 .create_compute_pipeline(&ComputePipelineDescriptor {
                     label: Some(&key.name),
-                    layout: layout.as_ref(),
+                    layout: Some(&pipeline_layout),
                     module,
                     entry_point: Some(&key.entry_point),
                     compilation_options: Default::default(),
                     cache: None,
                 });
-            let layout = pipeline.get_bind_group_layout(0);
             CachedPipeline { pipeline, layout }
         })
     }
