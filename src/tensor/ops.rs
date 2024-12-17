@@ -12,7 +12,7 @@ use super::{
 use crate::{
     context::{BindGroupBuilder, CachedPipeline, Macros, PipelineKey},
     num::{Float, Scalar},
-    tensor::{shape::TensorDimension, TensorReshape, TensorResourceKey},
+    tensor::{shape::TensorDimension, TensorReshape},
 };
 
 pub trait TensorCommand<T: Scalar, K: Kind> {

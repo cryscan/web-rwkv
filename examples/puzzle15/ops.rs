@@ -1,7 +1,7 @@
 use web_rwkv::{
     context::{BindGroupBuilder, Macros, PipelineKey},
     num::Float,
-    tensor::{ops::TensorOp, TensorError, TensorGpuView, TensorResourceKey, TensorShape},
+    tensor::{ops::TensorOp, TensorError, TensorGpuView, TensorShape},
 };
 
 pub trait TensorOpExt: Sized {

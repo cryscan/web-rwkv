@@ -179,10 +179,6 @@ pub trait TensorReshape: Sized {
     ) -> Result<Self, TensorError>;
 }
 
-pub trait TensorResourceKey {
-    fn resource_key(&self) -> ResourceKey;
-}
-
 /// A tensor on either CPU or GPU.
 #[derive(Debug)]
 pub struct Tensor<D: Device, T: Scalar> {
@@ -513,7 +509,8 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
     }
 }
 
-impl<T: Scalar, K: Kind> TensorResourceKey for TensorGpu<T, K> {
+impl<T: Scalar, K: Kind> TensorGpu<T, K> {
+    #[inline]
     fn resource_key(&self) -> ResourceKey {
         let id = self.id;
         let view = View {
@@ -523,9 +520,7 @@ impl<T: Scalar, K: Kind> TensorResourceKey for TensorGpu<T, K> {
         };
         ResourceKey { id, view }
     }
-}
 
-impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn back_in_place(&self) -> TensorCpu<T> {
         use crate::context::ContextEvent;
@@ -971,6 +966,14 @@ impl<T: Scalar> TensorGpuView<'_, T> {
     pub fn binding(&self) -> BindingResource {
         self.data().binding()
     }
+
+    #[inline]
+    pub fn resource_key(&self) -> ResourceKey {
+        ResourceKey {
+            id: self.tensor.id,
+            view: self.view,
+        }
+    }
 }
 
 impl<T: Scalar> TensorScalar for TensorGpuView<'_, T> {
@@ -981,15 +984,6 @@ impl<F: Float> TensorGpuView<'_, F> {
     #[inline]
     pub const fn def(&self) -> &'static str {
         F::DEF
-    }
-}
-
-impl<T: Scalar> TensorResourceKey for TensorGpuView<'_, T> {
-    fn resource_key(&self) -> ResourceKey {
-        ResourceKey {
-            id: self.tensor.id,
-            view: self.view,
-        }
     }
 }
 
