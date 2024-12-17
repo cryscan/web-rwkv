@@ -135,7 +135,7 @@ impl ContextBuilder {
             queue,
             pipelines: Default::default(),
             shapes: Default::default(),
-            buffers: ResourceCache::new(2),
+            buffers: ResourceCache::new(4),
             #[cfg(not(target_arch = "wasm32"))]
             event,
         });
@@ -251,49 +251,45 @@ impl ContextInternal {
         let entry_point = entry_point.as_ref();
         let key = PipelineKey::new(name.into(), entry_point.into(), macros.clone());
 
-        self.pipelines.checkout(
-            key,
-            || {
-                use gpp::{process_str, Context};
-                let mut context = Context::new();
-                context.macros = macros.0.into_iter().collect();
+        self.pipelines.checkout(key, || {
+            use gpp::{process_str, Context};
+            let mut context = Context::new();
+            context.macros = macros.0.into_iter().collect();
 
-                let shader = process_str(source.as_ref(), &mut context).unwrap();
-                let module = &self.device.create_shader_module(ShaderModuleDescriptor {
-                    label: Some(name),
-                    source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
-                });
+            let shader = process_str(source.as_ref(), &mut context).unwrap();
+            let module = &self.device.create_shader_module(ShaderModuleDescriptor {
+                label: Some(name),
+                source: wgpu::ShaderSource::Wgsl(Cow::from(shader)),
+            });
 
-                let layout = layout.map(|entries| {
-                    let layout = self
-                        .device
-                        .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                            label: None,
-                            entries,
-                        });
-                    self.device
-                        .create_pipeline_layout(&PipelineLayoutDescriptor {
-                            label: None,
-                            bind_group_layouts: &[&layout],
-                            push_constant_ranges: &[],
-                        })
-                });
-
-                let pipeline = self
+            let layout = layout.map(|entries| {
+                let layout = self
                     .device
-                    .create_compute_pipeline(&ComputePipelineDescriptor {
-                        label: Some(name),
-                        layout: layout.as_ref(),
-                        module,
-                        entry_point: Some(entry_point),
-                        compilation_options: Default::default(),
-                        cache: None,
+                    .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                        label: None,
+                        entries,
                     });
-                let layout = pipeline.get_bind_group_layout(0);
-                CachedPipeline { pipeline, layout }
-            },
-            |_| {},
-        )
+                self.device
+                    .create_pipeline_layout(&PipelineLayoutDescriptor {
+                        label: None,
+                        bind_group_layouts: &[&layout],
+                        push_constant_ranges: &[],
+                    })
+            });
+
+            let pipeline = self
+                .device
+                .create_compute_pipeline(&ComputePipelineDescriptor {
+                    label: Some(name),
+                    layout: layout.as_ref(),
+                    module,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    cache: None,
+                });
+            let layout = pipeline.get_bind_group_layout(0);
+            CachedPipeline { pipeline, layout }
+        })
     }
 
     pub(crate) fn checkout_shape_uniform(&self, shape: Shape) -> Arc<Buffer> {
@@ -308,7 +304,7 @@ impl ContextInternal {
             usage: BufferUsages::UNIFORM,
         };
         self.shapes
-            .checkout(view, || self.device.create_buffer_init(&desc), |_| {})
+            .checkout(view, || self.device.create_buffer_init(&desc))
     }
 
     pub(crate) fn checkout_view_uniform(&self, view: View) -> Arc<Buffer> {
@@ -318,7 +314,7 @@ impl ContextInternal {
             usage: BufferUsages::UNIFORM,
         };
         self.shapes
-            .checkout(view, || self.device.create_buffer_init(&desc), |_| {})
+            .checkout(view, || self.device.create_buffer_init(&desc))
     }
 
     pub(crate) fn checkout_buffer_init(&self, contents: &[u8], usage: BufferUsages) -> Arc<Buffer> {
@@ -346,7 +342,7 @@ impl ContextInternal {
             mapped_at_creation: false,
         };
         self.buffers
-            .checkout(key, || self.device.create_buffer(&desc), |_| {})
+            .checkout(key, || self.device.create_buffer(&desc))
     }
 
     // pub(crate) fn checkout_buffer_uncached(&self, size: usize, usage: BufferUsages) -> Arc<Buffer> {

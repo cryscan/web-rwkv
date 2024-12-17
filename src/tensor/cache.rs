@@ -17,9 +17,9 @@ impl<V> CachedItem<V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResourceCache<K, V> {
-    map: RwLock<HashMap<K, Vec<CachedItem<V>>>>,
+    map: Arc<RwLock<HashMap<K, Vec<CachedItem<V>>>>>,
     #[allow(unused)]
     limit: usize,
 }
@@ -56,7 +56,10 @@ where
                 0 | 1 => item.life < self.limit,
                 _ => true,
             });
-            items.iter_mut().for_each(|item| item.life += 1);
+            items.iter_mut().for_each(|item| match item.ref_count() {
+                0 | 1 => item.life = 0,
+                _ => item.life += 1,
+            });
         }
     }
 
@@ -67,7 +70,8 @@ where
     }
 
     /// Checkout the item with the given key. If the item doesn't exist, `miss` is called to construct it.
-    pub fn checkout(&self, key: K, miss: impl FnOnce() -> V, hit: impl FnOnce(&V)) -> Arc<V> {
+    /// If hit, `hit` is called on the cached value.
+    pub fn checkout_hit(&self, key: K, miss: impl FnOnce() -> V, hit: impl FnOnce(&V)) -> Arc<V> {
         let map = self.map.read().unwrap();
         let value = match map
             .get(&key)
@@ -104,5 +108,10 @@ where
         };
 
         value
+    }
+
+    /// Checkout the item with the given key. If the item doesn't exist, `miss` is called to construct it.
+    pub fn checkout(&self, key: K, miss: impl FnOnce() -> V) -> Arc<V> {
+        self.checkout_hit(key, miss, |_| ())
     }
 }

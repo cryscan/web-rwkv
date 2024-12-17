@@ -21,6 +21,7 @@ use crate::{
     context::Context,
     num::Float,
     tensor::{
+        cache::ResourceCache,
         kind::ReadWrite,
         matrix::Matrix,
         ops::{Activation, TensorCommand, TensorOp},
@@ -414,8 +415,8 @@ impl Job for InferJob {
 #[derive(Debug, Clone)]
 pub struct Frame<F: Float> {
     pub state: State,
-    pub buffer: Runtime<F>,
-    pub header: Header<F>,
+    pub buffer: Arc<Runtime<F>>,
+    pub header: Arc<Header<F>>,
 }
 
 pub type HookFn<F> = Box<dyn Fn(Frame<F>) -> Result<TensorOp, TensorError> + Send + Sync>;
@@ -426,6 +427,8 @@ pub struct Bundle<F: Float> {
     model: Model,
     state: State,
     hooks: Arc<HookMap<F>>,
+    buffers: ResourceCache<usize, Runtime<F>>,
+    headers: ResourceCache<usize, Header<F>>,
     phantom: PhantomData<F>,
 }
 
@@ -476,6 +479,8 @@ impl<F: Float> Bundle<F> {
             model,
             state,
             hooks: Default::default(),
+            buffers: ResourceCache::new(4),
+            headers: ResourceCache::new(4),
             phantom: PhantomData,
         }
     }
@@ -485,6 +490,26 @@ impl<F: Float> Bundle<F> {
             hooks: Arc::new(hooks),
             ..Self::new(model, num_batch)
         }
+    }
+
+    fn checkout_buffer(
+        &self,
+        context: &Context,
+        info: &ModelInfo,
+        num_token: usize,
+    ) -> Arc<Runtime<F>> {
+        self.buffers
+            .checkout(num_token, || Runtime::new(context, info, num_token))
+    }
+
+    fn checkout_header(
+        &self,
+        context: &Context,
+        info: &ModelInfo,
+        num_header: usize,
+    ) -> Arc<Header<F>> {
+        self.headers
+            .checkout(num_header, || Header::new(context, info, num_header))
     }
 }
 
@@ -518,8 +543,8 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
         let redirect = seed.redirect();
         let num_header = redirect.headers.len();
 
-        let buffer = Runtime::<F>::new(context, info, num_token);
-        let header = Header::<F>::new(context, info, num_header);
+        let buffer = self.checkout_buffer(context, info, num_token);
+        let header = self.checkout_header(context, info, num_header);
         let frame = Frame {
             state: state.clone(),
             buffer: buffer.clone(),
@@ -538,10 +563,10 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
                 redirect,
                 embed_device,
                 embed: model.tensor.embed.w.clone(),
-                tokens: buffer.tokens,
-                cursors: buffer.cursors,
-                input: buffer.input,
-                output: header.head_o,
+                tokens: buffer.tokens.clone(),
+                cursors: buffer.cursors.clone(),
+                input: buffer.input.clone(),
+                output: header.head_o.clone(),
             });
         }
 
@@ -639,10 +664,10 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
             redirect,
             embed_device,
             embed: model.tensor.embed.w.clone(),
-            tokens: buffer.tokens,
-            cursors: buffer.cursors,
-            input: buffer.input,
-            output: header.head_o,
+            tokens: buffer.tokens.clone(),
+            cursors: buffer.cursors.clone(),
+            input: buffer.input.clone(),
+            output: header.head_o.clone(),
         })
     }
 }
