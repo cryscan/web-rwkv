@@ -394,8 +394,8 @@ pub enum Hook {
     PostAttAdapt(usize),
     PreAttControl(usize),
     PostAttControl(usize),
-    PreAttDeltaRule(usize),
-    PostAttDeltaRule(usize),
+    PreAttValueResidual(usize),
+    PostAttValueResidual(usize),
     PreAttTimeMix(usize),
     PostAttTimeMix(usize),
     PreAttGate(usize),
@@ -940,7 +940,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostAttControl(index))?,
     ]);
 
-    ops.push(hook_op(Hook::PreAttDeltaRule(index))?);
+    ops.push(hook_op(Hook::PreAttValueResidual(index))?);
     match index {
         0 => ops.push(TensorOp::blit(&buffer.att_v, &buffer.att_v0)?),
         _ => ops.extend([
@@ -966,7 +966,7 @@ fn dispatch_layer<F: Float>(
             TensorOp::lerp(&buffer.att_v0, &buffer.att_v, &buffer.att_vv, true)?,
         ]),
     };
-    ops.push(hook_op(Hook::PostAttDeltaRule(index))?);
+    ops.push(hook_op(Hook::PostAttValueResidual(index))?);
 
     ops.extend([
         hook_op(Hook::PreAttTimeMix(index))?,
