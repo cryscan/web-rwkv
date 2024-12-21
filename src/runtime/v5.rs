@@ -253,7 +253,8 @@ impl DeepClone for State {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Runtime<F: Float> {
     pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
@@ -314,7 +315,8 @@ impl<F: Float> Runtime<F> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, DeserializeSeed)]
+#[serde_seed(seed = "Seed", context = "Context")]
 pub struct Header<F: Float> {
     pub head_x: TensorGpu<F, ReadWrite>,
     pub head_o: TensorGpu<f32, ReadWrite>,
