@@ -148,6 +148,12 @@ impl super::model::State for State {
         self.data.shape()[2]
     }
 
+    #[inline]
+    fn init_shape(&self) -> Shape {
+        let info = &self.info;
+        [info.num_emb, 5 * info.num_layer, 1, 1].into()
+    }
+
     fn init(&self) -> TensorCpu<f32> {
         let info = &self.info;
         let data = (0..info.num_layer)
@@ -163,8 +169,7 @@ impl super::model::State for State {
             })
             .collect_vec()
             .concat();
-        let shape = Shape::new(info.num_emb, 5 * info.num_layer, 1, 1);
-        TensorCpu::from_data(shape, data).unwrap()
+        TensorCpu::from_data(self.init_shape(), data).unwrap()
     }
 
     fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {

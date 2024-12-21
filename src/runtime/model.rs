@@ -15,7 +15,7 @@ use crate::{
     context::{Context, ContextBuilder},
     impl_deserialize_seed,
     num::Scalar,
-    tensor::{kind::ReadWrite, TensorCpu, TensorError, TensorGpu, TensorGpuView},
+    tensor::{kind::ReadWrite, shape::Shape, TensorCpu, TensorError, TensorGpu, TensorGpuView},
 };
 
 #[wasm_bindgen]
@@ -87,6 +87,8 @@ pub trait AsAny {
 pub trait State {
     /// Batch number of this state.
     fn num_batch(&self) -> usize;
+    /// Shape of the initialized one-batch CPU state.
+    fn init_shape(&self) -> Shape;
     /// Initialize a one-batch state on CPU.
     fn init(&self) -> TensorCpu<f32>;
     /// The part of the state that is used in an `att` layer.

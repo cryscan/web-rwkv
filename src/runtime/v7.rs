@@ -182,10 +182,15 @@ impl super::model::State for State {
         self.data[0].shape()[2]
     }
 
-    fn init(&self) -> TensorCpu<f32> {
+    #[inline]
+    fn init_shape(&self) -> Shape {
         let info = &self.info;
         let head_size = info.num_emb / info.num_head;
-        let shape = Shape::new(info.num_emb, head_size + 2, info.num_layer, 1);
+        [info.num_emb, head_size + 2, info.num_layer, 1].into()
+    }
+
+    fn init(&self) -> TensorCpu<f32> {
+        let shape = self.init_shape();
         let data = vec![0.0; shape.len()];
         TensorCpu::from_data(shape, data).unwrap()
     }

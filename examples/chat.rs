@@ -23,7 +23,7 @@ use web_rwkv::{
         loader::{Loader, Lora},
         model::{Bundle, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant, State},
         softmax::softmax_one,
-        v4, v5, v6, v7, TokioRuntime,
+        v4, v5, v6, v7, Runtime, TokioRuntime,
     },
     tensor::{TensorCpu, TensorInit, TensorShape},
     tokenizer::Tokenizer,
@@ -258,30 +258,34 @@ async fn main() -> Result<()> {
         None => builder,
     };
 
-    let (runtime, state): (_, Box<dyn State>) = match info.version {
+    let (runtime, state): (Box<dyn Runtime>, Box<dyn State>) = match info.version {
         ModelVersion::V4 => {
             let model = builder.build_v4().await?;
             let bundle = v4::Bundle::<f16>::new(model, 1);
             let state = bundle.state();
-            (TokioRuntime::new(bundle).await, Box::new(state))
+            let runtime = TokioRuntime::new(bundle).await;
+            (Box::new(runtime), Box::new(state))
         }
         ModelVersion::V5 => {
             let model = builder.build_v5().await?;
             let bundle = v5::Bundle::<f16>::new(model, 1);
             let state = bundle.state();
-            (TokioRuntime::new(bundle).await, Box::new(state))
+            let runtime = TokioRuntime::new(bundle).await;
+            (Box::new(runtime), Box::new(state))
         }
         ModelVersion::V6 => {
             let model = builder.build_v6().await?;
             let bundle = v6::Bundle::<f16>::new(model, 1);
             let state = bundle.state();
-            (TokioRuntime::new(bundle).await, Box::new(state))
+            let runtime = TokioRuntime::new(bundle).await;
+            (Box::new(runtime), Box::new(state))
         }
         ModelVersion::V7 => {
             let model = builder.build_v7().await?;
             let bundle = v7::Bundle::<f16>::new(model, 1);
             let state = bundle.state();
-            (TokioRuntime::new(bundle).await, Box::new(state))
+            let runtime = TokioRuntime::new(bundle).await;
+            (Box::new(runtime), Box::new(state))
         }
     };
 
