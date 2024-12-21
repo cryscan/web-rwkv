@@ -11,7 +11,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - No dependencies on CUDA/Python.
 - Support Nvidia/AMD/Intel GPUs, including integrated GPUs.
 - Vulkan/Dx12/OpenGL backends.
-- WASM support (can run in browser).
+- WASM support ([can run in browser](https://cryscan.github.io/web-rwkv-puzzles/)).
 - Batched inference.
 - Int8 and NF4 quantization.
 - Very fast.
@@ -127,9 +127,10 @@ Since there are only `token_chunk_size` tokens are processed during each `run()`
 Hooks are a very powerful tool for customizing model inference process.
 The library provides with the `Model::run_with_hooks` function, which takes into a `HookMap` as a parameter.
 
-A `HookMap` is essentially a hashmap from `Model::Hook` to functions.
-A `Model::Hook` defines a certain place the hook function can be injected into. A model generally has dozens of hooking points.
-A hook function is a function of `Fn(&Model<'_>, &ModelState, &Runtime) -> Result<TensorOp, TensorError>`, where you can create tensor ops that reads/writes all the tensors you get here.
+- A `HookMap` is essentially a hashmap from `Model::Hook` to functions.
+- A `Model::Hook` defines a certain place the hook function can be injected into. A model generally has dozens of hooking points.
+- A hook function is a function of `Fn(&Frame) -> Result<TensorOp, TensorError>`, where you can create tensor ops that reads/writes all the tensors you get here.
+- A `Frame` contains all accessible GPU buffers during the inference, including the state and all runtime buffers.
 
 An example reading out every layer's output during inference:
 ```rust
@@ -139,10 +140,11 @@ let info = model.info();
 struct Buffer(TensorGpu<f32, ReadWrite>);
 
 // create a buffer to store each layer's output
-let buffer = Buffer::new(&context, &info);
+let buffer = Buffer(context.tensor_init([info.num_emb, info.num_layer, 1, 1]));
 
 let mut hooks = HookMap::default();
 for layer in 0..info.num_layer {
+   // cloning a buffer doesn't actually clone its internal data; use `deep_clone()` to clone to a new buffer
    let buffer = buffer.clone();
    hooks.insert(
       v6::Hook::PostFfn(layer),
