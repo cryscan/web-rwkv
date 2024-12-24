@@ -1,5 +1,6 @@
 use half::f16;
-use serde::Serialize;
+use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use web_rwkv_derive::DeserializeSeed;
 
 use super::{ops::Activation, TensorCpu, TensorInit, TensorInto};
@@ -137,5 +138,31 @@ impl Matrix {
         context.queue.submit(context.encode(&op));
 
         Ok(Matrix::NF4 { w, q, m })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatrixStatistics {
+    /// Quantile values: `min`, `q_005`, `q_25`, `q_50`, `q_75`, `q_995`, `max`.
+    pub quantile: [f32; 7],
+}
+
+impl<F: Float> TensorCpu<F> {
+    pub fn statistics(&self) -> MatrixStatistics {
+        let values: Vec<f32> = self
+            .iter()
+            .map(|x| x.hom())
+            .sorted_unstable_by(|x: &f32, y: &f32| x.total_cmp(y))
+            .collect();
+        assert!(values.len() > 2);
+        let p0 = 0;
+        let p4 = values.len() - 1;
+        let p2 = (p0 + p4) / 2;
+        let p1 = (p0 + p2) / 2;
+        let p3 = (p2 + p4) / 2;
+        let p_005 = ((p4 as f32) * 0.005) as usize;
+        let p_995 = ((p4 as f32) * 0.995) as usize;
+        let quantile = [p0, p1, p2, p3, p4, p_005, p_995].map(|p| values[p]);
+        MatrixStatistics { quantile }
     }
 }
