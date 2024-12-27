@@ -162,7 +162,7 @@ impl<F: Float> TensorCpu<F> {
         let p3 = (p2 + p4) / 2;
         let p_005 = ((p4 as f32) * 0.005) as usize;
         let p_995 = ((p4 as f32) * 0.995) as usize;
-        let quantile = [p0, p1, p2, p3, p4, p_005, p_995].map(|p| values[p]);
+        let quantile = [p0, p_005, p1, p2, p3, p_995, p4].map(|p| values[p]);
         MatrixStatistics { quantile }
     }
 }
