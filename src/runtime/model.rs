@@ -154,6 +154,7 @@ pub struct ModelBuilder<R: Reader> {
     pub context: Context,
     pub model: R,
     pub rescale: Option<usize>,
+    pub sep: Option<usize>,
     pub lora: Vec<Lora<R>>,
     pub quant: HashMap<usize, Quant>,
     pub embed_device: EmbedDevice,
@@ -165,6 +166,7 @@ impl<R: Reader> ModelBuilder<R> {
             context: context.clone(),
             model,
             rescale: None,
+            sep: None,
             lora: vec![],
             quant: Default::default(),
             embed_device: Default::default(),
@@ -174,6 +176,15 @@ impl<R: Reader> ModelBuilder<R> {
     /// Half the layer and activation every `value` layers.
     pub fn rescale(mut self, value: usize) -> Self {
         self.rescale = match value {
+            0 => Some(usize::MAX),
+            x => Some(x),
+        };
+        self
+    }
+
+    /// Separately encoding commands every `value` layers.
+    pub fn sep(mut self, value: usize) -> Self {
+        self.sep = match value {
             0 => Some(usize::MAX),
             x => Some(x),
         };

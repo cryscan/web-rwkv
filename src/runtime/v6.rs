@@ -39,6 +39,7 @@ pub struct Model {
     pub context: Context,
     pub info: ModelInfo,
     pub rescale: usize,
+    pub sep: usize,
     pub tensor: ModelTensor,
 }
 
@@ -47,6 +48,7 @@ impl Model {
     pub const GN_EPS: f32 = 64.0e-5;
 
     pub const DEFAULT_RESCALE: usize = 6;
+    pub const DEFAULT_SEP: usize = usize::MAX;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -714,7 +716,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
             )?;
             ops.push(op);
 
-            if (index + 1) % (info.num_layer / super::infer::NUM_LAYER_CHUNK) == 0 {
+            if (index + 1) % model.sep == 0 {
                 ops.push(TensorOp::Sep);
             }
         }
@@ -1049,6 +1051,7 @@ impl<R: Reader> ModelBuilder<R> {
             context,
             model,
             rescale,
+            sep,
             lora,
             quant,
             embed_device,
@@ -1056,6 +1059,7 @@ impl<R: Reader> ModelBuilder<R> {
         } = self;
 
         let rescale = rescale.unwrap_or(Model::DEFAULT_RESCALE);
+        let sep = sep.unwrap_or(Model::DEFAULT_SEP);
 
         let info = Loader::info(&model)?;
         let loader = Loader {
@@ -1210,6 +1214,7 @@ impl<R: Reader> ModelBuilder<R> {
                 context,
                 info,
                 rescale,
+                sep,
                 tensor,
             }
         };
