@@ -1,6 +1,8 @@
 /target
+/trace
 /.vscode
+.DS_Store
+
 Cargo.lock
 *.st
 *.safetensors
-/trace
