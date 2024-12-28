@@ -150,6 +150,7 @@ pub enum Activation {
     #[serde(rename = "")]
     None,
     SquaredRelu,
+    #[serde(rename = "custom_tanh")]
     Tanh,
     StableExp,
     OppositeExp,
@@ -225,6 +226,11 @@ fn sigmoid(x: vec4<f32>) -> vec4<f32> {
 
 fn silu(x: vec4<f32>) -> vec4<f32> {
     return x / (1.0 + exp(-x));
+}
+
+// Metal has some trouble with `tanh`.
+fn custom_tanh(x: vec4<f32>) -> vec4<f32> {
+    return select(tanh(x), vec4<f32>(1.0), x > vec4<f32>(42.0));
 }
 ";
         self.insert("ACTIVATION_DEFINE".into(), ACTIVATION_DEFINE.to_string());
