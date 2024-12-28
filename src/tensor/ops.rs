@@ -2496,8 +2496,8 @@ impl TensorOp {
 
         let context = output.context();
         let shape = output.shape();
-        let minmax_len = (shape.len() << 1).div_ceil(Self::INT8_BLOCK_SIZE as usize);
-        let minmax_shape = Shape::new(minmax_len, 1, 1, 1);
+        let minmax_len = shape.len().div_ceil(Self::INT8_BLOCK_SIZE as usize);
+        let minmax_shape = Shape::new(minmax_len << 1, 1, 1, 1);
 
         input.check_shape(shape)?;
         minmax.check_shape(minmax_shape)?;
@@ -2514,27 +2514,25 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_int8.wgsl"),
             &[
                 minmax.meta_layout(0),
-                input.layout(1, true),
-                minmax.layout(2, false),
+                input.meta_layout(1),
+                input.layout(2, true),
+                minmax.layout(3, false),
             ],
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, input.resource_key())
-            .touch(2, minmax.resource_key())
+            .touch(2, input.resource_key())
+            .touch(3, minmax.resource_key())
             .bind(0, minmax.meta_binding())
-            .bind(1, input.binding())
-            .bind(2, minmax.binding())
+            .bind(1, input.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, minmax.binding())
             .build()];
 
         let compute_minmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [
-                u32::div_ceil((shape[0] << 1) as u32, BLOCK_SIZE),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
+            dispatch: [u32::div_ceil(minmax_len as u32, BLOCK_SIZE), 1, 1],
         };
 
         let output = output.reshape(
@@ -2556,20 +2554,22 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_int8.wgsl"),
             &[
                 output.meta_layout(0),
-                input.layout(1, true),
-                minmax.layout(2, false),
-                output.layout(3, false),
+                input.meta_layout(1),
+                input.layout(2, true),
+                minmax.layout(3, false),
+                output.layout(4, false),
             ],
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, input.resource_key())
-            .touch(2, minmax.resource_key())
-            .touch(3, output.resource_key())
+            .touch(2, input.resource_key())
+            .touch(3, minmax.resource_key())
+            .touch(4, output.resource_key())
             .bind(0, output.meta_binding())
-            .bind(1, input.binding())
-            .bind(2, minmax.binding())
-            .bind(3, output.binding())
+            .bind(1, input.meta_binding())
+            .bind(2, input.binding())
+            .bind(3, minmax.binding())
+            .bind(4, output.binding())
             .build()];
 
         let quantize = Self::Atom {
@@ -2708,11 +2708,15 @@ mod tests {
         tensor::{ops::Activation, Shape, TensorGpu},
     };
 
-    fn is_approx(a: f32, b: f32) -> bool {
+    fn is_approx(a: impl Into<f32>, b: impl Into<f32>) -> bool {
+        let a: f32 = a.into();
+        let b: f32 = b.into();
         (a - b).abs() <= f32::max(f32::EPSILON, f32::max(a.abs(), b.abs()) * f32::EPSILON)
     }
 
-    fn is_approx_eps(a: f32, b: f32, eps: f32) -> bool {
+    fn is_approx_eps(a: impl Into<f32>, b: impl Into<f32>, eps: f32) -> bool {
+        let a: f32 = a.into();
+        let b: f32 = b.into();
         (a - b).abs() <= f32::max(eps, f32::max(a.abs(), b.abs()) * eps)
     }
 
@@ -2958,7 +2962,7 @@ mod tests {
             context.queue.submit(context.encode(&ops));
 
             let output_host = output_dev.back().await;
-            let output_host = Vec::from(output_host);
+            let output_host: Vec<f32> = Vec::from(output_host);
 
             // profiler.end_frame().unwrap();
             // context.device.poll(wgpu::MaintainBase::Wait);
@@ -3034,7 +3038,7 @@ mod tests {
                 let mut min = vec![f16::MAX; matrix.len().div_ceil(INT8_BLOCK_SIZE)];
                 let mut max = vec![f16::MIN; matrix.len().div_ceil(INT8_BLOCK_SIZE)];
 
-                for (i, (min, max)) in min.iter_mut().zip_eq(max.iter_mut()).enumerate() {
+                for (i, (min, max)) in itertools::zip_eq(&mut min, &mut max).enumerate() {
                     let start = i * INT8_BLOCK_SIZE;
                     let end = start + INT8_BLOCK_SIZE;
                     let chunk = &matrix[start..end];
@@ -3053,6 +3057,10 @@ mod tests {
 
                 (matrix_u8, min, max)
             };
+            let minmax = itertools::zip_eq(&min, &max)
+                .map(|(&min, &max)| [min, max])
+                .collect_vec()
+                .concat();
 
             let minmax_shape = Shape::new((c * r).div_ceil(INT8_BLOCK_SIZE) * 2, 1, 1, 1);
             let matrix_shape = Shape::new(c, r, 1, 1);
@@ -3072,8 +3080,15 @@ mod tests {
                 &matrix_u8_dev,
             )?]);
             context.queue.submit(context.encode(&ops));
+            let minmax_host = minmax_dev.back().await.to_vec();
             let matrix_u8_host = matrix_u8_dev.back().await.to_vec();
 
+            for (index, (&a, &b)) in itertools::zip_eq(&minmax_host, &minmax).enumerate() {
+                assert!(
+                    is_approx_eps(a, b, 0.01),
+                    "Failed at index {index}, computed: {a} vs. answer: {b}"
+                );
+            }
             for (index, (&a, &b)) in itertools::zip_eq(&matrix_u8_host, &matrix_u8).enumerate() {
                 assert!(
                     a.abs_diff(b) < 2,
@@ -3107,7 +3122,7 @@ mod tests {
                 Activation::None,
             )?]);
             context.queue.submit(context.encode(&ops));
-            let output_host = output_dev.back().await.to_vec();
+            let output_host: Vec<f32> = output_dev.back().await.to_vec();
 
             for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
                 assert!(
@@ -3299,7 +3314,7 @@ mod tests {
                 Activation::None,
             )?]);
             context.queue.submit(context.encode(&ops));
-            let output_host = output_dev.back().await.to_vec();
+            let output_host: Vec<f32> = output_dev.back().await.to_vec();
 
             for (index, (&a, &b)) in itertools::zip_eq(&output_host, &ans).enumerate() {
                 assert!(
