@@ -286,7 +286,6 @@ pub struct Runtime<F: Float> {
     pub input: TensorGpu<f16, ReadWrite>,
 
     pub x: TensorGpu<F, ReadWrite>,
-    pub aux_x: TensorGpu<f32, ReadWrite>,
 
     pub att_x: TensorGpu<F, ReadWrite>,
     pub att_v0: TensorGpu<F, ReadWrite>,
@@ -339,7 +338,6 @@ impl<F: Float> Runtime<F> {
             tokens: context.tensor_init(tokens_shape),
             input: context.tensor_init(shape),
             x: context.tensor_init(shape),
-            aux_x: context.tensor_init(shape),
             att_x: context.tensor_init(shape),
             att_v0: context.tensor_init(shape),
             att_rx: context.tensor_init(shape),
