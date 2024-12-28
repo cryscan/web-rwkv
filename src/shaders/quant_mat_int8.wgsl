@@ -23,7 +23,7 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_minmax(in: Input) {
-    let bti = in.uid.x;
+    let bti = dot(in.uid, vec3<u32>(1u, BLOCK_SIZE * in.b.x, BLOCK_SIZE * in.b.x * in.b.y));
     if bti >= len.x >> 1u {
         return;
     }

@@ -2554,7 +2554,6 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_int8.wgsl"),
             &[
                 output.meta_layout(0),
-                input.meta_layout(1),
                 input.layout(2, true),
                 minmax.layout(3, false),
                 output.layout(4, false),
@@ -2566,7 +2565,6 @@ impl TensorOp {
             .touch(3, minmax.resource_key())
             .touch(4, output.resource_key())
             .bind(0, output.meta_binding())
-            .bind(1, input.meta_binding())
             .bind(2, input.binding())
             .bind(3, minmax.binding())
             .bind(4, output.binding())
@@ -2616,27 +2614,25 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_nf4.wgsl"),
             &[
                 absmax_f32.meta_layout(0),
-                input.layout(2, true),
-                absmax_f32.layout(3, false),
+                input.meta_layout(1),
+                input.layout(3, true),
+                absmax_f32.layout(4, false),
             ],
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, absmax_f32.resource_key())
+            .touch(3, input.resource_key())
+            .touch(4, absmax_f32.resource_key())
             .bind(0, absmax_f32.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, absmax_f32.binding())
+            .bind(1, input.meta_binding())
+            .bind(3, input.binding())
+            .bind(4, absmax_f32.binding())
             .build()];
 
         let compute_absmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [
-                u32::div_ceil((shape[0] << 1) as u32, BLOCK_SIZE),
-                shape[1] as u32,
-                shape[2] as u32,
-            ],
+            dispatch: [u32::div_ceil(absmax_len as u32, BLOCK_SIZE), 1, 1],
         };
 
         let output = output.reshape(
@@ -2658,22 +2654,22 @@ impl TensorOp {
             include_str!("../shaders/quant_mat_nf4.wgsl"),
             &[
                 output.meta_layout(0),
-                quant.layout(1),
-                input.layout(2, true),
-                absmax_f32.layout(3, false),
-                output.layout(4, false),
+                quant.layout(2),
+                input.layout(3, true),
+                absmax_f32.layout(4, false),
+                output.layout(5, false),
             ],
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, quant.resource_key())
-            .touch(2, input.resource_key())
-            .touch(3, absmax_f32.resource_key())
+            .touch(2, quant.resource_key())
+            .touch(3, input.resource_key())
+            .touch(4, absmax_f32.resource_key())
             .bind(0, output.meta_binding())
-            .bind(1, quant.binding())
-            .bind(2, input.binding())
-            .bind(3, absmax_f32.binding())
-            .bind(4, output.binding())
+            .bind(2, quant.binding())
+            .bind(3, input.binding())
+            .bind(4, absmax_f32.binding())
+            .bind(5, output.binding())
             .build()];
 
         let quantize = Self::Atom {
