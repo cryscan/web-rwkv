@@ -2532,7 +2532,11 @@ impl TensorOp {
         let compute_minmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [u32::div_ceil(minmax_len as u32, BLOCK_SIZE), 1, 1],
+            dispatch: [
+                u32::div_ceil(minmax_len as u32, BLOCK_SIZE * BLOCK_SIZE),
+                BLOCK_SIZE,
+                1,
+            ],
         };
 
         let output = output.reshape(
@@ -2632,7 +2636,11 @@ impl TensorOp {
         let compute_absmax = Self::Atom {
             pipeline,
             bindings,
-            dispatch: [u32::div_ceil(absmax_len as u32, BLOCK_SIZE), 1, 1],
+            dispatch: [
+                u32::div_ceil(absmax_len as u32, BLOCK_SIZE * BLOCK_SIZE),
+                BLOCK_SIZE,
+                1,
+            ],
         };
 
         let output = output.reshape(
