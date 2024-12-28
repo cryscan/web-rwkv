@@ -4,13 +4,14 @@ struct Input {
     @builtin(num_workgroups) b: vec3<u32>,
 };
 
-@group(0) @binding(0) var<uniform> shape: vec4<u32>;                        // [L]
-@group(0) @binding(1) var<uniform> quant: array<vec4<f32>, 4>; 
+@group(0) @binding(0) var<uniform> len: vec4<u32>;                          // [L]
+@group(0) @binding(1) var<uniform> shape: vec4<u32>;                        // [C, R]
+@group(0) @binding(2) var<uniform> quant: array<vec4<f32>, 4>; 
 
-@group(0) @binding(2) var<storage, read> input: array<vec4<u32>>;           // (R, C)
+@group(0) @binding(3) var<storage, read> input: array<vec4<u32>>;           // (R, C)
 
-@group(0) @binding(3) var<storage, read_write> absmax: array<f32>;          // (R, C / S)
-@group(0) @binding(4) var<storage, read_write> output: array<u32>;          // (R, C / 2)
+@group(0) @binding(4) var<storage, read_write> absmax: array<f32>;          // (R, C / S)
+@group(0) @binding(5) var<storage, read_write> output: array<u32>;          // (R, C / 2)
 
 var<workgroup> q: array<vec4<f32>, 4u>;
 
@@ -23,18 +24,22 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn compute_absmax(in: Input) {
     let bti = dot(in.uid, vec3<u32>(1u, BLOCK_SIZE * in.b.x, BLOCK_SIZE * in.b.x * in.b.y));
-    if bti >= shape.x {
+    if bti >= len.x {
         return;
     }
 
+    let stride = shape.w * shape.z * shape.y * shape.x >> 2u;
     var _max = vec4<f32>(0.0);
     for (var i = 0u; i < NF4_BLOCK_STEP; i += 1u) {
-        let v = input[bti * NF4_BLOCK_STEP + i];
-        let x = unpack4x16float(v.xy);
-        let y = unpack4x16float(v.zw);
+        let index = bti * NF4_BLOCK_STEP + i;
+        if index < stride {
+            let v = input[index];
+            let x = unpack4x16float(v.xy);
+            let y = unpack4x16float(v.zw);
 
-        _max = max(abs(x), _max);
-        _max = max(abs(y), _max);
+            _max = max(abs(x), _max);
+            _max = max(abs(y), _max);
+        }
     }
     absmax[bti] = max(max(_max[0], _max[1]), max(_max[2], _max[3]));
 }
@@ -42,7 +47,7 @@ fn compute_absmax(in: Input) {
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
 fn quantize(in: Input) {
     let bti = dot(in.uid, vec3<u32>(1u, BLOCK_SIZE * in.b.x, BLOCK_SIZE * in.b.x * in.b.y));
-    if bti >= shape.x {
+    if bti >= len.x >> 2u {
         return;
     }
 
