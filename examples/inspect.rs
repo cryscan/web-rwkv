@@ -138,7 +138,7 @@ fn make_hooks<F: Float>(info: &ModelInfo, frames: Vec<v7::Runtime<F>>) -> Result
                     TensorOp::blit(&frame.buffer.aux_v, &x.aux_v)?,
                     TensorOp::blit(&frame.buffer.ffn_x, &x.ffn_x)?,
                     TensorOp::blit(&frame.buffer.ffn_kx, &x.ffn_kx)?,
-                    TensorOp::blit(&frame.buffer.ffn_v, &x.ffn_v)?,
+                    TensorOp::blit(&frame.buffer.ffn_k, &x.ffn_k)?,
                     TensorOp::blit(&frame.buffer.ffn_v, &x.ffn_v)?,
                 ];
                 Ok(TensorOp::List(ops))
@@ -253,10 +253,10 @@ async fn main() -> Result<()> {
             buffers.insert(format!("{ti}_{index}_att_kk"), layer.att_kk.back().await);
             buffers.insert(format!("{ti}_{index}_att_vv"), layer.att_vv.back().await);
             buffers.insert(format!("{ti}_{index}_att_n"), layer.att_n.back().await);
-            buffers.insert(format!("{ti}_{index}_aux_w"), layer.att_w.back().await);
-            buffers.insert(format!("{ti}_{index}_aux_a"), layer.att_a.back().await);
-            buffers.insert(format!("{ti}_{index}_aux_g"), layer.att_g.back().await);
-            buffers.insert(format!("{ti}_{index}_aux_v"), layer.att_v.back().await);
+            buffers.insert(format!("{ti}_{index}_aux_w"), layer.aux_w.back().await);
+            buffers.insert(format!("{ti}_{index}_aux_a"), layer.aux_a.back().await);
+            buffers.insert(format!("{ti}_{index}_aux_g"), layer.aux_g.back().await);
+            buffers.insert(format!("{ti}_{index}_aux_v"), layer.aux_v.back().await);
             buffers.insert(format!("{ti}_{index}_ffn_x"), layer.ffn_x.back().await);
             buffers.insert(format!("{ti}_{index}_ffn_kx"), layer.ffn_kx.back().await);
             buffers.insert(format!("{ti}_{index}_ffn_k"), layer.ffn_k.back().await);
