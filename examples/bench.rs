@@ -191,13 +191,15 @@ async fn main() -> Result<()> {
 
     fastrand::seed(42);
     let prompt_len = cli.prefill_length;
-    
+
     println!("| model                                                    | quant_int8 | quant_nf4 |    test |            t/s |");
     println!("|----------------------------------------------------------|-----------:|----------:|--------:|---------------:|");
 
     let mut prefill = Duration::ZERO;
     for _ in 0..5 {
-        let tokens: Vec<u16> = (0..prompt_len).map(|_| fastrand::u16(0..((info.num_vocab - 1) as u16))).collect();
+        let tokens: Vec<u16> = (0..prompt_len)
+            .map(|_| fastrand::u16(0..((info.num_vocab - 1) as u16)))
+            .collect();
         let prompt = InferInputBatch {
             tokens,
             option: InferOption::Last,
@@ -208,7 +210,7 @@ async fn main() -> Result<()> {
             let input = prompt.clone();
             let (input, output) = runtime.infer(input).await?;
             prompt = input;
-            
+
             let output = output[0].0.clone();
             if output.size() > 0 {
                 let output = softmax_one(&context, output).await?;
@@ -222,9 +224,14 @@ async fn main() -> Result<()> {
         }
     }
     let tps = prompt_len as f64 / prefill.as_secs_f64() * 5.0;
-    println!("| {:<56} | {:>10} | {:>9} | {:>7} | {:>14} |", 
-        model_path.file_name().unwrap().to_string_lossy(), cli.quant, cli.quant_nf4, 
-        format!("pp{}", cli.prefill_length.to_string().clone()), format!("{:.2}", tps));
+    println!(
+        "| {:<56} | {:>10} | {:>9} | {:>7} | {:>14} |",
+        model_path.file_name().unwrap().to_string_lossy(),
+        cli.quant,
+        cli.quant_nf4,
+        format!("pp{}", cli.prefill_length.to_string().clone()),
+        format!("{:.2}", tps)
+    );
 
     let num_token = cli.generation_length;
     let mut generation = Duration::ZERO;
@@ -252,8 +259,13 @@ async fn main() -> Result<()> {
         generation += instant.elapsed();
     }
     let tps = num_token as f64 / generation.as_secs_f64() * 5.0;
-    println!("| {:<56} | {:>10} | {:>9} | {:>7} | {:>14} |", 
-        model_path.file_name().unwrap().to_string_lossy(), cli.quant, cli.quant_nf4, 
-        format!("tg{}", cli.generation_length.to_string().clone()), format!("{:.2}", tps));
+    println!(
+        "| {:<56} | {:>10} | {:>9} | {:>7} | {:>14} |",
+        model_path.file_name().unwrap().to_string_lossy(),
+        cli.quant,
+        cli.quant_nf4,
+        format!("tg{}", cli.generation_length.to_string().clone()),
+        format!("{:.2}", tps)
+    );
     Ok(())
 }
