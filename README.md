@@ -96,7 +96,7 @@ The inspector demo is a guide to an advanced usage called hooks. Hooks allow use
 All versions of models implements `serde::ser::Serialize` and `serde::de::DeserializeSeed<'de>`, which means that one can save quantized or lora-merged model into a file and load it afterwards.
 
 ## Use in Your Project
-To use in your own rust project, simply add `web-rwkv = "0.9"` as a dependency in your `Cargo.toml`.
+To use in your own rust project, simply add `web-rwkv = "0.10"` as a dependency in your `Cargo.toml`.
 Check examples on how to create the environment, the tokenizer and how to run the model.
 
 ## Explanations
