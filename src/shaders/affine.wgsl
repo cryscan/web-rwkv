@@ -14,7 +14,7 @@ fn unpack4x16float(x: vec2<u32>) -> vec4<f32> {
 }
 
 @compute @workgroup_size(BLOCK_SIZE, 1, 1)
-fn discount(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+fn affine(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     let stride = shape[0] / 4u;
     let index = invocation_id.x;
     let token = invocation_id.y;
@@ -23,9 +23,9 @@ fn discount(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if index < stride {
         let bti = (batch * shape[1] + token) * stride + index;
 #ifdef FP16
-        x[bti] = pack4x16float(FACTOR * unpack4x16float(x[bti]) + BIAS);
+        x[bti] = pack4x16float(SCALE * unpack4x16float(x[bti]) + BIAS);
 #else
-        x[bti] = FACTOR * x[bti] + BIAS;
+        x[bti] = SCALE * x[bti] + BIAS;
 #endif
     }
 }

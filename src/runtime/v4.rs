@@ -840,7 +840,7 @@ fn dispatch_layer<F: Float>(
     ]);
 
     if (index + 1) % rescale == 0 {
-        ops.push(TensorOp::discount(&buffer.x, 0.5, 0.0)?);
+        ops.push(TensorOp::affine(&buffer.x, 0.5, 0.0)?);
     }
 
     Ok(TensorOp::List(ops))

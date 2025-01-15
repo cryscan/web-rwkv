@@ -2451,9 +2451,9 @@ impl TensorOp {
         })
     }
 
-    pub fn discount(
+    pub fn affine(
         x: &TensorGpu<impl Float, ReadWrite>,
-        factor: f32,
+        scale: f32,
         bias: f32,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
@@ -2462,17 +2462,17 @@ impl TensorOp {
         let shape = x.shape();
 
         let key = PipelineKey::new(
-            "discount",
-            "discount",
+            "affine",
+            "affine",
             Macros::new()
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(x, None)
-                .f32("FACTOR", factor)
+                .f32("SCALE", scale)
                 .f32("BIAS", bias),
         );
         let pipeline = context.checkout_pipeline(
             &key,
-            include_str!("../shaders/discount.wgsl"),
+            include_str!("../shaders/affine.wgsl"),
             &[x.meta_layout(0), x.layout(1, false)],
         );
 
