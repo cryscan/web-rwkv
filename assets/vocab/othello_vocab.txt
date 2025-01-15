@@ -1,0 +1,149 @@
+1 '\n' 1
+2 '<input>\n' 8
+3 '</input>\n\n' 10
+4 '<reasoning>\n' 12
+5 '</reasoning>\n\n' 14
+6 '<output>\n' 9
+7 '</output>\n\n' 11
+8 '· ' 3
+9 '○ ' 4
+10 '● ' 4
+11 'NEXT ' 5
+12 'MAX_WIDTH-1\n' 12
+13 'MAX_WIDTH-2\n' 12
+14 'MAX_WIDTH-3\n' 12
+15 'MAX_WIDTH-4\n' 12
+16 'MAX_WIDTH-5\n' 12
+17 'MAX_WIDTH-6\n' 12
+18 'MAX_WIDTH-7\n' 12
+19 'MAX_WIDTH-8\n' 12
+20 'MAX_WIDTH-9\n' 12
+21 'MAX_WIDTH-10\n' 13
+22 'MAX_DEPTH-1\n' 12
+23 'MAX_DEPTH-2\n' 12
+24 'MAX_DEPTH-3\n' 12
+25 'MAX_DEPTH-4\n' 12
+26 'MAX_DEPTH-5\n' 12
+27 'MAX_DEPTH-6\n' 12
+28 'MAX_DEPTH-7\n' 12
+29 'MAX_DEPTH-8\n' 12
+30 'MAX_DEPTH-9\n' 12
+31 'MAX_DEPTH-10\n' 13
+32 'Possible moves and score:' 25
+33 ' a1 ' 4
+34 ' a2 ' 4
+35 ' a3 ' 4
+36 ' a4 ' 4
+37 ' a5 ' 4
+38 ' a6 ' 4
+39 ' a7 ' 4
+40 ' a8 ' 4
+41 ' b1 ' 4
+42 ' b2 ' 4
+43 ' b3 ' 4
+44 ' b4 ' 4
+45 ' b5 ' 4
+46 ' b6 ' 4
+47 ' b7 ' 4
+48 ' b8 ' 4
+49 ' c1 ' 4
+50 ' c2 ' 4
+51 ' c3 ' 4
+52 ' c4 ' 4
+53 ' c5 ' 4
+54 ' c6 ' 4
+55 ' c7 ' 4
+56 ' c8 ' 4
+57 ' d1 ' 4
+58 ' d2 ' 4
+59 ' d3 ' 4
+60 ' d4 ' 4
+61 ' d5 ' 4
+62 ' d6 ' 4
+63 ' d7 ' 4
+64 ' d8 ' 4
+65 ' e1 ' 4
+66 ' e2 ' 4
+67 ' e3 ' 4
+68 ' e4 ' 4
+69 ' e5 ' 4
+70 ' e6 ' 4
+71 ' e7 ' 4
+72 ' e8 ' 4
+73 ' f1 ' 4
+74 ' f2 ' 4
+75 ' f3 ' 4
+76 ' f4 ' 4
+77 ' f5 ' 4
+78 ' f6 ' 4
+79 ' f7 ' 4
+80 ' f8 ' 4
+81 ' g1 ' 4
+82 ' g2 ' 4
+83 ' g3 ' 4
+84 ' g4 ' 4
+85 ' g5 ' 4
+86 ' g6 ' 4
+87 ' g7 ' 4
+88 ' g8 ' 4
+89 ' h1 ' 4
+90 ' h2 ' 4
+91 ' h3 ' 4
+92 ' h4 ' 4
+93 ' h5 ' 4
+94 ' h6 ' 4
+95 ' h7 ' 4
+96 ' h8 ' 4
+97 ' ps ' 4
+98 '+' 1
+99 '-' 1
+100 '0' 1
+101 '1' 1
+102 '2' 1
+103 '3' 1
+104 '4' 1
+105 '5' 1
+106 '6' 1
+107 '7' 1
+108 '8' 1
+109 '9' 1
+110 '+in' 3
+111 '-in' 3
+112 ' -- ' 4
+113 '---' 3
+114 '<stack>\n' 8
+115 '\n</stack>' 9
+116 'Remaining_Depth:10\n' 19
+117 'Remaining_Depth:9\n' 18
+118 'Remaining_Depth:8\n' 18
+119 'Remaining_Depth:7\n' 18
+120 'Remaining_Depth:6\n' 18
+121 'Remaining_Depth:5\n' 18
+122 'Remaining_Depth:4\n' 18
+123 'Remaining_Depth:3\n' 18
+124 'Remaining_Depth:2\n' 18
+125 'Remaining_Depth:1\n' 18
+126 'Max_Node ' 9
+127 'Min_Node ' 9
+128 'Alpha: ' 7
+129 ' Beta: ' 7
+130 ' Best:' 6
+131 'Current:' 8
+132 ' Unexplored:' 12
+133 '\n\n=> Search next node\n' 22
+134 '<board>\n' 8
+135 '</board>\n' 9
+136 '[Neither player has legal moves]\n' 33
+137 '[Only opponent has legal moves]\n' 32
+138 '[Current player has legal moves]\n' 33
+139 '[No possible moves]\n' 20
+140 '> Playing' 9
+141 '[Depth limit reached - evaluate all leaves]\n' 44
+142 '[Depth limit not reached]\n' 26
+143 'Opponent possible moves and score:' 34
+144 '[Internal node - expand]\n' 25
+145 '[Leaf node - evaluate next]\n' 28
+146 '[Updated stack]\n' 16
+147 '[End of search]\n' 16
+148 'Previous moves:' 15
+149 'TRACK_ENABLE\n' 13
