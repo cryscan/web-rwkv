@@ -104,7 +104,7 @@ fn make_hooks<F: Float>(info: &ModelInfo) -> Result<v7::HookMap<F>> {
         hooks.insert(
             v7::Hook::PostAttAdapt(layer),
             Box::new(move |frame: v7::Frame<F>| {
-                let op = TensorOp::discount(&frame.buffer.att_a, 2.0, 0.0)?;
+                let op = TensorOp::affine(&frame.buffer.att_a, 2.0, 0.0)?;
                 Ok(TensorOp::List(vec![op]))
             }),
         );
