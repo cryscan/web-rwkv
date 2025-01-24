@@ -73,8 +73,8 @@ impl Float4Quant {
     }
 
     /// Use Student's T distribution to quantize. For most cases `nu` can be set to 5.
-    pub fn new_student(nu: f32) -> Self {
-        let quant = quantile_student(nu as f64);
+    pub fn new_student(nu: f64) -> Self {
+        let quant = quantile_student(nu);
         let shape = Shape::new(quant.len(), 1, 1, 1);
         Self(TensorCpu::from_data(shape, quant).unwrap())
     }
@@ -175,7 +175,7 @@ impl Matrix {
         Ok(Matrix::Float4 { w, q, m })
     }
 
-    pub fn quant_sf4(matrix: &TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
+    pub fn quant_sf4(matrix: &TensorGpu<f16, ReadWrite>, nu: f64) -> Result<Self, TensorError> {
         let context = matrix.context();
         let shape = matrix.shape();
 
@@ -187,7 +187,7 @@ impl Matrix {
             1,
         );
 
-        let q = Float4Quant::new_student(5.0).0.to(context);
+        let q = Float4Quant::new_student(nu).0.to(context);
         let w = context.tensor_init(matrix_shape);
         let m = context.tensor_init(absmax_shape);
 

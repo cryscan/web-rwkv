@@ -706,6 +706,12 @@ impl<R: Reader> Loader<R> {
                 self.load_in_place_matrix_f16(&buffer, &name)?;
                 Ok(Matrix::quant_nf4(&buffer)?)
             }
+            Quant::SF4 => {
+                let shape = self.tensor_shape(&name)?;
+                let buffer = context.tensor_init(shape);
+                self.load_in_place_matrix_f16(&buffer, &name)?;
+                Ok(Matrix::quant_sf4(&buffer, 5.0)?)
+            }
         }
     }
 
@@ -729,6 +735,12 @@ impl<R: Reader> Loader<R> {
                 let buffer = context.tensor_init(shape);
                 self.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
                 Ok(Matrix::quant_nf4(&buffer)?)
+            }
+            Quant::SF4 => {
+                let shape = self.tensor_shape(&name)?;
+                let buffer = context.tensor_init(shape);
+                self.load_in_place_matrix_f16_discount(&buffer, &name, discount)?;
+                Ok(Matrix::quant_sf4(&buffer, 5.0)?)
             }
         }
     }
