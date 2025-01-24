@@ -1,6 +1,7 @@
 use half::f16;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
+use statrs::distribution::{ContinuousCDF, StudentsT};
 use web_rwkv_derive::DeserializeSeed;
 
 use super::{ops::Activation, TensorCpu, TensorInit, TensorInto};
@@ -17,15 +18,35 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Nf4Quant(pub TensorCpu<f32>);
+pub struct Float4Quant(pub TensorCpu<f32>);
 
-impl Default for Nf4Quant {
+impl Default for Float4Quant {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Nf4Quant {
+pub fn quantile_student(nu: f64) -> Vec<f32> {
+    let delta = (1.0 / 32.0 + 1.0 / 30.0) / 2.0;
+
+    let mut probabilities = Vec::with_capacity(16);
+
+    let step = (0.5 - delta) / 7.0;
+    probabilities.extend((0..7).map(|i| delta + step * i as f64));
+
+    let step = (1.0 - delta - 0.5) / 8.0;
+    probabilities.extend((0..9).map(|i| 0.5 + step * i as f64));
+
+    let dist = StudentsT::new(0.0, 1.0, nu).expect("invalid parameters");
+    let quant = probabilities
+        .iter()
+        .map(|&p| dist.inverse_cdf(p))
+        .collect_vec();
+    let max = *quant.iter().max_by(|x, y| x.total_cmp(y)).unwrap();
+    quant.into_iter().map(|p| (p / max) as f32).collect()
+}
+
+impl Float4Quant {
     /// Use normal distribution to quantize.
     pub fn new() -> Self {
         #[allow(clippy::excessive_precision)]
@@ -53,8 +74,9 @@ impl Nf4Quant {
 
     /// Use Student's T distribution to quantize. For most cases `nu` can be set to 5.
     pub fn new_student(nu: f32) -> Self {
-        let delta = (1.0 / 32.0 + 1.0 / 30.0) / 2.0;
-        todo!()
+        let quant = quantile_student(nu as f64);
+        let shape = Shape::new(quant.len(), 1, 1, 1);
+        Self(TensorCpu::from_data(shape, quant).unwrap())
     }
 }
 
@@ -66,7 +88,7 @@ pub enum Matrix {
         w: TensorGpu<u8, ReadWrite>,
         m: TensorGpu<f16, ReadWrite>,
     },
-    NF4 {
+    Float4 {
         q: TensorGpu<f32, Uniform>,
         w: TensorGpu<u8, ReadWrite>,
         m: TensorGpu<f16, ReadWrite>,
@@ -83,7 +105,7 @@ impl Matrix {
         match self {
             Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, act),
             Matrix::Int8 { w, m } => TensorOp::matmul_vec_int8(w, m, input, output, act),
-            Matrix::NF4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, act),
+            Matrix::Float4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, act),
         }
     }
 
@@ -96,7 +118,7 @@ impl Matrix {
         match self {
             Matrix::Fp16(matrix) => TensorOp::matmul_mat_fp16(matrix, input, output, act),
             Matrix::Int8 { w, m } => TensorOp::matmul_mat_int8(w, m, input, output, act),
-            Matrix::NF4 { w, q, m } => TensorOp::matmul_mat_nf4(w, q, m, input, output, act),
+            Matrix::Float4 { w, q, m } => TensorOp::matmul_mat_nf4(w, q, m, input, output, act),
         }
     }
 
@@ -143,14 +165,36 @@ impl Matrix {
             1,
         );
 
-        let q = Nf4Quant::default().0.to(context);
+        let q = Float4Quant::default().0.to(context);
         let w = context.tensor_init(matrix_shape);
         let m = context.tensor_init(absmax_shape);
 
         let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
         context.queue.submit(context.encode(&op));
 
-        Ok(Matrix::NF4 { w, q, m })
+        Ok(Matrix::Float4 { w, q, m })
+    }
+
+    pub fn quant_sf4(matrix: &TensorGpu<f16, ReadWrite>) -> Result<Self, TensorError> {
+        let context = matrix.context();
+        let shape = matrix.shape();
+
+        let matrix_shape = Shape::new(shape[0] / 2, shape[1], shape[2], shape[3]);
+        let absmax_shape = Shape::new(
+            shape.len().div_ceil(TensorOp::NF4_BLOCK_SIZE as usize),
+            1,
+            1,
+            1,
+        );
+
+        let q = Float4Quant::new_student(5.0).0.to(context);
+        let w = context.tensor_init(matrix_shape);
+        let m = context.tensor_init(absmax_shape);
+
+        let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
+        context.queue.submit(context.encode(&op));
+
+        Ok(Matrix::Float4 { w, q, m })
     }
 }
 
@@ -177,5 +221,18 @@ impl<F: Float> TensorCpu<F> {
         let p_995 = ((p4 as f32) * 0.995) as usize;
         let quantile = [p0, p_005, p1, p2, p3, p_995, p4].map(|p| values[p]);
         MatrixStatistics { quantile }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+
+    use super::quantile_student;
+
+    #[test]
+    fn test_student() -> Result<()> {
+        print!("{:?}", quantile_student(5.0));
+        Ok(())
     }
 }
