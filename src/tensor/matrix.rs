@@ -21,6 +21,13 @@ pub struct Nf4Quant(pub TensorCpu<f32>);
 
 impl Default for Nf4Quant {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Nf4Quant {
+    /// Use normal distribution to quantize.
+    pub fn new() -> Self {
         #[allow(clippy::excessive_precision)]
         let quant = vec![
             -1.0,
@@ -42,6 +49,12 @@ impl Default for Nf4Quant {
         ];
         let shape = Shape::new(quant.len(), 1, 1, 1);
         Self(TensorCpu::from_data(shape, quant).unwrap())
+    }
+
+    /// Use Student's T distribution to quantize. For most cases `nu` can be set to 5.
+    pub fn new_student(nu: f32) -> Self {
+        let delta = (1.0 / 32.0 + 1.0 / 30.0) / 2.0;
+        todo!()
     }
 }
 
