@@ -13,7 +13,7 @@ This is an inference engine for the [language model of RWKV](https://github.com/
 - Vulkan/Dx12/OpenGL backends.
 - WASM support ([can run in browser](https://cryscan.github.io/web-rwkv-puzzles/)).
 - Batched inference.
-- Int8 and NF4 quantization.
+- Int8 and Float4 quantization.
 - Very fast.
 - LoRA merging at loading time.
 - Support RWKV V4 through V7.

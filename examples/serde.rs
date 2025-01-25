@@ -1,3 +1,5 @@
+//! This example shows how to save/load potentially quantized models to a binary format.
+
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 #[cfg(not(debug_assertions))]
@@ -112,7 +114,7 @@ struct Cli {
     embed_device: Option<EmbedDevice>,
     #[arg(short, long, action)]
     turbo: bool,
-    #[arg(long, default_value_t = 32)]
+    #[arg(long, default_value_t = 128)]
     token_chunk_size: usize,
     #[arg(short, long, value_name = "FILE")]
     output: Option<PathBuf>,
@@ -125,7 +127,7 @@ async fn main() -> Result<()> {
     simple_logger::SimpleLogger::new()
         .with_level(log::LevelFilter::Warn)
         .with_module_level("web_rwkv", log::LevelFilter::Info)
-        .with_module_level("serialization", log::LevelFilter::Info)
+        .with_module_level("serde", log::LevelFilter::Info)
         .init()?;
     #[cfg(feature = "trace")]
     {
