@@ -264,7 +264,7 @@ where
     }
 
     if let Some(output) = output {
-        let file = FileWriter(std::fs::File::open(output)?);
+        let file = FileWriter(std::fs::File::create(output)?);
         let mut serializer = cbor4ii::serde::Serializer::new(file);
 
         model.serialize(&mut serializer)?;
