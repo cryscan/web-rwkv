@@ -29,19 +29,16 @@ impl Default for Float4Quant {
 pub fn quantile_student(nu: f64) -> Vec<f32> {
     let delta = (1.0 / 32.0 + 1.0 / 30.0) / 2.0;
 
-    let mut probabilities = Vec::with_capacity(16);
+    let mut quant = Vec::with_capacity(16);
 
     let step = (0.5 - delta) / 7.0;
-    probabilities.extend((0..7).map(|i| delta + step * i as f64));
+    quant.extend((0..7).map(|i| delta + step * i as f64));
 
     let step = (1.0 - delta - 0.5) / 8.0;
-    probabilities.extend((0..9).map(|i| 0.5 + step * i as f64));
+    quant.extend((0..9).map(|i| 0.5 + step * i as f64));
 
     let dist = StudentsT::new(0.0, 1.0, nu).expect("invalid parameters");
-    let quant = probabilities
-        .iter()
-        .map(|&p| dist.inverse_cdf(p))
-        .collect_vec();
+    let quant = quant.iter().map(|&p| dist.inverse_cdf(p)).collect_vec();
     let max = *quant.iter().max_by(|x, y| x.total_cmp(y)).unwrap();
     quant.into_iter().map(|p| (p / max) as f32).collect()
 }
@@ -88,6 +85,7 @@ pub enum Matrix {
         w: TensorGpu<u8, ReadWrite>,
         m: TensorGpu<f16, ReadWrite>,
     },
+    #[serde(alias = "Nf4")]
     Float4 {
         q: TensorGpu<f32, Uniform>,
         w: TensorGpu<u8, ReadWrite>,

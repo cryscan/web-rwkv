@@ -95,6 +95,8 @@ struct Cli {
     quant: usize,
     #[arg(long, value_name = "LAYERS", default_value_t = 0)]
     quant_nf4: usize,
+    #[arg(long, value_name = "LAYERS", default_value_t = 0)]
+    quant_sf4: usize,
     #[arg(short, long)]
     embed_device: Option<EmbedDevice>,
     #[arg(long, default_value_t = 128)]
@@ -179,6 +181,7 @@ async fn main() -> Result<()> {
     let quant = (0..cli.quant)
         .map(|layer| (layer, Quant::Int8))
         .chain((0..cli.quant_nf4).map(|layer| (layer, Quant::NF4)))
+        .chain((0..cli.quant_sf4).map(|layer| (layer, Quant::SF4)))
         .collect();
     let embed_device = cli.embed_device.unwrap_or(EmbedDevice::Cpu).into();
     let lora = match cli.lora {
