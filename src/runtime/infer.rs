@@ -2,7 +2,10 @@ use itertools::Itertools;
 use web_rwkv_derive::{Deref, DerefMut};
 
 use super::{JobInfo, JobInput};
-use crate::tensor::TensorCpu;
+use crate::{
+    num::Float,
+    tensor::{kind::ReadWrite, ops::TensorOp, TensorCpu, TensorError, TensorGpu, TensorShape},
+};
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
@@ -84,6 +87,41 @@ pub struct InferRedirect {
     pub inputs: Vec<(usize, usize)>,
     /// Maps batches to ranges in the *output* tensor.
     pub outputs: Vec<(usize, usize)>,
+}
+
+impl InferRedirect {
+    pub fn op<F: Float>(
+        &self,
+        input: &TensorGpu<F, ReadWrite>,
+        output: &TensorGpu<F, ReadWrite>,
+    ) -> Result<(TensorOp, TensorGpu<F, ReadWrite>), TensorError> {
+        let headers = &self.headers;
+        let num_token = input.shape()[1];
+        let num_header = headers.len();
+
+        if num_token == 1 || num_token == num_header {
+            Ok((TensorOp::empty(), input.clone()))
+        } else {
+            let mut start = 0;
+            let mut end = 1;
+            let mut ops = vec![];
+            while end <= headers.len() {
+                if end == headers.len() || headers[end - 1] + 1 != headers[end] {
+                    let first = headers[start];
+                    let last = headers[end - 1];
+                    assert_eq!(last - first + 1, end - start);
+
+                    let input = input.view(.., first..=last, .., ..)?;
+                    let output = output.view(.., start..end, .., ..)?;
+                    ops.push(TensorOp::blit(input, output)?);
+
+                    start = end;
+                }
+                end += 1;
+            }
+            Ok((TensorOp::List(ops), output.clone()))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

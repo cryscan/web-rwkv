@@ -600,29 +600,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
         #[cfg(feature = "trace")]
         let _span = tracing::trace_span!("build").entered();
 
-        let (head_ops, head_x) = if num_token == 1 || num_token == num_header {
-            (vec![], buffer.x.clone())
-        } else {
-            let headers = &redirect.headers;
-            let mut start = 0;
-            let mut end = 1;
-            let mut ops = vec![];
-            while end <= headers.len() {
-                if end == headers.len() || headers[end - 1] + 1 != headers[end] {
-                    let first = headers[start];
-                    let last = headers[end - 1];
-                    assert_eq!(last - first + 1, end - start);
-
-                    let input = buffer.x.view(.., first..=last, .., ..)?;
-                    let output = header.head_x.view(.., start..end, .., ..)?;
-                    ops.push(TensorOp::blit(input, output)?);
-
-                    start = end;
-                }
-                end += 1;
-            }
-            (ops, header.head_x.clone())
-        };
+        let (head_op, head_x) = redirect.op(&buffer.x, &header.head_x)?;
 
         let hook_op = |hook: Hook| hook_op(&self.hooks, &hook, &frame);
         let mut ops = vec![];
@@ -684,7 +662,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
             let frame = frame.clone();
             let head = model.tensor.head.clone();
 
-            let op = dispatch_header(hooks, frame, head, head_x, num_header, head_ops)?;
+            let op = dispatch_header(hooks, frame, head, head_x, num_header, head_op)?;
             ops.push(op);
         }
 
@@ -945,10 +923,11 @@ fn dispatch_header<F: Float>(
     head: Head,
     head_x: TensorGpu<F, ReadWrite>,
     num_header: usize,
-    mut ops: Vec<TensorOp>,
+    head_op: TensorOp,
 ) -> Result<TensorOp> {
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let header = &frame.header;
+    let mut ops = vec![head_op];
 
     if num_header > 0 {
         ops.extend([
