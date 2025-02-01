@@ -30,6 +30,8 @@ use web_rwkv::{
     },
 };
 
+const REPEAT: usize = 5;
+
 async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
     let instance = wgpu::Instance::default();
     #[cfg(not(debug_assertions))]
@@ -195,11 +197,11 @@ async fn main() -> Result<()> {
     fastrand::seed(42);
     let prompt_len = cli.prefill_length;
 
-    println!("| model                                                    | quant_int8 | quant_nf4 |    test |            t/s |");
-    println!("|----------------------------------------------------------|-----------:|----------:|--------:|---------------:|");
+    println!("| model                                                    | quant_int8 | quant_float4 |    test |            t/s |");
+    println!("|----------------------------------------------------------|-----------:|-------------:|--------:|---------------:|");
 
     let mut prefill = Duration::ZERO;
-    for _ in 0..5 {
+    for _ in 0..REPEAT {
         let tokens: Vec<u16> = (0..prompt_len)
             .map(|_| fastrand::u16(0..((info.num_vocab - 1) as u16)))
             .collect();
@@ -226,19 +228,19 @@ async fn main() -> Result<()> {
             }
         }
     }
-    let tps = prompt_len as f64 / prefill.as_secs_f64() * 5.0;
+    let tps = prompt_len as f64 / prefill.as_secs_f64() * REPEAT as f64;
     println!(
-        "| {:<56} | {:>10} | {:>9} | {:>7} | {:>14} |",
+        "| {:<56} | {:>10} | {:>12} | {:>7} | {:>14} |",
         model_path.file_name().unwrap().to_string_lossy(),
         cli.quant,
-        cli.quant_nf4,
+        cli.quant_nf4.max(cli.quant_sf4),
         format!("pp{}", cli.prefill_length.to_string().clone()),
         format!("{:.2}", tps)
     );
 
     let num_token = cli.generation_length;
     let mut generation = Duration::ZERO;
-    for _ in 0..5 {
+    for _ in 0..REPEAT {
         let tokens: Vec<u16> = vec![0];
         let prompt = InferInputBatch {
             tokens,
@@ -261,12 +263,12 @@ async fn main() -> Result<()> {
         }
         generation += instant.elapsed();
     }
-    let tps = num_token as f64 / generation.as_secs_f64() * 5.0;
+    let tps = num_token as f64 / generation.as_secs_f64() * REPEAT as f64;
     println!(
-        "| {:<56} | {:>10} | {:>9} | {:>7} | {:>14} |",
+        "| {:<56} | {:>10} | {:>12} | {:>7} | {:>14} |",
         model_path.file_name().unwrap().to_string_lossy(),
         cli.quant,
-        cli.quant_nf4,
+        cli.quant_nf4.max(cli.quant_sf4),
         format!("tg{}", cli.generation_length.to_string().clone()),
         format!("{:.2}", tps)
     );
