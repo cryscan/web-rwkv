@@ -714,6 +714,7 @@ impl TensorOp {
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
         act: Activation,
+        sparse: bool,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -738,7 +739,8 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", act),
+                .activate("ACT", act)
+                .bool("SPARSE_INPUT", sparse),
         );
         #[cfg(feature = "subgroup-ops")]
         let key = PipelineKey::new(
@@ -749,7 +751,8 @@ impl TensorOp {
                 .u32("BLOCK_SIZE", BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", act),
+                .activate("ACT", act)
+                .bool("SPARSE_INPUT", sparse),
         );
 
         #[cfg(not(feature = "subgroup-ops"))]
@@ -809,6 +812,7 @@ impl TensorOp {
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
         act: Activation,
+        sparse: bool,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -836,7 +840,8 @@ impl TensorOp {
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", act),
+                .activate("ACT", act)
+                .bool("SPARSE_INPUT", sparse),
         );
         #[cfg(feature = "subgroup-ops")]
         let key = PipelineKey::new(
@@ -848,7 +853,8 @@ impl TensorOp {
                 .int8(Self::INT8_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", act),
+                .activate("ACT", act)
+                .bool("SPARSE_INPUT", sparse),
         );
 
         #[cfg(not(feature = "subgroup-ops"))]
@@ -912,6 +918,7 @@ impl TensorOp {
         input: impl Into<TensorGpuView<'a, F0>>,
         output: impl Into<TensorGpuView<'b, F1>>,
         act: Activation,
+        sparse: bool,
     ) -> Result<Self, TensorError> {
         const BLOCK_SIZE: u32 = 128;
 
@@ -939,7 +946,8 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", act),
+                .activate("ACT", act)
+                .bool("SPARSE_INPUT", sparse),
         );
         #[cfg(feature = "subgroup-ops")]
         let key = PipelineKey::new(
@@ -951,7 +959,8 @@ impl TensorOp {
                 .nf4(Self::NF4_BLOCK_SIZE)
                 .tensor(&input, Some("IN"))
                 .tensor(&output, Some("OUT"))
-                .activate("ACT", act),
+                .activate("ACT", act)
+                .bool("SPARSE_INPUT", sparse),
         );
 
         #[cfg(not(feature = "subgroup-ops"))]
@@ -2959,6 +2968,7 @@ mod tests {
                     &input_f32_dev,
                     output_dev.view(.., .., 0..b, ..)?,
                     Activation::None,
+                    false,
                 )?,
                 TensorOp::matmul_mat_fp16(
                     &matrix_dev,
@@ -3130,6 +3140,7 @@ mod tests {
                 &input_dev,
                 &output_dev,
                 Activation::None,
+                false,
             )?]);
             context.queue.submit(context.encode(&ops));
             let output_host: Vec<f32> = output_dev.back().await.to_vec();
@@ -3322,6 +3333,7 @@ mod tests {
                 &input_dev,
                 &output_dev,
                 Activation::None,
+                false,
             )?]);
             context.queue.submit(context.encode(&ops));
             let output_host: Vec<f32> = output_dev.back().await.to_vec();

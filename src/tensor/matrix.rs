@@ -86,7 +86,7 @@ pub enum Matrix {
         m: TensorGpu<f16, ReadWrite>,
     },
     #[serde(alias = "Nf4")]
-    Float4 {
+    Fp4 {
         q: TensorGpu<f32, Uniform>,
         w: TensorGpu<u8, ReadWrite>,
         m: TensorGpu<f16, ReadWrite>,
@@ -101,9 +101,22 @@ impl Matrix {
         act: Activation,
     ) -> Result<TensorOp, TensorError> {
         match self {
-            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, act),
-            Matrix::Int8 { w, m } => TensorOp::matmul_vec_int8(w, m, input, output, act),
-            Matrix::Float4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, act),
+            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, act, false),
+            Matrix::Int8 { w, m } => TensorOp::matmul_vec_int8(w, m, input, output, act, false),
+            Matrix::Fp4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, act, false),
+        }
+    }
+
+    pub fn matmul_vec_op_sparse<'a, 'b, F0: Float, F1: Float>(
+        &self,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
+        act: Activation,
+    ) -> Result<TensorOp, TensorError> {
+        match self {
+            Matrix::Fp16(matrix) => TensorOp::matmul_vec_fp16(matrix, input, output, act, true),
+            Matrix::Int8 { w, m } => TensorOp::matmul_vec_int8(w, m, input, output, act, true),
+            Matrix::Fp4 { w, q, m } => TensorOp::matmul_vec_nf4(w, q, m, input, output, act, true),
         }
     }
 
@@ -116,7 +129,7 @@ impl Matrix {
         match self {
             Matrix::Fp16(matrix) => TensorOp::matmul_mat_fp16(matrix, input, output, act),
             Matrix::Int8 { w, m } => TensorOp::matmul_mat_int8(w, m, input, output, act),
-            Matrix::Float4 { w, q, m } => TensorOp::matmul_mat_nf4(w, q, m, input, output, act),
+            Matrix::Fp4 { w, q, m } => TensorOp::matmul_mat_nf4(w, q, m, input, output, act),
         }
     }
 
@@ -130,6 +143,19 @@ impl Matrix {
         match turbo {
             true => self.matmul_mat_op(input, output, act),
             false => self.matmul_vec_op(input, output, act),
+        }
+    }
+
+    pub fn matmul_op_sparse<'a, 'b, F0: Float, F1: Float>(
+        &self,
+        input: impl Into<TensorGpuView<'a, F0>>,
+        output: impl Into<TensorGpuView<'b, F1>>,
+        act: Activation,
+        turbo: bool,
+    ) -> Result<TensorOp, TensorError> {
+        match turbo {
+            true => self.matmul_mat_op(input, output, act),
+            false => self.matmul_vec_op_sparse(input, output, act),
         }
     }
 
@@ -170,7 +196,7 @@ impl Matrix {
         let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
         context.queue.submit(context.encode(&op));
 
-        Ok(Matrix::Float4 { w, q, m })
+        Ok(Matrix::Fp4 { w, q, m })
     }
 
     pub fn quant_sf4(matrix: &TensorGpu<f16, ReadWrite>, nu: f64) -> Result<Self, TensorError> {
@@ -192,7 +218,7 @@ impl Matrix {
         let op = TensorOp::quantize_mat_nf4(matrix, &q, &m, &w)?;
         context.queue.submit(context.encode(&op));
 
-        Ok(Matrix::Float4 { w, q, m })
+        Ok(Matrix::Fp4 { w, q, m })
     }
 }
 

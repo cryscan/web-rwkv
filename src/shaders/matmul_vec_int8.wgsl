@@ -77,6 +77,12 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let x = input[bti];
 #endif
 
+#ifdef SPARSE_INPUT
+        if all(x == vec4<f32>(0.0)) {
+            continue;
+        }
+#endif
+
         // read 4 rows from the matrix, each with 4 unpacked floats, forming a 4x4 sub-block
         var m: mat4x4<f32>;
         var b: vec2<f32>;

@@ -111,6 +111,15 @@ fn matmul(
 
     var local_sum = vec4<f32>(0.0);
     for (var i = index; i < stride; i += BLOCK_SIZE) {
+        // read 8 elements from the input
+        let x = input[bb + i];
+
+#ifdef SPARSE_INPUT
+        if all(unpack4x16float(x.xy) == vec4<f32>(0.0)) && all(unpack4x16float(x.zw) == vec4<f32>(0.0)) {
+            continue;
+        }
+#endif
+
         // read 4 rows from the matrix, each with 4x2 unpacked floats, forming 2 4x4 sub-blocks
         var ci = cb + i;
         var v: vec4<u32>;
@@ -119,9 +128,6 @@ fn matmul(
         v[1] = matrix[ci]; a[1] = unpack_absmax(ci); ci += stride;
         v[2] = matrix[ci]; a[2] = unpack_absmax(ci); ci += stride;
         v[3] = matrix[ci]; a[3] = unpack_absmax(ci);
-
-        // read 8 elements from the input
-        let x = input[bb + i];
 
         var m: mat4x4<f32>;
         m[0] = unpack_matrix_0(v[0]);

@@ -884,7 +884,7 @@ fn dispatch_layer<F: Float>(
             turbo(num_token),
         )?,
         hook_op(Hook::PostFfnActivate(index))?,
-        layer.ffn.w_v.matmul_op(
+        layer.ffn.w_v.matmul_op_sparse(
             &buffer.ffn_k,
             &buffer.ffn_v,
             Activation::None,
