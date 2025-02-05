@@ -47,7 +47,7 @@ impl Model {
     pub const GN_EPS: f32 = 64.0e-5;
 
     pub const DEFAULT_RESCALE: usize = 6;
-    pub const DEFAULT_SEP: usize = usize::MAX;
+    pub const DEFAULT_SEP: usize = 1024;
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
