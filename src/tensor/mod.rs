@@ -545,9 +545,9 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         encoder.copy_buffer_to_buffer(&self.buffer, 0, &buffer, 0, size);
         context.queue.submit(Some(encoder.finish()));
 
-        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let (sender, receiver) = flume::bounded(1);
         let _ = context.event().send(ContextEvent { buffer, sender });
-        let data = receiver.blocking_recv().unwrap();
+        let data = receiver.recv().expect("failed to receive read back buffer");
         let data = unsafe {
             let data = Box::leak(data);
             let slice = bytemuck::cast_slice_mut::<_, T>(data);
@@ -586,12 +586,15 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         encoder.copy_buffer_to_buffer(&self.buffer, 0, &buffer, 0, size);
         context.queue.submit(Some(encoder.finish()));
 
-        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let (sender, receiver) = flume::bounded(1);
 
         let _ = context
             .event()
             .send(crate::context::ContextEvent { buffer, sender });
-        let data = receiver.await.unwrap();
+        let data = receiver
+            .recv_async()
+            .await
+            .expect("failed to receive read back buffer");
         let data = unsafe {
             let data = Box::leak(data);
             let slice = bytemuck::cast_slice_mut::<_, T>(data);
@@ -635,7 +638,11 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
         context.device.poll(wgpu::MaintainBase::Wait);
-        receiver.recv_async().await.unwrap().unwrap();
+        receiver
+            .recv_async()
+            .await
+            .expect("failed to receive read back buffer")
+            .expect("failed to map buffer");
 
         let data = {
             let map = slice.get_mapped_range();

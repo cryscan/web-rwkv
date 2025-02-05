@@ -47,7 +47,7 @@ pub struct ContextId;
 #[cfg(not(target_arch = "wasm32"))]
 pub struct ContextEvent {
     pub buffer: Arc<Buffer>,
-    pub sender: tokio::sync::oneshot::Sender<Box<[u8]>>,
+    pub sender: flume::Sender<Box<[u8]>>,
 }
 
 #[derive(Debug)]
@@ -429,12 +429,15 @@ impl ContextInternal {
     fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
         assert!(buffer.usage().contains(BufferUsages::MAP_READ));
 
-        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let (sender, receiver) = flume::bounded(1);
         let slice = buffer.slice(..);
         slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
         self.device.poll(wgpu::MaintainBase::Wait);
-        receiver.blocking_recv().unwrap().unwrap();
+        receiver
+            .recv()
+            .expect("failed to receive read back buffer")
+            .expect("failed to map buffer");
 
         let data = {
             let map = slice.get_mapped_range();

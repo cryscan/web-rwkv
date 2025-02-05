@@ -2749,6 +2749,7 @@ mod tests {
         Ok(context)
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_softmax() -> Result<()> {
         let context = create_context().await?;
@@ -2789,6 +2790,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_layer_norm() -> Result<()> {
         let context = create_context().await?;
@@ -2887,6 +2889,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_l2_norm() -> Result<()> {
         let context = create_context().await?;
@@ -2927,6 +2930,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_matmul() -> Result<()> {
         let context = create_context().await?;
@@ -3029,6 +3033,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_matmul_int8() -> Result<()> {
         let context = create_context().await?;
@@ -3178,6 +3183,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_matmul_nf4() -> Result<()> {
         let context = create_context().await?;
@@ -3372,6 +3378,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_lerp() -> Result<()> {
         let context = create_context().await?;
@@ -3412,6 +3419,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_blit() -> Result<()> {
         let context = create_context().await?;
@@ -3447,6 +3455,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_transpose() -> Result<()> {
         let context = create_context().await?;

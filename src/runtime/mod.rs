@@ -57,18 +57,18 @@ pub trait Dispatcher<J: Job> {
     fn dispatch(&self, info: Self::Info) -> Result<J>;
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[derive(Debug)]
 struct Submission<I, O> {
     input: I,
-    sender: tokio::sync::oneshot::Sender<Result<(I, O)>>,
+    sender: flume::Sender<Result<(I, O)>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[derive(Debug, Clone)]
 pub struct TokioRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[allow(clippy::type_complexity)]
 impl<I, O, T, F> TokioRuntime<I, O>
 where
@@ -189,7 +189,7 @@ where
             async fn back<J: Job, I: JobInput>(
                 job: J,
                 mut input: I,
-                sender: tokio::sync::oneshot::Sender<Result<(I, J::Output)>>,
+                sender: flume::Sender<Result<(I, J::Output)>>,
             ) {
                 let output = job.back().await;
                 input.step();
@@ -206,10 +206,10 @@ where
     /// Perform (partial) inference and return the remaining input and (perhaps partial) output.
     /// The amount of input processed during one call is bound by the input chunk size.
     pub async fn infer(&self, input: I) -> Result<(I, O)> {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let (sender, receiver) = flume::bounded(1);
         let submission = Submission { input, sender };
         let _ = self.0.send(submission).await;
-        receiver.await.expect("receive infer output error")
+        receiver.recv_async().await?
     }
 }
 
@@ -266,7 +266,7 @@ pub trait Runtime {
     ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>>;
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[allow(clippy::type_complexity)]
 impl Runtime for TokioRuntime<infer::InferInput, infer::InferOutput> {
     #[cfg(not(target_arch = "wasm32"))]
