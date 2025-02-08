@@ -51,12 +51,10 @@ impl TensorOpExt for TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, output.resource_key())
-            .bind(0, input.meta_binding())
-            .bind(1, output.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, output.binding())
+            .bind_meta(0, &input)
+            .bind_meta(1, &output)
+            .bind(2, &input)
+            .bind(3, &output)
             .build()];
 
         Ok(Self::Atom {

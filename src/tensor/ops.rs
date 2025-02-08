@@ -332,9 +332,8 @@ impl TensorOp {
             &[x.meta_layout(0), x.layout(1, false)],
         );
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, x.binding())
+            .bind_meta(0, x)
+            .bind(1, x)
             .build()];
 
         Ok(Self::Atom {
@@ -383,13 +382,10 @@ impl TensorOp {
             ],
         );
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, tokens.resource_key())
-            .touch(2, input.resource_key())
-            .touch(3, output.resource_key())
-            .bind(0, output.meta_binding())
-            .bind(1, tokens.binding())
-            .bind(2, input.binding())
-            .bind(3, output.binding())
+            .bind_meta(0, output)
+            .bind(1, tokens)
+            .bind(2, input)
+            .bind(3, output)
             .build()];
 
         Ok(Self::Atom {
@@ -444,13 +440,10 @@ impl TensorOp {
             ],
         );
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, w.resource_key())
-            .touch(2, b.resource_key())
-            .touch(3, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, w.binding())
-            .bind(2, b.binding())
-            .bind(3, x.binding())
+            .bind_meta(0, x)
+            .bind(1, w)
+            .bind(2, b)
+            .bind(3, x)
             .build()];
 
         Ok(Self::Atom {
@@ -501,13 +494,10 @@ impl TensorOp {
             ],
         );
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, w.resource_key())
-            .touch(2, b.resource_key())
-            .touch(3, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, w.binding())
-            .bind(2, b.binding())
-            .bind(3, x.binding())
+            .bind_meta(0, x)
+            .bind(1, w)
+            .bind(2, b)
+            .bind(3, x)
             .build()];
 
         Ok(Self::Atom {
@@ -558,9 +548,8 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(3, x.binding())
+            .bind_meta(0, x)
+            .bind(3, x)
             .build()];
 
         Ok(Self::Atom {
@@ -635,13 +624,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, w.resource_key())
-            .touch(2, b.resource_key())
-            .touch(3, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, w.binding())
-            .bind(2, b.binding())
-            .bind(3, x.binding())
+            .bind_meta(0, x)
+            .bind(1, w)
+            .bind(2, b)
+            .bind(3, x)
             .build()];
 
         Ok(Self::Atom {
@@ -693,9 +679,8 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(3, x.binding())
+            .bind_meta(0, x)
+            .bind(3, x)
             .build()];
 
         Ok(Self::Atom {
@@ -783,15 +768,12 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, matrix.resource_key())
-            .touch(4, input.resource_key())
-            .touch(5, output.resource_key())
-            .bind(0, matrix.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(2, output.meta_binding())
-            .bind(3, matrix.binding())
-            .bind(4, input.binding())
-            .bind(5, output.binding())
+            .bind_meta(0, matrix)
+            .bind_meta(1, &input)
+            .bind_meta(2, &output)
+            .bind(3, matrix)
+            .bind(4, &input)
+            .bind(5, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -887,17 +869,13 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, matrix.resource_key())
-            .touch(4, minmax.resource_key())
-            .touch(5, input.resource_key())
-            .touch(6, output.resource_key())
-            .bind(0, matrix.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(2, output.meta_binding())
-            .bind(3, matrix.binding())
-            .bind(4, minmax.binding())
-            .bind(5, input.binding())
-            .bind(6, output.binding())
+            .bind_meta(0, matrix)
+            .bind_meta(1, &input)
+            .bind_meta(2, &output)
+            .bind(3, matrix)
+            .bind(4, minmax)
+            .bind(5, &input)
+            .bind(6, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -995,19 +973,14 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, quant.resource_key())
-            .touch(4, matrix.resource_key())
-            .touch(5, absmax.resource_key())
-            .touch(6, input.resource_key())
-            .touch(7, output.resource_key())
-            .bind(0, matrix.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(2, output.meta_binding())
-            .bind(3, quant.binding())
-            .bind(4, matrix.binding())
-            .bind(5, absmax.binding())
-            .bind(6, input.binding())
-            .bind(7, output.binding())
+            .bind_meta(0, matrix)
+            .bind_meta(1, &input)
+            .bind_meta(2, &output)
+            .bind(3, quant)
+            .bind(4, matrix)
+            .bind(5, absmax)
+            .bind(6, &input)
+            .bind(7, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -1068,15 +1041,12 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, matrix.resource_key())
-            .touch(4, input.resource_key())
-            .touch(5, output.resource_key())
-            .bind(0, matrix.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(2, output.meta_binding())
-            .bind(3, matrix.binding())
-            .bind(4, input.binding())
-            .bind(5, output.binding())
+            .bind_meta(0, &matrix)
+            .bind_meta(1, &input)
+            .bind_meta(2, &output)
+            .bind(3, &matrix)
+            .bind(4, &input)
+            .bind(5, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -1149,17 +1119,13 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, matrix.resource_key())
-            .touch(4, minmax.resource_key())
-            .touch(5, input.resource_key())
-            .touch(6, output.resource_key())
-            .bind(0, matrix.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(2, output.meta_binding())
-            .bind(3, minmax.binding())
-            .bind(4, matrix.binding())
-            .bind(5, input.binding())
-            .bind(6, output.binding())
+            .bind_meta(0, &matrix)
+            .bind_meta(1, &input)
+            .bind_meta(2, &output)
+            .bind(3, minmax)
+            .bind(4, &matrix)
+            .bind(5, &input)
+            .bind(6, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -1233,19 +1199,14 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, quant.resource_key())
-            .touch(4, absmax.resource_key())
-            .touch(5, matrix.resource_key())
-            .touch(6, input.resource_key())
-            .touch(7, output.resource_key())
-            .bind(0, matrix.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(2, output.meta_binding())
-            .bind(3, quant.binding())
-            .bind(4, absmax.binding())
-            .bind(5, matrix.binding())
-            .bind(6, input.binding())
-            .bind(7, output.binding())
+            .bind_meta(0, &matrix)
+            .bind_meta(1, &input)
+            .bind_meta(2, &output)
+            .bind(3, quant)
+            .bind(4, absmax)
+            .bind(5, &matrix)
+            .bind(6, &input)
+            .bind(7, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -1311,12 +1272,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, output.resource_key())
-            .bind(0, input.meta_binding())
-            .bind(1, output.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, output.binding())
+            .bind_meta(0, &input)
+            .bind_meta(1, &output)
+            .bind(2, &input)
+            .bind(3, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -1398,12 +1357,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, output.resource_key())
-            .bind(0, input.meta_binding())
-            .bind(1, output.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, output.binding())
+            .bind_meta(0, &input)
+            .bind_meta(1, &output)
+            .bind(2, &input)
+            .bind(3, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -1482,19 +1439,14 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, cursors.resource_key())
-            .touch(4, time_mix.resource_key())
-            .touch(5, state.resource_key())
-            .touch(6, input.resource_key())
-            .touch(7, output.resource_key())
-            .bind(0, output.meta_binding())
-            .bind(1, time_mix.meta_binding())
-            .bind(2, state.meta_binding())
-            .bind(3, cursors.binding())
-            .bind(4, time_mix.binding())
-            .bind(5, state.binding())
-            .bind(6, input.binding())
-            .bind(7, output.binding())
+            .bind_meta(0, output)
+            .bind_meta(1, &time_mix)
+            .bind_meta(2, &state)
+            .bind(3, cursors)
+            .bind(4, &time_mix)
+            .bind(5, &state)
+            .bind(6, input)
+            .bind(7, output)
             .build()];
 
         Ok(Self::Atom {
@@ -1555,24 +1507,16 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, cursors.resource_key())
-            .touch(3, time_decay.resource_key())
-            .touch(4, time_first.resource_key())
-            .touch(5, state.resource_key())
-            .touch(6, k.resource_key())
-            .touch(7, v.resource_key())
-            .touch(8, r.resource_key())
-            .touch(9, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, state.meta_binding())
-            .bind(2, cursors.binding())
-            .bind(3, time_decay.binding())
-            .bind(4, time_first.binding())
-            .bind(5, state.binding())
-            .bind(6, k.binding())
-            .bind(7, v.binding())
-            .bind(8, r.binding())
-            .bind(9, x.binding())
+            .bind_meta(0, x)
+            .bind_meta(1, &state)
+            .bind(2, cursors)
+            .bind(3, time_decay)
+            .bind(4, time_first)
+            .bind(5, &state)
+            .bind(6, k)
+            .bind(7, v)
+            .bind(8, r)
+            .bind(9, x)
             .build()];
 
         Ok(Self::Atom {
@@ -1634,24 +1578,16 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, cursors.resource_key())
-            .touch(3, time_decay.resource_key())
-            .touch(4, time_first.resource_key())
-            .touch(5, state.resource_key())
-            .touch(6, k.resource_key())
-            .touch(7, v.resource_key())
-            .touch(8, r.resource_key())
-            .touch(9, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, state.meta_binding())
-            .bind(2, cursors.binding())
-            .bind(3, time_decay.binding())
-            .bind(4, time_first.binding())
-            .bind(5, state.binding())
-            .bind(6, k.binding())
-            .bind(7, v.binding())
-            .bind(8, r.binding())
-            .bind(9, x.binding())
+            .bind_meta(0, x)
+            .bind_meta(1, &state)
+            .bind(2, cursors)
+            .bind(3, time_decay)
+            .bind(4, time_first)
+            .bind(5, &state)
+            .bind(6, k)
+            .bind(7, v)
+            .bind(8, r)
+            .bind(9, x)
             .build()];
 
         Ok(Self::Atom {
@@ -1713,24 +1649,16 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, cursors.resource_key())
-            .touch(3, time_decay.resource_key())
-            .touch(4, time_first.resource_key())
-            .touch(5, state.resource_key())
-            .touch(6, k.resource_key())
-            .touch(7, v.resource_key())
-            .touch(8, r.resource_key())
-            .touch(9, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, state.meta_binding())
-            .bind(2, cursors.binding())
-            .bind(3, time_decay.binding())
-            .bind(4, time_first.binding())
-            .bind(5, state.binding())
-            .bind(6, k.binding())
-            .bind(7, v.binding())
-            .bind(8, r.binding())
-            .bind(9, x.binding())
+            .bind_meta(0, x)
+            .bind_meta(1, &state)
+            .bind(2, cursors)
+            .bind(3, time_decay)
+            .bind(4, time_first)
+            .bind(5, &state)
+            .bind(6, k)
+            .bind(7, v)
+            .bind(8, r)
+            .bind(9, x)
             .build()];
 
         Ok(Self::Atom {
@@ -1795,20 +1723,14 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, cursors.resource_key())
-            .touch(3, state.resource_key())
-            .touch(5, r.resource_key())
-            .touch(6, w.resource_key())
-            .touch(7, n.resource_key())
-            .touch(9, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, state.meta_binding())
-            .bind(2, cursors.binding())
-            .bind(3, state.binding())
-            .bind(5, r.binding())
-            .bind(6, w.binding())
-            .bind(7, n.binding())
-            .bind(9, x.binding())
+            .bind_meta(0, x)
+            .bind_meta(1, &state)
+            .bind(2, cursors)
+            .bind(3, &state)
+            .bind(5, r)
+            .bind(6, w)
+            .bind(7, n)
+            .bind(9, x)
             .build()];
 
         Ok(Self::Atom {
@@ -1857,15 +1779,11 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(4, u.resource_key())
-            .touch(5, r.resource_key())
-            .touch(7, n.resource_key())
-            .touch(9, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(4, u.binding())
-            .bind(5, r.binding())
-            .bind(7, n.binding())
-            .bind(9, x.binding())
+            .bind_meta(0, x)
+            .bind(4, u)
+            .bind(5, r)
+            .bind(7, n)
+            .bind(9, x)
             .build()];
 
         Ok(Self::Atom {
@@ -1920,15 +1838,12 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, p.resource_key())
-            .touch(4, a.resource_key())
-            .touch(5, k.resource_key())
-            .bind(0, p.meta_binding())
-            .bind(1, a.meta_binding())
-            .bind(2, k.meta_binding())
-            .bind(3, p.binding())
-            .bind(4, a.binding())
-            .bind(5, k.binding())
+            .bind_meta(0, &p)
+            .bind_meta(1, &a)
+            .bind_meta(2, &k)
+            .bind(3, &p)
+            .bind(4, &a)
+            .bind(5, &k)
             .build()];
 
         Ok(Self::Atom {
@@ -1979,18 +1894,13 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, cursors.resource_key())
-            .touch(3, state.resource_key())
-            .touch(4, r.resource_key())
-            .touch(5, v.resource_key())
-            .touch(6, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, state.meta_binding())
-            .bind(2, cursors.binding())
-            .bind(3, state.binding())
-            .bind(4, r.binding())
-            .bind(5, v.binding())
-            .bind(6, x.binding())
+            .bind_meta(0, x)
+            .bind_meta(1, &state)
+            .bind(2, cursors)
+            .bind(3, &state)
+            .bind(4, r)
+            .bind(5, v)
+            .bind(6, x)
             .build()];
 
         Ok(Self::Atom {
@@ -2041,16 +1951,12 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, cursors.resource_key())
-            .touch(3, state.resource_key())
-            .touch(5, v.resource_key())
-            .touch(6, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, state.meta_binding())
-            .bind(2, cursors.binding())
-            .bind(3, state.binding())
-            .bind(5, v.binding())
-            .bind(6, x.binding())
+            .bind_meta(0, x)
+            .bind_meta(1, &state)
+            .bind(2, cursors)
+            .bind(3, &state)
+            .bind(5, v)
+            .bind(6, x)
             .build()];
 
         Ok(Self::Atom {
@@ -2090,9 +1996,8 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, x.binding())
+            .bind_meta(0, &x)
+            .bind(1, &x)
             .build()];
 
         Ok(Self::Atom {
@@ -2144,12 +2049,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, output.resource_key())
-            .bind(0, input.meta_binding())
-            .bind(1, output.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, output.binding())
+            .bind_meta(0, &input)
+            .bind_meta(1, &output)
+            .bind(2, &input)
+            .bind(3, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -2197,12 +2100,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, output.resource_key())
-            .bind(0, input.meta_binding())
-            .bind(1, output.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, output.binding())
+            .bind_meta(0, &input)
+            .bind_meta(1, &output)
+            .bind(2, &input)
+            .bind(3, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -2250,12 +2151,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, output.resource_key())
-            .bind(0, input.meta_binding())
-            .bind(1, output.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, output.binding())
+            .bind_meta(0, &input)
+            .bind_meta(1, &output)
+            .bind(2, &input)
+            .bind(3, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -2306,14 +2205,11 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, factor.resource_key())
-            .touch(3, input.resource_key())
-            .touch(4, output.resource_key())
-            .bind(0, input.meta_binding())
-            .bind(1, output.meta_binding())
-            .bind(2, factor.binding())
-            .bind(3, input.binding())
-            .bind(4, output.binding())
+            .bind_meta(0, input)
+            .bind_meta(1, output)
+            .bind(2, factor)
+            .bind(3, input)
+            .bind(4, output)
             .build()];
 
         Ok(Self::Atom {
@@ -2365,17 +2261,13 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, factor.resource_key())
-            .touch(4, xa.resource_key())
-            .touch(5, xb.resource_key())
-            .touch(6, output.resource_key())
-            .bind(0, xa.meta_binding())
-            .bind(1, xb.meta_binding())
-            .bind(2, output.meta_binding())
-            .bind(3, factor.binding())
-            .bind(4, xa.binding())
-            .bind(5, xb.binding())
-            .bind(6, output.binding())
+            .bind_meta(0, &xa)
+            .bind_meta(1, &xb)
+            .bind_meta(2, &output)
+            .bind(3, factor)
+            .bind(4, &xa)
+            .bind(5, &xb)
+            .bind(6, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -2438,15 +2330,12 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, factor.resource_key())
-            .touch(4, input.resource_key())
-            .touch(5, output.resource_key())
-            .bind(0, factor.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(2, output.meta_binding())
-            .bind(3, factor.binding())
-            .bind(4, input.binding())
-            .bind(5, output.binding())
+            .bind_meta(0, &factor)
+            .bind_meta(1, &input)
+            .bind_meta(2, &output)
+            .bind(3, &factor)
+            .bind(4, &input)
+            .bind(5, &output)
             .build()];
 
         Ok(Self::Atom {
@@ -2486,9 +2375,8 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(1, x.resource_key())
-            .bind(0, x.meta_binding())
-            .bind(1, x.binding())
+            .bind_meta(0, x)
+            .bind(1, x)
             .build()];
 
         Ok(Self::Atom {
@@ -2536,12 +2424,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, minmax.resource_key())
-            .bind(0, minmax.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, minmax.binding())
+            .bind_meta(0, minmax)
+            .bind_meta(1, input)
+            .bind(2, input)
+            .bind(3, minmax)
             .build()];
 
         let compute_minmax = Self::Atom {
@@ -2580,13 +2466,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, input.resource_key())
-            .touch(3, minmax.resource_key())
-            .touch(4, output.resource_key())
-            .bind(0, output.meta_binding())
-            .bind(2, input.binding())
-            .bind(3, minmax.binding())
-            .bind(4, output.binding())
+            .bind_meta(0, &output)
+            .bind(2, input)
+            .bind(3, minmax)
+            .bind(4, &output)
             .build()];
 
         let quantize = Self::Atom {
@@ -2640,12 +2523,10 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(3, input.resource_key())
-            .touch(4, absmax_f32.resource_key())
-            .bind(0, absmax_f32.meta_binding())
-            .bind(1, input.meta_binding())
-            .bind(3, input.binding())
-            .bind(4, absmax_f32.binding())
+            .bind_meta(0, &absmax_f32)
+            .bind_meta(1, input)
+            .bind(3, input)
+            .bind(4, &absmax_f32)
             .build()];
 
         let compute_absmax = Self::Atom {
@@ -2685,14 +2566,11 @@ impl TensorOp {
         );
 
         let bindings = vec![BindGroupBuilder::new(&key, context, &pipeline.layout)
-            .touch(2, quant.resource_key())
-            .touch(3, input.resource_key())
-            .touch(4, absmax_f32.resource_key())
-            .bind(0, output.meta_binding())
-            .bind(2, quant.binding())
-            .bind(3, input.binding())
-            .bind(4, absmax_f32.binding())
-            .bind(5, output.binding())
+            .bind_meta(0, &output)
+            .bind(2, quant)
+            .bind(3, input)
+            .bind(4, &absmax_f32)
+            .bind(5, &output)
             .build()];
 
         let quantize = Self::Atom {

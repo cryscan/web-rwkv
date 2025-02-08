@@ -7,16 +7,16 @@ use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, Buffer, BufferDescriptor,
-    BufferUsages, ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features,
-    Instance, Limits, MemoryHints, PipelineLayoutDescriptor, PowerPreference, Queue,
-    RequestAdapterOptions, ShaderModuleDescriptor,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferDescriptor, BufferUsages,
+    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance,
+    Limits, MemoryHints, PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
+    ShaderModuleDescriptor,
 };
 
 use crate::tensor::{
     cache::{ResourceCache, SharedResourceCache},
     shape::{IntoBytes, Shape},
-    ResourceKey, View,
+    ResourceKey, TensorResource, View,
 };
 
 pub trait InstanceExt {
@@ -269,14 +269,24 @@ impl<'a, 'b> BindGroupBuilder<'a, 'b> {
 
     /// Mark a resource as being touched.
     /// How resources are touched determines whether the bind group can be found in cache.
-    pub fn touch(mut self, binding: u32, resource: ResourceKey) -> Self {
-        self.key.bindings.push((binding, resource));
+    pub fn touch(mut self, binding: u32, tensor: &'a impl TensorResource) -> Self {
+        let key = tensor.resource_key();
+        self.key.bindings.push((binding, key));
         self
     }
 
     /// Insert an entry into the bind group.
-    pub fn bind(mut self, binding: u32, resource: BindingResource<'a>) -> Self {
+    pub fn bind(mut self, binding: u32, tensor: &'a impl TensorResource) -> Self {
+        let resource = tensor.binding();
         self.entries.push(BindGroupEntry { binding, resource });
+        self.touch(binding, tensor)
+    }
+
+    /// Insert an entry into the bind group.
+    pub fn bind_meta(mut self, binding: u32, tensor: &'a impl TensorResource) -> Self {
+        let resource = tensor.meta_binding();
+        self.entries.push(BindGroupEntry { binding, resource });
+        // self.touch(binding, tensor)
         self
     }
 

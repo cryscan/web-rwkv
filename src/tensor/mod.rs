@@ -179,6 +179,15 @@ pub trait TensorReshape: Sized {
     ) -> Result<Self, TensorError>;
 }
 
+pub trait TensorResource {
+    /// Retrieve the key identifying a resource.
+    fn resource_key(&self) -> ResourceKey;
+    /// Binding for metadata of the tensor (shape, stride, etc.).
+    fn meta_binding(&self) -> BindingResource;
+    /// Binding for actual data of the tensor.
+    fn binding(&self) -> BindingResource;
+}
+
 /// A tensor on either CPU or GPU.
 #[derive(Debug)]
 pub struct Tensor<D: Device, T: Scalar> {
@@ -243,26 +252,6 @@ pub mod kind {
     #[derive(Debug, Kind)]
     #[usage(STORAGE, COPY_DST, COPY_SRC)]
     pub struct ReadWrite;
-}
-
-impl TensorGpuData {
-    #[inline]
-    pub fn meta_binding(&self) -> BindingResource {
-        BindingResource::Buffer(BufferBinding {
-            buffer: &self.meta,
-            offset: 0,
-            size: None,
-        })
-    }
-
-    #[inline]
-    pub fn binding(&self) -> BindingResource {
-        BindingResource::Buffer(BufferBinding {
-            buffer: &self.buffer,
-            offset: 0,
-            size: None,
-        })
-    }
 }
 
 pub type TensorCpu<T> = Tensor<Cpu<T>, T>;
@@ -509,7 +498,7 @@ impl<T: Scalar, K: Kind> TensorReshape for TensorGpu<T, K> {
     }
 }
 
-impl<T: Scalar, K: Kind> TensorGpu<T, K> {
+impl<T: Scalar, K: Kind> TensorResource for TensorGpu<T, K> {
     #[inline]
     fn resource_key(&self) -> ResourceKey {
         let id = self.id;
@@ -521,6 +510,26 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         ResourceKey { id, view }
     }
 
+    #[inline]
+    fn meta_binding(&self) -> BindingResource {
+        BindingResource::Buffer(BufferBinding {
+            buffer: &self.meta,
+            offset: 0,
+            size: None,
+        })
+    }
+
+    #[inline]
+    fn binding(&self) -> BindingResource {
+        BindingResource::Buffer(BufferBinding {
+            buffer: &self.buffer,
+            offset: 0,
+            size: None,
+        })
+    }
+}
+
+impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn back_in_place(&self) -> TensorCpu<T> {
         use crate::context::ContextEvent;
@@ -959,9 +968,19 @@ impl<T: Scalar> TensorGpuView<'_, T> {
     pub fn layout(&self, binding: u32, read_only: bool) -> BindGroupLayoutEntry {
         self.tensor.layout(binding, read_only)
     }
+}
+
+impl<T: Scalar> TensorResource for TensorGpuView<'_, T> {
+    #[inline]
+    fn resource_key(&self) -> ResourceKey {
+        ResourceKey {
+            id: self.tensor.id,
+            view: self.view,
+        }
+    }
 
     #[inline]
-    pub fn meta_binding(&self) -> BindingResource {
+    fn meta_binding(&self) -> BindingResource {
         BindingResource::Buffer(BufferBinding {
             buffer: &self.meta,
             offset: 0,
@@ -970,16 +989,8 @@ impl<T: Scalar> TensorGpuView<'_, T> {
     }
 
     #[inline]
-    pub fn binding(&self) -> BindingResource {
-        self.data().binding()
-    }
-
-    #[inline]
-    pub fn resource_key(&self) -> ResourceKey {
-        ResourceKey {
-            id: self.tensor.id,
-            view: self.view,
-        }
+    fn binding(&self) -> BindingResource {
+        self.tensor.binding()
     }
 }
 
