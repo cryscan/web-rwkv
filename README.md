@@ -41,6 +41,8 @@ It *does not* provide the following:
 - State caching or management system.
 - Python bindings.
 
+> For devs: Check the [slides](./assets/introduction.pdf) for technique details about the architecture, history and optimizations. 
+
 ## Compile
 1. [Install Rust](https://rustup.rs/).
 2. Download the model from [HuggingFace](https://huggingface.co/BlinkDL/rwkv-5-world), and convert it using [`convert_safetensors.py`](./assets/scripts/convert_safetensors.py). Put the `.st` model under `assets/models`.

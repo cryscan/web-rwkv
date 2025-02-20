@@ -19,6 +19,7 @@
 *.flac binary
 *.wav binary
 *.ogg binary
+*.pdf binary
 
 *.safetensors binary
 *.st binary
