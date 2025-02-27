@@ -213,7 +213,7 @@ fn needs_deserialize_bound(field: &attr::Field, variant: Option<&attr::Variant>)
     !field.skip_deserializing()
         && field.deserialize_with().is_none()
         && field.de_bound().is_none()
-        && variant.map_or(true, |variant| {
+        && variant.is_none_or(|variant| {
             !variant.skip_deserializing()
                 && variant.deserialize_with().is_none()
                 && variant.de_bound().is_none()
