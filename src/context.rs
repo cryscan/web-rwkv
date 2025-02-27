@@ -50,8 +50,8 @@ pub struct ContextEvent {
     pub sender: flume::Sender<Box<[u8]>>,
 }
 
-#[derive(Debug)]
-pub struct ContextInternal {
+#[derive(Debug, Clone)]
+pub struct Context {
     pub id: uid::Id<ContextId>,
     pub adapter: Adapter,
     pub device: Device,
@@ -66,13 +66,10 @@ pub struct ContextInternal {
     event: flume::Sender<ContextEvent>,
 }
 
-#[derive(Debug, Clone, Deref, DerefMut)]
-pub struct Context(Arc<ContextInternal>);
-
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for Context {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.0) <= 1 {
+        if self.event.sender_count() <= 1 {
             self.clear_buffers();
             self.queue.submit(None);
             self.device.poll(wgpu::Maintain::Wait);
@@ -136,7 +133,7 @@ impl ContextBuilder {
         #[cfg(not(target_arch = "wasm32"))]
         let (event, receiver) = flume::unbounded();
 
-        let context = Arc::new(ContextInternal {
+        let context = Context {
             id: uid::Id::new(),
             adapter,
             device,
@@ -147,27 +144,21 @@ impl ContextBuilder {
             bindings: SharedResourceCache::new(64),
             #[cfg(not(target_arch = "wasm32"))]
             event,
-        });
-        let context = Context(context);
+        };
 
         // start a thread for reading back buffers
         #[cfg(not(target_arch = "wasm32"))]
         {
             let id = context.id;
-            let context = Arc::downgrade(&context);
+            let device = context.device.clone();
             std::thread::spawn(move || {
                 while let Ok(ContextEvent { buffer, sender }) = receiver.recv() {
-                    match context.upgrade() {
-                        Some(context) => {
-                            #[cfg(feature = "trace")]
-                            let _span = tracing::trace_span!("device").entered();
-                            let data = context.read_back_buffer(buffer);
-                            let _ = sender.send(data);
-                        }
-                        None => break,
-                    }
+                    #[cfg(feature = "trace")]
+                    let _span = tracing::trace_span!("device").entered();
+                    let data = read_back_buffer(&device, &buffer);
+                    let _ = sender.send(data);
                 }
-                log::info!("context {} destroyed", id);
+                log::info!("context dropped: {}", id);
             });
         }
 
@@ -229,7 +220,7 @@ impl PipelineKey {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CachedPipeline {
     pub pipeline: ComputePipeline,
     pub layout: BindGroupLayout,
@@ -304,7 +295,7 @@ impl<'a, 'b> BindGroupBuilder<'a, 'b> {
 
 impl Eq for Context {}
 
-impl ContextInternal {
+impl Context {
     pub fn checkout_pipeline(
         &self,
         key: &PipelineKey,
@@ -435,36 +426,6 @@ impl ContextInternal {
         self.event.clone()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn read_back_buffer(&self, buffer: Arc<Buffer>) -> Box<[u8]> {
-        assert!(buffer.usage().contains(BufferUsages::MAP_READ));
-
-        let (sender, receiver) = flume::bounded(1);
-        let slice = buffer.slice(..);
-        slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
-
-        self.device.poll(wgpu::MaintainBase::Wait);
-        receiver
-            .recv()
-            .expect("failed to receive read back buffer")
-            .expect("failed to map buffer");
-
-        let data = {
-            let map = slice.get_mapped_range();
-            let len = map.len();
-            let size = std::mem::size_of::<u32>();
-            let data = vec![0u32; len.div_ceil(size)].into_boxed_slice();
-            unsafe {
-                let data = Box::leak(data);
-                let data: &mut [u8] = bytemuck::cast_slice_mut(data);
-                data.copy_from_slice(&map);
-                Box::from_raw(data)
-            }
-        };
-        buffer.unmap();
-        data
-    }
-
     #[cfg(feature = "subgroup-ops")]
     pub fn min_subgroup_size(&self) -> u32 {
         self.adapter.limits().min_subgroup_size
@@ -474,4 +435,34 @@ impl ContextInternal {
     pub fn max_subgroup_size(&self) -> u32 {
         self.adapter.limits().max_subgroup_size
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_back_buffer(device: &Device, buffer: &Buffer) -> Box<[u8]> {
+    assert!(buffer.usage().contains(BufferUsages::MAP_READ));
+
+    let (sender, receiver) = flume::bounded(1);
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
+
+    device.poll(wgpu::MaintainBase::Wait);
+    receiver
+        .recv()
+        .expect("failed to receive read back buffer")
+        .expect("failed to map buffer");
+
+    let data = {
+        let map = slice.get_mapped_range();
+        let len = map.len();
+        let size = std::mem::size_of::<u32>();
+        let data = vec![0u32; len.div_ceil(size)].into_boxed_slice();
+        unsafe {
+            let data = Box::leak(data);
+            let data: &mut [u8] = bytemuck::cast_slice_mut(data);
+            data.copy_from_slice(&map);
+            Box::from_raw(data)
+        }
+    };
+    buffer.unmap();
+    data
 }
