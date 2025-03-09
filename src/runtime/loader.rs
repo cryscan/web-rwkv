@@ -253,12 +253,36 @@ impl<R: Reader> Loader<R> {
         ]
         .into_iter()
         .all(|name| model.contains(name));
+        let g1 = [
+            "blocks.0.att.x_r",
+            "blocks.0.att.x_w",
+            "blocks.0.att.x_k",
+            "blocks.0.att.x_v",
+            "blocks.0.att.x_a",
+            "blocks.0.att.x_g",
+            "blocks.0.att.w0",
+            "blocks.0.att.w1",
+            "blocks.0.att.w2",
+            "blocks.0.att.a0",
+            "blocks.0.att.a1",
+            "blocks.0.att.a2",
+            "blocks.0.att.g1",
+            "blocks.0.att.g2",
+            "blocks.0.att.r_k",
+            "blocks.0.att.k_k",
+            "blocks.0.att.k_a",
+            "blocks.0.att.new_param1",
+            "blocks.0.att.new_param2",
+        ]
+        .into_iter()
+        .all(|name| model.contains(name));
 
-        let version = match (v4, v5, v6, v7) {
-            (true, false, false, false) => ModelVersion::V4,
-            (_, true, false, false) => ModelVersion::V5,
-            (_, _, true, false) => ModelVersion::V6,
-            (_, _, _, true) => ModelVersion::V7,
+        let version = match (v4, v5, v6, v7, g1) {
+            (true, false, false, false, false) => ModelVersion::V4,
+            (_, true, false, false, false) => ModelVersion::V5,
+            (_, _, true, false, false) => ModelVersion::V6,
+            (_, _, _, true, false) => ModelVersion::V7,
+            (_, _, _, _, true) => ModelVersion::G1,
             _ => return Err(ModelError::InvalidVersion.into()),
         };
 
@@ -269,7 +293,7 @@ impl<R: Reader> Loader<R> {
         let num_head = match version {
             ModelVersion::V4 => 1,
             ModelVersion::V5 | ModelVersion::V6 => model.shape("blocks.0.att.time_first")?[0],
-            ModelVersion::V7 => model.shape("blocks.0.att.r_k")?[0],
+            ModelVersion::V7 | ModelVersion::G1 => model.shape("blocks.0.att.r_k")?[0],
         };
 
         let custom = match version {
@@ -282,6 +306,13 @@ impl<R: Reader> Loader<R> {
                 })
             }
             ModelVersion::V7 => {
+                let w = model.shape("blocks.0.att.w1")?[0];
+                let a = model.shape("blocks.0.att.a1")?[0];
+                let g = model.shape("blocks.0.att.g1")?[0];
+                let v = model.shape("blocks.1.att.v1")?[0];
+                ModelCustomInfo::V7(super::v7::CustomInfo { w, a, g, v })
+            }
+            ModelVersion::G1 => {
                 let w = model.shape("blocks.0.att.w1")?[0];
                 let a = model.shape("blocks.0.att.a1")?[0];
                 let g = model.shape("blocks.0.att.g1")?[0];
