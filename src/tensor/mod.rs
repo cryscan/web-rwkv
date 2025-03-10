@@ -3,7 +3,6 @@ use std::{marker::PhantomData, sync::Arc};
 use itertools::Itertools;
 use shape::ShapedIndex;
 use thiserror::Error;
-use web_rwkv_derive::JsError;
 use wgpu::{
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType,
     BufferUsages, ShaderStages,
@@ -85,7 +84,7 @@ impl IntoPackedCursors for Vec<Cursor> {
     }
 }
 
-#[derive(Debug, Error, JsError)]
+#[derive(Debug, Error)]
 pub enum TensorError {
     #[error("list must not be empty")]
     Empty,

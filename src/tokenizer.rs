@@ -2,10 +2,9 @@ use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use derive_getters::Getters;
 use std::collections::BTreeMap;
 use thiserror::Error;
-use wasm_bindgen::prelude::wasm_bindgen;
-use web_rwkv_derive::JsError;
+use wasm_bindgen::{prelude::wasm_bindgen, JsError};
 
-#[derive(Debug, Error, JsError)]
+#[derive(Debug, Error)]
 pub enum TokenizerError {
     #[error("failed to parse vocabulary: {0}")]
     FailedToParseVocabulary(serde_json::Error),
@@ -15,7 +14,6 @@ pub enum TokenizerError {
     OutOfRangeToken(u16),
 }
 
-#[wasm_bindgen]
 #[derive(Debug, Clone, Getters)]
 pub struct Tokenizer {
     first_bytes_to_lengths: Vec<Box<[u16]>>,
@@ -30,10 +28,8 @@ enum StrOrBytes {
     Bytes(Vec<u8>),
 }
 
-#[wasm_bindgen]
 impl Tokenizer {
-    #[wasm_bindgen(constructor)]
-    pub fn new(vocab: &str) -> Result<Tokenizer, TokenizerError> {
+    pub fn new(vocab: &str) -> Result<Self, TokenizerError> {
         let map: BTreeMap<u16, StrOrBytes> =
             serde_json::from_str(vocab).map_err(TokenizerError::FailedToParseVocabulary)?;
 
@@ -150,5 +146,24 @@ impl Tokenizer {
         }
 
         Ok(())
+    }
+}
+
+#[wasm_bindgen(js_name = Tokenizer)]
+pub struct JsTokenizer(Tokenizer);
+
+#[wasm_bindgen(js_class = Tokenizer)]
+impl JsTokenizer {
+    #[wasm_bindgen(constructor)]
+    pub fn new(vocab: &str) -> Result<Self, JsError> {
+        Ok(Self(Tokenizer::new(vocab)?))
+    }
+
+    pub fn encode(&self, input: &[u8]) -> Result<Vec<u16>, JsError> {
+        Ok(self.0.encode(input)?)
+    }
+
+    pub fn decode(&self, tokens: &[u16]) -> Result<Vec<u8>, JsError> {
+        Ok(self.0.decode(tokens)?)
     }
 }

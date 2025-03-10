@@ -5,7 +5,6 @@ use futures::future::BoxFuture;
 #[cfg(target_arch = "wasm32")]
 use futures::future::LocalBoxFuture;
 use thiserror::Error;
-use web_rwkv_derive::JsError;
 
 pub mod infer;
 pub mod loader;
@@ -65,7 +64,7 @@ struct Submission<I, O> {
     sender: flume::Sender<Result<(I, O), RuntimeError>>,
 }
 
-#[derive(Debug, Error, JsError)]
+#[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("input iterator exhausted")]
     InputExhausted,
@@ -73,6 +72,7 @@ pub enum RuntimeError {
     TensorError(#[from] crate::tensor::TensorError),
     #[error("recv error")]
     RecvError(#[from] flume::RecvError),
+    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
     #[error("join error")]
     JoinError(#[from] tokio::task::JoinError),
 }

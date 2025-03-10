@@ -5,7 +5,7 @@ use itertools::Itertools;
 use regex::Regex;
 use safetensors::{Dtype, SafeTensorError, SafeTensors};
 use thiserror::Error;
-use web_rwkv_derive::{Deref, DerefMut, JsError};
+use web_rwkv_derive::{Deref, DerefMut};
 
 use super::model::{ModelCustomInfo, ModelInfo, ModelVersion, Quant};
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
 pub const PAD_VEC: [usize; 4] = [8, 1, 1, 1];
 pub const PAD_MAT: [usize; 4] = [8, 8, 1, 1];
 
-#[derive(Debug, Error, JsError)]
+#[derive(Debug, Error)]
 pub enum LoaderError {
     #[error("invalid model version")]
     InvalidVersion,
