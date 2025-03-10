@@ -11,6 +11,7 @@ env:
   GITHUB_REF: "${{ github.ref }}"
   WINDOWS_TARGET: x86_64-pc-windows-msvc
   MACOS_TARGET: x86_64-apple-darwin
+  MACOS_ARM64_TARGET: aarch64-apple-darwin
   LINUX_TARGET: x86_64-unknown-linux-gnu
 
   # Space separated paths to include in the archive.
@@ -30,6 +31,11 @@ jobs:
             rust: stable
           - build: macos
             os: macos-latest
+            MACOSX_DEPLOYMENT_TARGET: 10.7
+            rust: stable
+          - build: macos_arm64
+            os: macos-latest
+            MACOSX_DEPLOYMENT_TARGET: 11.0
             rust: stable
           - build: windows
             os: windows-latest
@@ -68,6 +74,11 @@ jobs:
         if: matrix.build == 'macos'
         run: |
           cargo build --release --examples --all-features
+      - name: Build (MacOS ARM64)
+        if: matrix.build == 'macos_arm64'
+        run: |
+          rustup target add ${{ env.MACOS_ARM64_TARGET }}
+          cargo build --release --examples --target ${{ env.MACOS_ARM64_TARGET }} --all-features
       - name: Build (Windows)
         if: matrix.build == 'windows'
         run: |
@@ -105,6 +116,15 @@ jobs:
           done
           mv ${{ env.RELEASE_ADDS }} ./dist
           7z a -tzip ./${{ env.RELEASE_DIR }}/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.zip ./dist
+      - name: Create tarball (MacOS ARM64)
+        if: matrix.build == 'macos_arm64'
+        run: |
+          for bin in ${{ env.EXAMPLE_BINS }}
+          do
+            mv ./target/${{ env.MACOS_ARM64_TARGET }}/release/examples/${bin} ./dist/${bin}
+          done
+          mv ${{ env.RELEASE_ADDS }} ./dist
+          7z a -tzip ./${{ env.RELEASE_DIR }}/${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_ARM64_TARGET }}.zip ./dist
       - name: Upload Zip
         uses: actions/upload-artifact@v4
         with:
@@ -136,7 +156,7 @@ jobs:
         with:
           name: linux
 
-      - name: Download MacOS tarball
+      - name: Download Windows tarball
         uses: actions/download-artifact@v4
         with:
           name: windows
@@ -145,6 +165,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: macos
+
+      - name: Download MacOS ARM64 tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: macos_arm64
 
       - name: Release Linux tarball
         uses: actions/upload-release-asset@v1
@@ -174,3 +199,12 @@ jobs:
           asset_path: ./${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.zip
           asset_content_type: application/zip
           asset_name: ${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_TARGET }}.zip
+      - name: Release MacOS ARM64 tarball
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_ARM64_TARGET }}.zip
+          asset_content_type: application/zip
+          asset_name: ${{ env.RELEASE_BIN }}-${{ steps.get_version.outputs.VERSION }}-${{ env.MACOS_ARM64_TARGET }}.zip
