@@ -1,6 +1,5 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
-use anyhow::Result;
 #[cfg(not(target_arch = "wasm32"))]
 use futures::future::BoxFuture;
 #[cfg(target_arch = "wasm32")]
@@ -13,9 +12,9 @@ use wgpu::CommandBuffer;
 
 use super::{
     infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
-    loader::{Loader, Reader},
+    loader::{Loader, LoaderError, Reader},
     model::{AsAny, EmbedDevice, ModelBuilder, ModelCustomInfo, ModelInfo, State as _},
-    Dispatcher, Job,
+    Dispatcher, Job, RuntimeError,
 };
 use crate::{
     context::Context,
@@ -427,7 +426,7 @@ impl Job for InferJob {
     type Input = InferInput;
     type Output = InferOutput;
 
-    fn load(self, input: &InferChunk) -> Result<Self> {
+    fn load(self, input: &InferChunk) -> Result<Self, RuntimeError> {
         if input.num_token() == 0 {
             return Ok(self);
         }
@@ -480,7 +479,7 @@ impl Job for InferJob {
         self.output.context.queue.submit(commands);
     }
 
-    async fn back(self) -> Result<Self::Output> {
+    async fn back(self) -> Result<Self::Output, RuntimeError> {
         let output = self.output.back().await;
         let batches: Vec<_> = self
             .redirect
@@ -600,7 +599,7 @@ fn hook_op<F: Float>(
 impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
     type Info = InferInfo;
 
-    fn dispatch(&self, seed: Self::Info) -> Result<InferJob> {
+    fn dispatch(&self, seed: Self::Info) -> Result<InferJob, RuntimeError> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
@@ -739,7 +738,7 @@ fn dispatch_layer<F: Float>(
     num_token: usize,
     head_size: usize,
     rescale: usize,
-) -> Result<TensorOp> {
+) -> Result<TensorOp, TensorError> {
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let Frame { state, buffer, .. } = &frame;
 
@@ -997,7 +996,7 @@ fn dispatch_header<F: Float>(
     head_x: TensorGpu<F, ReadWrite>,
     num_header: usize,
     head_op: TensorOp,
-) -> Result<TensorOp> {
+) -> Result<TensorOp, TensorError> {
     let hook_op = |hook: Hook| hook_op(&hooks, &hook, &frame);
     let header = &frame.header;
     let mut ops = vec![head_op];
@@ -1025,7 +1024,7 @@ fn dispatch_header<F: Float>(
 }
 
 impl<R: Reader> ModelBuilder<R> {
-    pub async fn build_v6(self) -> Result<Model> {
+    pub async fn build_v6(self) -> Result<Model, LoaderError> {
         let ModelBuilder {
             context,
             model,
@@ -1206,7 +1205,7 @@ pub async fn read_state<R: Reader>(
     context: &Context,
     info: &ModelInfo,
     model: R,
-) -> Result<TensorCpu<f32>> {
+) -> Result<TensorCpu<f32>, LoaderError> {
     let loader = Loader {
         context: context.clone(),
         model,

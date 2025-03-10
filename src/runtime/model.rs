@@ -1,13 +1,11 @@
 use std::{any::Any, collections::HashMap};
 
-use anyhow::Result;
 #[cfg(not(target_arch = "wasm32"))]
 use futures::future::BoxFuture;
 #[cfg(target_arch = "wasm32")]
 use futures::future::LocalBoxFuture;
 use half::f16;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::loader::{Lora, Reader, PAD_MAT};
@@ -25,13 +23,6 @@ pub enum ModelVersion {
     V5,
     V6,
     V7,
-}
-
-#[wasm_bindgen]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
-pub enum ModelError {
-    #[error("invalid model version")]
-    InvalidVersion,
 }
 
 #[wasm_bindgen]

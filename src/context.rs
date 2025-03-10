@@ -23,21 +23,18 @@ pub trait InstanceExt {
     fn adapter(
         &self,
         power_preference: PowerPreference,
-    ) -> impl Future<Output = Result<Adapter, CreateEnvironmentError>>;
+    ) -> impl Future<Output = Result<Adapter, ContextError>>;
 }
 
 impl InstanceExt for Instance {
-    async fn adapter(
-        &self,
-        power_preference: PowerPreference,
-    ) -> Result<Adapter, CreateEnvironmentError> {
+    async fn adapter(&self, power_preference: PowerPreference) -> Result<Adapter, ContextError> {
         self.request_adapter(&RequestAdapterOptions {
             power_preference,
             force_fallback_adapter: false,
             compatible_surface: None,
         })
         .await
-        .ok_or(CreateEnvironmentError::RequestAdapterFailed)
+        .ok_or(ContextError::RequestAdapterFailed)
     }
 }
 
@@ -90,8 +87,8 @@ pub struct ContextBuilder {
 }
 
 #[wasm_bindgen]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-pub enum CreateEnvironmentError {
+#[derive(Debug, Error)]
+pub enum ContextError {
     #[error("failed to request adaptor")]
     RequestAdapterFailed,
     #[error("failed to request device")]
@@ -110,7 +107,7 @@ impl ContextBuilder {
         }
     }
 
-    pub async fn build(self) -> Result<Context, CreateEnvironmentError> {
+    pub async fn build(self) -> Result<Context, ContextError> {
         let Self {
             adapter,
             features,
@@ -128,7 +125,7 @@ impl ContextBuilder {
                 None,
             )
             .await
-            .map_err(|_| CreateEnvironmentError::RequestDeviceFailed)?;
+            .map_err(|_| ContextError::RequestDeviceFailed)?;
 
         #[cfg(not(target_arch = "wasm32"))]
         let (event, receiver) = flume::unbounded();

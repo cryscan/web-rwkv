@@ -1,13 +1,13 @@
 use std::borrow::Cow;
 
-use anyhow::Result;
 use half::f16;
 use itertools::Itertools;
 use regex::Regex;
 use safetensors::{Dtype, SafeTensorError, SafeTensors};
-use web_rwkv_derive::{Deref, DerefMut};
+use thiserror::Error;
+use web_rwkv_derive::{Deref, DerefMut, JsError};
 
-use super::model::{ModelCustomInfo, ModelError, ModelInfo, ModelVersion, Quant};
+use super::model::{ModelCustomInfo, ModelInfo, ModelVersion, Quant};
 use crate::{
     context::Context,
     num::Scalar,
@@ -22,6 +22,20 @@ use crate::{
 
 pub const PAD_VEC: [usize; 4] = [8, 1, 1, 1];
 pub const PAD_MAT: [usize; 4] = [8, 8, 1, 1];
+
+#[derive(Debug, Error, JsError)]
+pub enum LoaderError {
+    #[error("invalid model version")]
+    InvalidVersion,
+    #[error("tensor error")]
+    TensorError(#[from] TensorError),
+    #[error("failed to load safe tensor")]
+    SafeTensor(#[from] safetensors::SafeTensorError),
+    #[error("failed to parse int")]
+    ParseIntError(#[from] std::num::ParseIntError),
+    #[error("failed to parse regex")]
+    RegexError(#[from] regex::Error),
+}
 
 pub type ReaderTensor<'a> = (Dtype, Vec<usize>, Cow<'a, [u8]>);
 
@@ -151,7 +165,7 @@ pub struct LoraBlendPattern {
 
 impl LoraBlendPattern {
     #[inline]
-    pub fn new(pattern: &str, alpha: f32) -> Result<Self> {
+    pub fn new(pattern: &str, alpha: f32) -> Result<Self, LoaderError> {
         Ok(Self {
             pattern: Regex::new(pattern)?,
             alpha,
@@ -184,7 +198,7 @@ pub struct Loader<R> {
 }
 
 impl<R: Reader> Loader<R> {
-    pub fn info(model: &R) -> Result<ModelInfo> {
+    pub fn info(model: &R) -> Result<ModelInfo, LoaderError> {
         let num_layer = {
             let mut r: usize = 0;
             for i in model.names() {
@@ -259,7 +273,7 @@ impl<R: Reader> Loader<R> {
             (_, true, false, false) => ModelVersion::V5,
             (_, _, true, false) => ModelVersion::V6,
             (_, _, _, true) => ModelVersion::V7,
-            _ => return Err(ModelError::InvalidVersion.into()),
+            _ => return Err(LoaderError::InvalidVersion),
         };
 
         let num_emb = embed[1];
@@ -304,7 +318,7 @@ impl<R: Reader> Loader<R> {
 
     /// Load all lora and blend factors about the vector with a given name.
     /// In each LoRA, only the last matched pattern is loaded.
-    fn lora_vectors(&self, name: impl AsRef<str>) -> Result<Vec<LoraVector>> {
+    fn lora_vectors(&self, name: impl AsRef<str>) -> Result<Vec<LoraVector>, LoaderError> {
         let context = &self.context;
         let name = name.as_ref();
 
@@ -333,7 +347,7 @@ impl<R: Reader> Loader<R> {
 
     /// Load all lora and blend factors about the matrix with a given name.
     /// In each LoRA, only the last matched pattern is loaded.
-    fn lora_matrices(&self, name: impl AsRef<str>) -> Result<Vec<LoraMatrix>> {
+    fn lora_matrices(&self, name: impl AsRef<str>) -> Result<Vec<LoraMatrix>, LoaderError> {
         let context = &self.context;
         let name = name.as_ref();
 
@@ -367,12 +381,15 @@ impl<R: Reader> Loader<R> {
         Ok(matrices)
     }
 
-    pub fn tensor_shape(&self, name: impl AsRef<str>) -> Result<Shape> {
+    pub fn tensor_shape(&self, name: impl AsRef<str>) -> Result<Shape, LoaderError> {
         let shape = self.model.shape(name.as_ref())?;
         Ok(Shape::from_slice_rev(&shape)?)
     }
 
-    pub fn load_vector_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
+    pub fn load_vector_f32(
+        &self,
+        name: impl AsRef<str>,
+    ) -> Result<TensorGpu<f32, ReadWrite>, LoaderError> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
@@ -406,7 +423,10 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub fn load_vector_exp_f32(&self, name: impl AsRef<str>) -> Result<TensorGpu<f32, ReadWrite>> {
+    pub fn load_vector_exp_f32(
+        &self,
+        name: impl AsRef<str>,
+    ) -> Result<TensorGpu<f32, ReadWrite>, LoaderError> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
@@ -447,7 +467,7 @@ impl<R: Reader> Loader<R> {
     pub fn load_vector_exp_exp_f32(
         &self,
         name: impl AsRef<str>,
-    ) -> Result<TensorGpu<f32, ReadWrite>> {
+    ) -> Result<TensorGpu<f32, ReadWrite>, LoaderError> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
@@ -486,7 +506,10 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub fn load_vector_f16(&self, name: impl AsRef<str>) -> Result<TensorGpu<f16, ReadWrite>> {
+    pub fn load_vector_f16(
+        &self,
+        name: impl AsRef<str>,
+    ) -> Result<TensorGpu<f16, ReadWrite>, LoaderError> {
         let context = &self.context;
         let lora = self.lora_vectors(name.as_ref())?;
         let tensor = self.model.tensor(name.as_ref())?;
@@ -537,7 +560,10 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    pub fn load_matrix_f16(&self, name: impl AsRef<str>) -> Result<TensorGpu<f16, ReadWrite>> {
+    pub fn load_matrix_f16(
+        &self,
+        name: impl AsRef<str>,
+    ) -> Result<TensorGpu<f16, ReadWrite>, LoaderError> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::from_reader(tensor)?.to(context);
@@ -564,7 +590,7 @@ impl<R: Reader> Loader<R> {
         &self,
         name: impl AsRef<str>,
         discount: f32,
-    ) -> Result<TensorGpu<f16, ReadWrite>> {
+    ) -> Result<TensorGpu<f16, ReadWrite>, LoaderError> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor: TensorGpu<_, _> = TensorCpu::<f16>::from_reader(tensor)?
@@ -593,7 +619,7 @@ impl<R: Reader> Loader<R> {
         &self,
         matrix: &TensorGpu<f16, ReadWrite>,
         name: impl AsRef<str>,
-    ) -> Result<()> {
+    ) -> Result<(), LoaderError> {
         let context = &self.context;
         let tensor = self.model.tensor(name.as_ref())?;
         let tensor = TensorCpu::from_reader(tensor)?;
@@ -622,7 +648,7 @@ impl<R: Reader> Loader<R> {
         matrix: &TensorGpu<f16, ReadWrite>,
         name: impl AsRef<str>,
         discount: f32,
-    ) -> Result<()> {
+    ) -> Result<(), LoaderError> {
         let context = &self.context;
 
         let tensor = self.model.tensor(name.as_ref())?;
@@ -654,7 +680,10 @@ impl<R: Reader> Loader<R> {
         Ok(())
     }
 
-    pub fn load_matrix_f16_padded_cpu(&self, name: impl AsRef<str>) -> Result<TensorCpu<f16>> {
+    pub fn load_matrix_f16_padded_cpu(
+        &self,
+        name: impl AsRef<str>,
+    ) -> Result<TensorCpu<f16>, LoaderError> {
         let (dt, shape, tensor) = self.model.tensor(name.as_ref())?;
         let tensor = TensorCpu::from_reader((dt, shape, tensor))?.pad(PAD_MAT);
         Ok(tensor)
@@ -663,7 +692,7 @@ impl<R: Reader> Loader<R> {
     pub fn load_matrix_f16_padded(
         &self,
         name: impl AsRef<str>,
-    ) -> Result<TensorGpu<f16, ReadWrite>> {
+    ) -> Result<TensorGpu<f16, ReadWrite>, LoaderError> {
         let context = &self.context;
         let (dt, shape, tensor) = self.model.tensor(name.as_ref())?;
         let tensor = TensorCpu::from_reader((dt, shape, tensor))?
@@ -672,25 +701,7 @@ impl<R: Reader> Loader<R> {
         Ok(tensor)
     }
 
-    // pub fn load_head(&self, chunk_size: usize) -> Result<Vec<TensorGpu<f16, ReadWrite>>> {
-    //     let context = &self.context;
-    //     let (_, shape, tensor) = self.model.tensor("head.weight")?;
-    //     let shape = Shape::new(shape[1], shape[0], 1, 1);
-    //     let chunks = shape[1].div_ceil(chunk_size);
-    //     let data = bytemuck::cast_slice(&tensor);
-
-    //     let head = (0..chunks)
-    //         .map(|chunk| {
-    //             let real_chunk_size = ((chunk + 1) * chunk_size).min(shape[1]) - chunk * chunk_size;
-    //             let start = (chunk * chunk_size) * shape[0];
-    //             let end = start + real_chunk_size * shape[0];
-    //             context.tensor_from_data([shape[0], real_chunk_size, 1, 1], &data[start..end])
-    //         })
-    //         .try_collect()?;
-    //     Ok(head)
-    // }
-
-    pub fn load_matrix(&self, name: String, quant: Quant) -> Result<Matrix> {
+    pub fn load_matrix(&self, name: String, quant: Quant) -> Result<Matrix, LoaderError> {
         let context = &self.context;
         match quant {
             Quant::None => Ok(Matrix::Fp16(self.load_matrix_f16(name)?)),
@@ -720,7 +731,7 @@ impl<R: Reader> Loader<R> {
         name: String,
         quant: Quant,
         discount: f32,
-    ) -> Result<Matrix> {
+    ) -> Result<Matrix, LoaderError> {
         let context = &self.context;
         match quant {
             Quant::None => Ok(Matrix::Fp16(self.load_matrix_f16_discount(name, discount)?)),

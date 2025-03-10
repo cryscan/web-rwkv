@@ -1,10 +1,11 @@
 use std::{future::Future, marker::PhantomData};
 
-use anyhow::Result;
 #[cfg(not(target_arch = "wasm32"))]
 use futures::future::BoxFuture;
 #[cfg(target_arch = "wasm32")]
 use futures::future::LocalBoxFuture;
+use thiserror::Error;
+use web_rwkv_derive::JsError;
 
 pub mod infer;
 pub mod loader;
@@ -38,15 +39,15 @@ pub trait Job: Sized {
     type Output;
 
     /// Load the data from CPU to GPU.
-    fn load(self, input: &<<Self as Job>::Input as JobInput>::Chunk) -> Result<Self>;
+    fn load(self, input: &<<Self as Job>::Input as JobInput>::Chunk) -> Result<Self, RuntimeError>;
     /// Submit the job to GPU and execute it immediately.
     fn submit(&mut self);
     #[cfg(not(target_arch = "wasm32"))]
     /// Wait for the job to finish and read the data back.
-    fn back(self) -> impl Future<Output = Result<Self::Output>> + Send;
+    fn back(self) -> impl Future<Output = Result<Self::Output, RuntimeError>> + Send;
     #[cfg(target_arch = "wasm32")]
     /// Wait for the job to finish and read the data back.
-    fn back(self) -> impl Future<Output = Result<Self::Output>>;
+    fn back(self) -> impl Future<Output = Result<Self::Output, RuntimeError>>;
 }
 
 pub trait Dispatcher<J: Job> {
@@ -54,14 +55,26 @@ pub trait Dispatcher<J: Job> {
 
     /// Build a [`Job`] from the given info.
     /// This usually involves creating a list of GPU commands (but not actually execution).
-    fn dispatch(&self, info: Self::Info) -> Result<J>;
+    fn dispatch(&self, info: Self::Info) -> Result<J, RuntimeError>;
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[derive(Debug)]
 struct Submission<I, O> {
     input: I,
-    sender: flume::Sender<Result<(I, O)>>,
+    sender: flume::Sender<Result<(I, O), RuntimeError>>,
+}
+
+#[derive(Debug, Error, JsError)]
+pub enum RuntimeError {
+    #[error("input iterator exhausted")]
+    InputExhausted,
+    #[error("tensor error")]
+    TensorError(#[from] crate::tensor::TensorError),
+    #[error("recv error")]
+    RecvError(#[from] flume::RecvError),
+    #[error("join error")]
+    JoinError(#[from] tokio::task::JoinError),
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -100,13 +113,13 @@ where
     ) where
         J: Job<Input = I, Output = O> + Send + 'static,
     {
-        let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J>>)> = vec![];
+        let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J, RuntimeError>>)> = vec![];
         let mut iter: Option<F> = None;
         let mut predict: usize = 0;
 
         'main: while let Some(Submission { input, sender }) = receiver.recv().await {
             let Some(info) = (&input).into_iter().next() else {
-                let _ = sender.send(Err(anyhow::anyhow!("input iterator exhausted")));
+                let _ = sender.send(Err(RuntimeError::InputExhausted));
                 continue 'main;
             };
 
@@ -189,7 +202,7 @@ where
             async fn back<J: Job, I: JobInput>(
                 job: J,
                 mut input: I,
-                sender: flume::Sender<Result<(I, J::Output)>>,
+                sender: flume::Sender<Result<(I, J::Output), RuntimeError>>,
             ) {
                 let output = job.back().await;
                 input.step();
@@ -205,7 +218,7 @@ where
 
     /// Perform (partial) inference and return the remaining input and (perhaps partial) output.
     /// The amount of input processed during one call is bound by the input chunk size.
-    pub async fn infer(&self, input: I) -> Result<(I, O)> {
+    pub async fn infer(&self, input: I) -> Result<(I, O), RuntimeError> {
         let (sender, receiver) = flume::bounded(1);
         let submission = Submission { input, sender };
         let _ = self.0.send(submission).await;
@@ -236,9 +249,9 @@ where
         }
     }
 
-    pub async fn infer(&self, mut input: I) -> Result<(I, O)> {
+    pub async fn infer(&self, mut input: I) -> Result<(I, O), RuntimeError> {
         let Some(info) = (&input).into_iter().next() else {
-            anyhow::bail!("input iterator exhausted")
+            return Err(RuntimeError::InputExhausted);
         };
         let chunk = input.chunk();
 
@@ -257,13 +270,13 @@ pub trait Runtime {
     fn infer(
         &self,
         input: infer::InferInput,
-    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>>;
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>>;
 
     #[cfg(target_arch = "wasm32")]
     fn infer(
         &self,
         input: infer::InferInput,
-    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>>;
+    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>>;
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -273,7 +286,7 @@ impl Runtime for TokioRuntime<infer::InferInput, infer::InferOutput> {
     fn infer(
         &self,
         input: infer::InferInput,
-    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }
@@ -288,7 +301,7 @@ where
     fn infer(
         &self,
         input: infer::InferInput,
-    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }
@@ -303,7 +316,7 @@ where
     fn infer(
         &self,
         input: infer::InferInput,
-    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput)>> {
+    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }

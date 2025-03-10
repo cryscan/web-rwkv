@@ -85,7 +85,7 @@ impl IntoPackedCursors for Vec<Cursor> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error, JsError)]
+#[derive(Debug, Error, JsError)]
 pub enum TensorError {
     #[error("list must not be empty")]
     Empty,

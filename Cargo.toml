@@ -26,7 +26,6 @@ version.workspace = true
 
 [dependencies]
 ahash = "0.8"
-anyhow = "1.0"
 bytemuck = { version = "1.21", features = ["extern_crate_alloc"] }
 derive-getters = "0.5"
 document-features = "0.2.8"
@@ -66,6 +65,7 @@ optional = true
 version = "1.43"
 
 [dev-dependencies]
+anyhow = "1.0"
 cbor4ii = { version = "1.0.0", features = ["half-f16", "serde1"] }
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.28"
