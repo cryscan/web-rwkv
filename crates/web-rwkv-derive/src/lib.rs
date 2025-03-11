@@ -2,7 +2,6 @@ use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
 mod deref;
-mod js;
 mod kind;
 mod serde;
 
@@ -18,14 +17,6 @@ pub fn derive_deref(input: TokenStream) -> TokenStream {
 pub fn derive_deref_mut(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     deref::expand_derive_deref_mut(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
-}
-
-#[proc_macro_derive(JsError)]
-pub fn derive_js_error(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    js::expand_derive_js_error(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
