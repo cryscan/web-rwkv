@@ -110,6 +110,20 @@ pub enum TensorError {
     SliceInvalid,
     #[error("cannot split along the axis {0}")]
     SplitInvalid(usize),
+    #[error("possible tensor error(s):\n{0}")]
+    Any(AnyTensorError),
+}
+
+#[derive(Debug)]
+pub struct AnyTensorError(pub Vec<Box<TensorError>>);
+
+impl std::fmt::Display for AnyTensorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0
+            .iter()
+            .enumerate()
+            .try_for_each(|(index, error)| writeln!(f, "{index}. {error}"))
+    }
 }
 
 pub trait DeepClone: Sized {
@@ -143,8 +157,10 @@ pub trait TensorInto<Into> {
 }
 
 pub trait TensorShape: Sized {
+    /// Get the shape of the tensor.
     fn shape(&self) -> Shape;
 
+    /// Check if the tensor's shape is the same as what expected.
     fn check_shape(&self, shape: impl Into<Shape>) -> Result<(), TensorError> {
         let shape = shape.into();
         (self.shape() == shape)
@@ -152,19 +168,19 @@ pub trait TensorShape: Sized {
             .ok_or(TensorError::Shape(self.shape(), shape))
     }
 
+    /// Check if the tensor's shape matches any of the expected ones.
     fn check_shape_any<S>(&self, shapes: &[S]) -> Result<(), TensorError>
     where
         S: Into<Shape> + ToOwned<Owned = S>,
     {
-        let mut error = TensorError::Shape(self.shape(), Shape::default());
-        for shape in shapes {
-            let shape: Shape = shape.to_owned().into();
-            match self.check_shape(shape) {
-                Ok(_) => return Ok(()),
-                Err(err) => error = err,
-            };
+        let (oks, errors): (Vec<_>, Vec<_>) = shapes
+            .iter()
+            .map(|shape| self.check_shape(shape.to_owned()).map_err(Into::into))
+            .partition_result();
+        match oks.is_empty() {
+            true => Err(TensorError::Any(AnyTensorError(errors))),
+            false => Ok(()),
         }
-        Err(error)
     }
 }
 
