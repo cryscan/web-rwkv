@@ -3,7 +3,7 @@ use std::{cmp::Ordering, hash::Hash};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use super::TensorError;
+use super::{TensorError, TensorErrorKind};
 
 pub trait IntoBytes {
     fn into_bytes(self) -> Vec<u8>;
@@ -118,7 +118,7 @@ impl Shape {
             [y, x] => Shape::new(x, y, 1, 1),
             [z, y, x] => Shape::new(x, y, z, 1),
             [w, z, y, x] => Shape::new(x, y, z, w),
-            _ => return Err(TensorError::Deduce),
+            _ => Err(TensorErrorKind::Deduce)?,
         };
         Ok(shape)
     }
@@ -238,7 +238,7 @@ pub trait TensorAxis: Clone + PartialEq + Eq + Hash {
 #[inline]
 fn checked_bounds(dim: usize, start: usize, end: usize) -> Result<(usize, usize), TensorError> {
     if start > end || end - start > dim || end > dim {
-        Err(TensorError::SliceOutOfRange { dim, start, end })
+        Err(TensorErrorKind::SliceOutOfRange { dim, start, end })?
     } else {
         Ok((start, end))
     }
@@ -365,7 +365,7 @@ where
             },
         );
         if !valid {
-            return Err(TensorError::SliceInvalid);
+            Err(TensorErrorKind::SliceInvalid)?;
         }
 
         let len = Shape::from(end - start).len();
@@ -398,14 +398,14 @@ impl TensorDimension {
         let remain: usize = deduced.clone().flatten().product();
 
         if remain == 0 || deduced.clone().filter(|x| x.is_none()).count() > 1 {
-            return Err(TensorError::Deduce);
+            Err(TensorErrorKind::Deduce)?;
         };
 
         let deduced = deduced.map(|x| x.unwrap_or(len / remain)).collect_vec();
         let deduced = Shape::from_slice(&deduced);
 
         if deduced.len() != len {
-            Err(TensorError::Size(deduced.len(), len))
+            Err(TensorErrorKind::Size(deduced.len(), len))?
         } else {
             Ok(deduced)
         }

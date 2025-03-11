@@ -7,7 +7,7 @@ use wgpu::{BindGroup, CommandBuffer, CommandEncoder, ComputePass};
 
 use super::{
     kind::{Kind, ReadWrite, Uniform},
-    Shape, TensorError, TensorGpu, TensorGpuView, TensorScalar, TensorShape,
+    Shape, TensorError, TensorErrorKind, TensorGpu, TensorGpuView, TensorScalar, TensorShape,
 };
 use crate::{
     context::{BindGroupBuilder, CachedPipeline, Macros, PipelineKey},
@@ -53,16 +53,16 @@ impl<T: Scalar, K: Kind> TensorCommand<T, K> for CommandEncoder {
         source.check_shape([source.shape[0], source.shape[1], source.shape[2], 1])?;
         destination.check_shape([source.shape[0], source.shape[1], destination.shape[2], 1])?;
         if from >= source.shape[2] {
-            return Err(TensorError::BatchOutOfRange {
+            Err(TensorErrorKind::BatchOutOfRange {
                 batch: from,
                 max: source.shape[2],
-            });
+            })?;
         }
         if to > destination.shape[2] {
-            return Err(TensorError::BatchOutOfRange {
+            Err(TensorErrorKind::BatchOutOfRange {
                 batch: to,
                 max: destination.shape[2],
-            });
+            })?;
         }
         self.copy_buffer_to_buffer(
             &source.buffer,

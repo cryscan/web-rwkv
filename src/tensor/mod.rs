@@ -84,8 +84,48 @@ impl IntoPackedCursors for Vec<Cursor> {
     }
 }
 
+#[derive(Debug)]
+pub struct TensorError {
+    pub error: TensorErrorKind,
+    #[cfg(feature = "backtrace")]
+    pub backtrace: std::backtrace::Backtrace,
+}
+
+impl TensorError {
+    #[cfg(feature = "backtrace")]
+    pub fn new(error: TensorErrorKind) -> Self {
+        let backtrace = std::backtrace::Backtrace::capture();
+        Self { error, backtrace }
+    }
+
+    #[cfg(not(feature = "backtrace"))]
+    pub fn new(error: TensorErrorKind) -> Self {
+        Self { error }
+    }
+}
+
+impl From<TensorErrorKind> for TensorError {
+    fn from(value: TensorErrorKind) -> Self {
+        Self::new(value)
+    }
+}
+
+impl std::fmt::Display for TensorError {
+    #[cfg(feature = "backtrace")]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}\n\nBacktrace:\n{}", self.error, self.backtrace)
+    }
+
+    #[cfg(not(feature = "backtrace"))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.error)
+    }
+}
+
+impl std::error::Error for TensorError {}
+
 #[derive(Debug, Error)]
-pub enum TensorError {
+pub enum TensorErrorKind {
     #[error("list must not be empty")]
     Empty,
     #[error("data type mismatch")]
@@ -111,11 +151,11 @@ pub enum TensorError {
     #[error("cannot split along the axis {0}")]
     SplitInvalid(usize),
     #[error("possible tensor error(s):\n{0}")]
-    Any(AnyTensorError),
+    Any(#[from] AnyTensorError),
 }
 
-#[derive(Debug)]
-pub struct AnyTensorError(pub Vec<Box<TensorError>>);
+#[derive(Debug, Error)]
+pub struct AnyTensorError(pub Vec<Box<dyn std::error::Error + Send + Sync>>);
 
 impl std::fmt::Display for AnyTensorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -165,7 +205,8 @@ pub trait TensorShape: Sized {
         let shape = shape.into();
         (self.shape() == shape)
             .then_some(())
-            .ok_or(TensorError::Shape(self.shape(), shape))
+            .ok_or(TensorErrorKind::Shape(self.shape(), shape))
+            .map_err(Into::into)
     }
 
     /// Check if the tensor's shape matches any of the expected ones.
@@ -178,7 +219,7 @@ pub trait TensorShape: Sized {
             .map(|shape| self.check_shape(shape.to_owned()).map_err(Into::into))
             .partition_result();
         match oks.is_empty() {
-            true => Err(TensorError::Any(AnyTensorError(errors))),
+            true => Err(TensorErrorKind::Any(AnyTensorError(errors)))?,
             false => Ok(()),
         }
     }
@@ -342,7 +383,7 @@ impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
         let shape = shape.into();
         let data = data.into();
         if shape.len() != data.len() {
-            return Err(TensorError::Size(shape.len(), data.len()));
+            Err(TensorErrorKind::Size(shape.len(), data.len()))?;
         }
         Ok(Self {
             shape,
@@ -700,10 +741,10 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
     pub fn load_batch(&self, host: &TensorCpu<T>, batch: usize) -> Result<(), TensorError> {
         host.check_shape([self.shape[0], self.shape[1], 1, 1])?;
         if batch >= self.shape[2] {
-            return Err(TensorError::BatchOutOfRange {
+            Err(TensorErrorKind::BatchOutOfRange {
                 batch,
                 max: self.shape[2],
-            });
+            })?;
         }
         let offset = (T::size() * self.shape[0] * self.shape[1] * batch) as u64;
         self.context
@@ -856,7 +897,7 @@ impl<T: Scalar> TensorCpu<T> {
     pub fn stack(batches: Vec<Self>) -> Result<Self, TensorError> {
         let mut shape = match batches.first() {
             Some(batch) => batch.shape,
-            None => return Err(TensorError::Empty),
+            None => Err(TensorErrorKind::Empty)?,
         };
 
         batches
@@ -884,7 +925,7 @@ impl<T: Scalar> TensorCpu<T> {
     /// Split the tensor along the batch axis.
     pub fn split(self, axis: usize) -> Result<Vec<Self>, TensorError> {
         if self.shape.iter().skip(axis + 1).any(|dim| dim > 1) {
-            return Err(TensorError::SplitInvalid(axis));
+            Err(TensorErrorKind::SplitInvalid(axis))?;
         }
 
         (0..self.shape[axis])
@@ -893,7 +934,7 @@ impl<T: Scalar> TensorCpu<T> {
                 1 => self.slice(.., index, .., ..),
                 2 => self.slice(.., .., index, ..),
                 3 => self.slice(.., .., .., ..),
-                _ => Err(TensorError::SplitInvalid(axis)),
+                _ => Err(TensorErrorKind::SplitInvalid(axis))?,
             })
             .try_collect()
     }
@@ -1098,7 +1139,7 @@ impl<T: Scalar> TryFrom<Vec<TensorCpu<T>>> for TensorStack<T> {
     fn try_from(value: Vec<TensorCpu<T>>) -> Result<Self, Self::Error> {
         let shape = match value.first() {
             Some(batch) => batch.shape,
-            None => return Err(TensorError::Empty),
+            None => Err(TensorErrorKind::Empty)?,
         };
 
         value

@@ -89,3 +89,5 @@ subgroup-ops = []
 tokio = ["dep:tokio"]
 ## Enables performance tracing.
 trace = ["tracing", "tracing-subscriber", "tracing-tracy"]
+## Enables backtrace for errors.
+backtrace = []

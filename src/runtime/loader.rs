@@ -16,7 +16,8 @@ use crate::{
         matrix::Matrix,
         ops::{Activation, TensorOp},
         shape::{Shape, TensorDimension},
-        TensorCpu, TensorError, TensorGpu, TensorInit, TensorInto, TensorReshape, TensorShape,
+        TensorCpu, TensorError, TensorErrorKind, TensorGpu, TensorInit, TensorInto, TensorReshape,
+        TensorShape,
     },
 };
 
@@ -80,7 +81,7 @@ pub trait TensorFromReader<T: Scalar> {
 impl<T: Scalar> TensorFromReader<T> for TensorCpu<T> {
     fn from_reader((dt, shape, data): ReaderTensor) -> Result<Self, TensorError> {
         if T::DATA_TYPE != dt {
-            return Err(TensorError::Type);
+            Err(TensorErrorKind::Type)?;
         }
         let shape = Shape::from_slice_rev(&shape)?;
         match data {
