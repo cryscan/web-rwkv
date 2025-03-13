@@ -29,11 +29,11 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{InferInput, InferInputBatch},
+        infer::{Rnn, RnnInput, RnnInputBatch},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax,
-        v4, v5, v6, v7, TokioRuntime,
+        v4, v5, v6, v7, Runtime, TokioRuntime,
     },
     tokenizer::Tokenizer,
 };
@@ -194,26 +194,26 @@ async fn main() -> Result<()> {
         None => builder,
     };
 
-    let runtime = match info.version {
+    let runtime: Box<dyn Runtime<Rnn>> = match info.version {
         ModelVersion::V4 => {
             let model = builder.build_v4().await?;
             let bundle = v4::Bundle::<f16>::new(model, cli.batch);
-            TokioRuntime::new(bundle).await
+            Box::new(TokioRuntime::new(bundle).await)
         }
         ModelVersion::V5 => {
             let model = builder.build_v5().await?;
             let bundle = v5::Bundle::<f16>::new(model, cli.batch);
-            TokioRuntime::new(bundle).await
+            Box::new(TokioRuntime::new(bundle).await)
         }
         ModelVersion::V6 => {
             let model = builder.build_v6().await?;
             let bundle = v6::Bundle::<f16>::new(model, cli.batch);
-            TokioRuntime::new(bundle).await
+            Box::new(TokioRuntime::new(bundle).await)
         }
         ModelVersion::V7 => {
             let model = builder.build_v7().await?;
             let bundle = v7::Bundle::<f16>::new(model, cli.batch);
-            TokioRuntime::new(bundle).await
+            Box::new(TokioRuntime::new(bundle).await)
         }
     };
 
@@ -236,10 +236,10 @@ async fn main() -> Result<()> {
         .map(|prompt| tokenizer.encode(prompt.as_bytes()).unwrap())
         .collect_vec();
 
-    let mut inference = InferInput::new(
+    let mut inference = RnnInput::new(
         tokens
             .into_iter()
-            .map(|tokens| InferInputBatch {
+            .map(|tokens| RnnInputBatch {
                 tokens,
                 ..Default::default()
             })
