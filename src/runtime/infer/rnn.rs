@@ -2,12 +2,13 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
-use super::MIN_TOKEN_CHUNK_SIZE;
 use crate::{
     num::Float,
     runtime::{JobInfo, JobInput},
     tensor::{kind::ReadWrite, ops::TensorOp, TensorCpu, TensorError, TensorGpu, TensorShape},
 };
+
+pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Rnn;

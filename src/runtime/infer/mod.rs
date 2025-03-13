@@ -7,8 +7,6 @@ pub use rnn::{
     RnnOption, RnnOutput, RnnOutputBatch, RnnRedirect,
 };
 
-pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
-
 pub trait Infer: Send + Sync + 'static {
     type Info: JobInfo;
     type Input: JobInput;
