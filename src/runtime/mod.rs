@@ -17,14 +17,14 @@ pub mod v7;
 
 // const MAX_QUEUE_SIZE: usize = 2;
 
-pub trait JobInfo: Clone {
+pub trait JobInfo: Clone + Send + Sync + 'static {
     /// Check if the info are compatible.
     fn check(&self, info: &Self) -> bool;
 }
 
-pub trait JobInput {
+pub trait JobInput: Send + Sync + 'static {
     /// One chunk of the whole input at a step.
-    type Chunk;
+    type Chunk: Send + Sync + 'static;
 
     /// Advance the input for a step.
     fn step(&mut self);
@@ -33,12 +33,12 @@ pub trait JobInput {
 }
 
 /// A [`Job`] to be executed on GPU.
-pub trait Job: Sized {
+pub trait Job: Sized + Send + Sync + 'static {
     type Input: JobInput;
-    type Output;
+    type Output: Send + Sync + 'static;
 
     /// Load the data from CPU to GPU.
-    fn load(self, input: &<<Self as Job>::Input as JobInput>::Chunk) -> Result<Self, RuntimeError>;
+    fn load(self, input: &<Self::Input as JobInput>::Chunk) -> Result<Self, RuntimeError>;
     /// Submit the job to GPU and execute it immediately.
     fn submit(&mut self);
     #[cfg(not(target_arch = "wasm32"))]
@@ -49,7 +49,7 @@ pub trait Job: Sized {
     fn back(self) -> impl Future<Output = Result<Self::Output, RuntimeError>>;
 }
 
-pub trait Dispatcher<J: Job> {
+pub trait Dispatcher<J: Job>: Clone + Send + Sync + 'static {
     type Info;
 
     /// Build a [`Job`] from the given info.
@@ -58,10 +58,11 @@ pub trait Dispatcher<J: Job> {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+#[allow(clippy::type_complexity)]
 #[derive(Debug)]
-struct Submission<I, O> {
-    input: I,
-    sender: flume::Sender<Result<(I, O), RuntimeError>>,
+struct Submission<I: infer::Infer> {
+    input: I::Input,
+    sender: flume::Sender<Result<(I::Input, I::Output), RuntimeError>>,
 }
 
 #[derive(Debug, Error)]
@@ -79,22 +80,20 @@ pub enum RuntimeError {
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[derive(Debug, Clone)]
-pub struct TokioRuntime<I, O>(tokio::sync::mpsc::Sender<Submission<I, O>>);
+pub struct TokioRuntime<I: infer::Infer>(tokio::sync::mpsc::Sender<Submission<I>>);
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[allow(clippy::type_complexity)]
-impl<I, O, T, F> TokioRuntime<I, O>
+impl<I, T, F> TokioRuntime<I>
 where
-    I: JobInput + Send + 'static,
-    O: Send + 'static,
-    T: JobInfo + Send + 'static,
+    I: infer::Infer,
+    T: JobInfo,
     F: Iterator<Item = T> + Send + 'static,
-    <I as JobInput>::Chunk: Send,
-    for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
+    for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(bundle: impl Dispatcher<J, Info = T> + Send + Clone + 'static) -> Self
+    pub async fn new<J>(bundle: impl Dispatcher<J, Info = T>) -> Self
     where
-        J: Job<Input = I, Output = O> + Send + 'static,
+        J: Job<Input = I::Input, Output = I::Output>,
     {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let handle = tokio::spawn(Self::run(bundle, receiver));
@@ -108,10 +107,10 @@ where
     }
 
     async fn run<J>(
-        model: impl Dispatcher<J, Info = T> + Send + Clone + 'static,
-        mut receiver: tokio::sync::mpsc::Receiver<Submission<I, O>>,
+        model: impl Dispatcher<J, Info = T>,
+        mut receiver: tokio::sync::mpsc::Receiver<Submission<I>>,
     ) where
-        J: Job<Input = I, Output = O> + Send + 'static,
+        J: Job<Input = I::Input, Output = I::Output>,
     {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J, RuntimeError>>)> = vec![];
         let mut iter: Option<F> = None;
@@ -218,7 +217,7 @@ where
 
     /// Perform (partial) inference and return the remaining input and (perhaps partial) output.
     /// The amount of input processed during one call is bound by the input chunk size.
-    pub async fn infer(&self, input: I) -> Result<(I, O), RuntimeError> {
+    pub async fn infer(&self, input: I::Input) -> Result<(I::Input, I::Output), RuntimeError> {
         let (sender, receiver) = flume::bounded(1);
         let submission = Submission { input, sender };
         let _ = self.0.send(submission).await;
@@ -227,20 +226,19 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct SimpleRuntime<M, J, I, O> {
+pub struct SimpleRuntime<M, J, I> {
     model: M,
-    _phantom: PhantomData<(J, I, O)>,
+    _phantom: PhantomData<(J, I)>,
 }
 
-impl<I, O, J, M, T, F> SimpleRuntime<M, J, I, O>
+impl<I, J, M, T, F> SimpleRuntime<M, J, I>
 where
-    I: JobInput,
-    O: Send + 'static,
-    J: Job<Input = I, Output = O>,
+    I: infer::Infer,
+    J: Job<Input = I::Input, Output = I::Output>,
     M: Dispatcher<J, Info = T>,
     T: JobInfo,
     F: Iterator<Item = T> + Send + 'static,
-    for<'a> &'a I: IntoIterator<Item = T, IntoIter = F>,
+    for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
 {
     pub fn new(bundle: M) -> Self {
         Self {
@@ -249,7 +247,7 @@ where
         }
     }
 
-    pub async fn infer(&self, mut input: I) -> Result<(I, O), RuntimeError> {
+    pub async fn infer(&self, mut input: I::Input) -> Result<(I::Input, I::Output), RuntimeError> {
         let Some(info) = (&input).into_iter().next() else {
             return Err(RuntimeError::InputExhausted);
         };
@@ -265,58 +263,62 @@ where
     }
 }
 
-pub trait Runtime {
+#[allow(clippy::type_complexity)]
+pub trait Runtime<I: infer::Infer> {
     #[cfg(not(target_arch = "wasm32"))]
-    fn infer(
-        &self,
-        input: infer::InferInput,
-    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>>;
+    fn infer(&self, input: I::Input) -> BoxFuture<Result<(I::Input, I::Output), RuntimeError>>;
 
     #[cfg(target_arch = "wasm32")]
-    fn infer(
-        &self,
-        input: infer::InferInput,
-    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>>;
+    fn infer(&self, input: I::Input)
+        -> LocalBoxFuture<Result<(I::Input, I::Output), RuntimeError>>;
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[allow(clippy::type_complexity)]
-impl Runtime for TokioRuntime<infer::InferInput, infer::InferOutput> {
+impl<I, T, F> Runtime<I> for TokioRuntime<I>
+where
+    I: infer::Infer,
+    T: JobInfo,
+    F: Iterator<Item = T> + Send + 'static,
+    for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
+{
     #[cfg(not(target_arch = "wasm32"))]
-    fn infer(
-        &self,
-        input: infer::InferInput,
-    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>> {
+    fn infer(&self, input: I::Input) -> BoxFuture<Result<(I::Input, I::Output), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::type_complexity)]
-impl<M, J> Runtime for SimpleRuntime<M, J, infer::InferInput, infer::InferOutput>
+impl<M, J, I, T, F> Runtime<I> for SimpleRuntime<M, J, I>
 where
-    J: Job<Input = infer::InferInput, Output = infer::InferOutput> + Send + Sync,
-    M: Dispatcher<J, Info = infer::InferInfo> + Send + Sync,
+    I: infer::Infer,
+    J: Job<Input = I::Input, Output = I::Output>,
+    M: Dispatcher<J, Info = T>,
+    T: JobInfo,
+    F: Iterator<Item = T> + Send + 'static,
+    for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
 {
-    fn infer(
-        &self,
-        input: infer::InferInput,
-    ) -> BoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>> {
+    fn infer(&self, input: I::Input) -> BoxFuture<Result<(I::Input, I::Output), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 #[allow(clippy::type_complexity)]
-impl<M, J> Runtime for SimpleRuntime<M, J, infer::InferInput, infer::InferOutput>
+impl<M, J, I, T, F> Runtime<I> for SimpleRuntime<M, J, I>
 where
-    J: Job<Input = infer::InferInput, Output = infer::InferOutput>,
-    M: Dispatcher<J, Info = infer::InferInfo>,
+    I: infer::Infer,
+    J: Job<Input = I::Input, Output = I::Output>,
+    M: Dispatcher<J, Info = T>,
+    T: JobInfo,
+    F: Iterator<Item = T> + Send + 'static,
+    for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
 {
     fn infer(
         &self,
-        input: infer::InferInput,
-    ) -> LocalBoxFuture<Result<(infer::InferInput, infer::InferOutput), RuntimeError>> {
+        input: I::Input,
+    ) -> LocalBoxFuture<Result<(I::Input, I::Output), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }

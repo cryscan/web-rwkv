@@ -20,11 +20,11 @@ use tracing_subscriber::layer::SubscriberExt;
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{InferInput, InferInputBatch, InferOption},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
-        v4, v5, v6, v7, TokioRuntime,
+        v4, v5, v6, v7, Runtime, TokioRuntime,
     },
     tensor::serialization::Seed,
     tokenizer::Tokenizer,
@@ -179,14 +179,14 @@ async fn main() -> Result<()> {
         None => builder,
     };
 
-    let runtime = match info.version {
+    let runtime: Box<dyn Runtime<Rnn>> = match info.version {
         ModelVersion::V4 => {
             let context = context.clone();
             let model = builder.build_v4().await?;
             let f = move || serde::<v4::Model>(cli.output, &context, model);
             let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v4::Bundle::<f16>::new(model, 1);
-            TokioRuntime::new(bundle).await
+            Box::new(TokioRuntime::new(bundle).await)
         }
         ModelVersion::V5 => {
             let context = context.clone();
@@ -194,7 +194,7 @@ async fn main() -> Result<()> {
             let f = move || serde::<v5::Model>(cli.output, &context, model);
             let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v5::Bundle::<f16>::new(model, 1);
-            TokioRuntime::new(bundle).await
+            Box::new(TokioRuntime::new(bundle).await)
         }
         ModelVersion::V6 => {
             let context = context.clone();
@@ -202,7 +202,7 @@ async fn main() -> Result<()> {
             let f = move || serde::<v6::Model>(cli.output, &context, model);
             let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v6::Bundle::<f16>::new(model, 1);
-            TokioRuntime::new(bundle).await
+            Box::new(TokioRuntime::new(bundle).await)
         }
         ModelVersion::V7 => {
             let context = context.clone();
@@ -210,17 +210,17 @@ async fn main() -> Result<()> {
             let f = move || serde::<v7::Model>(cli.output, &context, model);
             let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v7::Bundle::<f16>::new(model, 1);
-            TokioRuntime::new(bundle).await
+            Box::new(TokioRuntime::new(bundle).await)
         }
     };
 
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
-    let prompt = InferInputBatch {
+    let prompt = RnnInputBatch {
         tokens,
-        option: InferOption::Last,
+        option: RnnOption::Last,
     };
-    let mut prompt = InferInput::new(vec![prompt], cli.token_chunk_size);
+    let mut prompt = RnnInput::new(vec![prompt], cli.token_chunk_size);
 
     let num_token = 500;
     for _ in 0..num_token {

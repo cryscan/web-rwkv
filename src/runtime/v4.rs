@@ -11,7 +11,7 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{InferChunk, InferInfo, InferInput, InferOutput, InferOutputBatch, InferRedirect},
+    infer::{RnnChunk, RnnInfo, RnnInput, RnnOutput, RnnOutputBatch, RnnRedirect},
     loader::{Loader, LoaderError, Reader},
     model::{AsAny, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
     Dispatcher, Job, RuntimeError,
@@ -337,9 +337,9 @@ pub enum Hook {
     PostHead,
 }
 
-pub struct InferJob {
+pub struct RnnJob {
     commands: Vec<CommandBuffer>,
-    redirect: InferRedirect,
+    redirect: RnnRedirect,
 
     embed_device: EmbedDevice,
     embed: TensorCpu<f16>,
@@ -350,11 +350,11 @@ pub struct InferJob {
     output: TensorGpu<f32, ReadWrite>,
 }
 
-impl Job for InferJob {
-    type Input = InferInput;
-    type Output = InferOutput;
+impl Job for RnnJob {
+    type Input = RnnInput;
+    type Output = RnnOutput;
 
-    fn load(self, input: &InferChunk) -> Result<Self, RuntimeError> {
+    fn load(self, input: &RnnChunk) -> Result<Self, RuntimeError> {
         if input.num_token() == 0 {
             return Ok(self);
         }
@@ -415,8 +415,8 @@ impl Job for InferJob {
             .into_iter()
             .map(|(start, end)| output.slice(.., start..end, .., ..))
             .try_collect()?;
-        let batches = batches.into_iter().map(InferOutputBatch).collect();
-        Ok(InferOutput(batches))
+        let batches = batches.into_iter().map(RnnOutputBatch).collect();
+        Ok(RnnOutput(batches))
     }
 }
 
@@ -536,10 +536,10 @@ fn hook_op<F: Float>(
     }
 }
 
-impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
-    type Info = InferInfo;
+impl<F: Float> Dispatcher<RnnJob> for Bundle<F> {
+    type Info = RnnInfo;
 
-    fn dispatch(&self, seed: Self::Info) -> Result<InferJob, RuntimeError> {
+    fn dispatch(&self, seed: Self::Info) -> Result<RnnJob, RuntimeError> {
         let model = &self.model;
         let state = &self.state;
         let context = &model.context;
@@ -566,7 +566,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
                 Some(_) => EmbedDevice::Gpu,
                 None => EmbedDevice::Cpu,
             };
-            return Ok(InferJob {
+            return Ok(RnnJob {
                 commands: vec![],
                 redirect,
                 embed_device,
@@ -645,7 +645,7 @@ impl<F: Float> Dispatcher<InferJob> for Bundle<F> {
             context.encode(&TensorOp::List(ops))
         };
 
-        Ok(InferJob {
+        Ok(RnnJob {
             commands,
             redirect,
             embed_device,

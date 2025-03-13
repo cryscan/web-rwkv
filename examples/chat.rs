@@ -19,7 +19,7 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{InferInput, InferInputBatch, InferOption},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
         loader::{Loader, Lora},
         model::{Bundle, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant, State},
         softmax::softmax_one,
@@ -261,7 +261,7 @@ async fn main() -> Result<()> {
         None => builder,
     };
 
-    let (runtime, state): (Box<dyn Runtime>, Box<dyn State>) = match info.version {
+    let (runtime, state): (Box<dyn Runtime<Rnn>>, Box<dyn State>) = match info.version {
         ModelVersion::V4 => {
             let model = builder.build_v4().await?;
             let bundle = v4::Bundle::<f16>::new(model, 1);
@@ -296,10 +296,10 @@ async fn main() -> Result<()> {
 
     // run initial prompt
     let prompt = load_prompt(cli.prompt).await?;
-    let mut inference = InferInput::new(
-        vec![InferInputBatch {
+    let mut inference = RnnInput::new(
+        vec![RnnInputBatch {
             tokens: tokenizer.encode(prompt.build().as_bytes())?,
-            option: InferOption::Last,
+            option: RnnOption::Last,
         }],
         cli.token_chunk_size,
     );
@@ -341,9 +341,9 @@ async fn main() -> Result<()> {
             "+" => {
                 // retry: reset the prompt and state to the last turn
                 user_text.clone_from(&last_user_text);
-                inference.batches[0] = InferInputBatch {
+                inference.batches[0] = RnnInputBatch {
                     tokens: last_tokens.clone(),
-                    option: InferOption::Last,
+                    option: RnnOption::Last,
                 };
                 state.load(backed.clone(), 0)?;
             }
@@ -389,9 +389,9 @@ async fn main() -> Result<()> {
             print!("{}", word);
             std::io::stdout().flush()?;
 
-            inference.batches[0] = InferInputBatch {
+            inference.batches[0] = RnnInputBatch {
                 tokens: vec![token],
-                option: InferOption::Last,
+                option: RnnOption::Last,
             };
 
             if model_text.contains("\n\n") {

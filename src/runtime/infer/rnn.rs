@@ -1,24 +1,33 @@
 use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
-use super::{JobInfo, JobInput};
+use super::MIN_TOKEN_CHUNK_SIZE;
 use crate::{
     num::Float,
+    runtime::{JobInfo, JobInput},
     tensor::{kind::ReadWrite, ops::TensorOp, TensorCpu, TensorError, TensorGpu, TensorShape},
 };
 
-pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Rnn;
 
-#[derive(Debug, Clone, Deref, DerefMut, PartialEq, Eq)]
-pub struct InferInfo(pub Vec<InferInfoBatch>);
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct InferInfoBatch {
-    pub len: usize,
-    pub option: Option<InferOption>,
+impl super::Infer for Rnn {
+    type Info = RnnInfo;
+    type Input = RnnInput;
+    type Output = RnnOutput;
 }
 
-impl InferInfo {
+#[derive(Debug, Clone, PartialEq, Eq, Deref, DerefMut)]
+pub struct RnnInfo(pub Vec<RnnInfoBatch>);
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RnnInfoBatch {
+    pub len: usize,
+    pub option: Option<RnnOption>,
+}
+
+impl RnnInfo {
     #[inline]
     pub fn num_token(&self) -> usize {
         self.0.iter().map(|x| x.len).sum()
@@ -29,7 +38,7 @@ impl InferInfo {
         self.0.len()
     }
 
-    pub fn redirect(&self) -> InferRedirect {
+    pub fn redirect(&self) -> RnnRedirect {
         let mut headers = vec![];
         let mut inputs = vec![(0, 0); self.num_batch()];
         let mut outputs = vec![(0, 0); self.num_batch()];
@@ -43,7 +52,7 @@ impl InferInfo {
                     outputs[batch] = (p_out, p_out);
                     p_in += len;
                 }
-                Some(InferOption::Last) => {
+                Some(RnnOption::Last) => {
                     inputs[batch] = (p_in, p_in + len);
                     match len {
                         0 => outputs[batch] = (p_out, p_out),
@@ -55,7 +64,7 @@ impl InferInfo {
                     }
                     p_in += len;
                 }
-                Some(InferOption::Full) => {
+                Some(RnnOption::Full) => {
                     inputs[batch] = (p_in, p_in + len);
                     outputs[batch] = (p_out, p_out + len);
                     headers.append(&mut (p_in..p_in + len).collect());
@@ -64,7 +73,7 @@ impl InferInfo {
                 }
             }
         }
-        InferRedirect {
+        RnnRedirect {
             headers,
             inputs,
             outputs,
@@ -72,7 +81,7 @@ impl InferInfo {
     }
 }
 
-impl JobInfo for InferInfo {
+impl JobInfo for RnnInfo {
     #[inline]
     fn check(&self, info: &Self) -> bool {
         self.num_token() == info.num_token() && self.redirect() == info.redirect()
@@ -80,7 +89,7 @@ impl JobInfo for InferInfo {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct InferRedirect {
+pub struct RnnRedirect {
     /// Indices in the *input* tensor that are included in the output.
     pub headers: Vec<usize>,
     /// Maps batches to ranges in the *input* tensor.
@@ -89,7 +98,7 @@ pub struct InferRedirect {
     pub outputs: Vec<(usize, usize)>,
 }
 
-impl InferRedirect {
+impl RnnRedirect {
     pub fn op<F: Float>(
         &self,
         input: &TensorGpu<F, ReadWrite>,
@@ -124,15 +133,9 @@ impl InferRedirect {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum BatchState {
-    Gen,
-    Read(usize),
-}
-
 /// Inference option for outputs.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum InferOption {
+pub enum RnnOption {
     /// Only output the prediction for the last token.
     #[default]
     Last,
@@ -141,9 +144,9 @@ pub enum InferOption {
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
-pub struct InferChunk(pub Vec<InferChunkBatch>);
+pub struct RnnChunk(pub Vec<RnnChunkBatch>);
 
-impl InferChunk {
+impl RnnChunk {
     #[inline]
     pub fn num_token(&self) -> usize {
         self.0.iter().map(|x| x.0.len()).sum()
@@ -156,25 +159,25 @@ impl InferChunk {
 }
 
 #[derive(Debug, Default, Clone, Deref, DerefMut)]
-pub struct InferChunkBatch(pub Vec<u16>);
+pub struct RnnChunkBatch(pub Vec<u16>);
 
 /// One batch of the input task.
 #[derive(Debug, Default, Clone)]
-pub struct InferInputBatch {
+pub struct RnnInputBatch {
     /// Tokens to infer. If this is empty, inference won't occur for the batch.
     pub tokens: Vec<u16>,
     /// Inference option for outputs.
-    pub option: InferOption,
+    pub option: RnnOption,
 }
 
 #[derive(Debug, Clone)]
-pub struct InferInput {
-    pub batches: Vec<InferInputBatch>,
+pub struct RnnInput {
+    pub batches: Vec<RnnInputBatch>,
     token_chunk_size: usize,
 }
 
-impl InferInput {
-    pub fn new(batches: Vec<InferInputBatch>, token_chunk_size: usize) -> Self {
+impl RnnInput {
+    pub fn new(batches: Vec<RnnInputBatch>, token_chunk_size: usize) -> Self {
         let token_chunk_size = token_chunk_size
             .max(MIN_TOKEN_CHUNK_SIZE)
             .next_multiple_of(MIN_TOKEN_CHUNK_SIZE);
@@ -185,7 +188,7 @@ impl InferInput {
     }
 
     #[inline]
-    pub fn iter(&self) -> InferIter {
+    pub fn iter(&self) -> RnnIter {
         self.into_iter()
     }
 
@@ -200,8 +203,8 @@ impl InferInput {
     }
 }
 
-impl JobInput for InferInput {
-    type Chunk = InferChunk;
+impl JobInput for RnnInput {
+    type Chunk = RnnChunk;
 
     fn step(&mut self) {
         let Some(info) = self.iter().next() else {
@@ -214,21 +217,21 @@ impl JobInput for InferInput {
 
     fn chunk(&self) -> Self::Chunk {
         let Some(info) = self.iter().next() else {
-            return InferChunk(vec![Default::default(); self.batches.len()]);
+            return RnnChunk(vec![Default::default(); self.batches.len()]);
         };
         let chunk = self
             .batches
             .iter()
             .zip_eq(info.0)
-            .map(|(batch, info)| InferChunkBatch(batch.tokens[..info.len].to_vec()))
+            .map(|(batch, info)| RnnChunkBatch(batch.tokens[..info.len].to_vec()))
             .collect();
-        InferChunk(chunk)
+        RnnChunk(chunk)
     }
 }
 
-impl IntoIterator for &InferInput {
-    type Item = InferInfo;
-    type IntoIter = InferIter;
+impl IntoIterator for &RnnInput {
+    type Item = RnnInfo;
+    type IntoIter = RnnIter;
 
     fn into_iter(self) -> Self::IntoIter {
         let batches = self
@@ -245,13 +248,13 @@ impl IntoIterator for &InferInput {
 }
 
 #[derive(Debug, Clone)]
-pub struct InferIter {
-    batches: Vec<(BatchState, InferOption)>,
+pub struct RnnIter {
+    batches: Vec<(BatchState, RnnOption)>,
     token_chunk_size: usize,
 }
 
-impl Iterator for InferIter {
-    type Item = InferInfo;
+impl Iterator for RnnIter {
+    type Item = RnnInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut remains = self
@@ -271,7 +274,7 @@ impl Iterator for InferIter {
             false => num_token,
         };
 
-        let mut info = vec![InferInfoBatch::default(); num_batch];
+        let mut info = vec![RnnInfoBatch::default(); num_batch];
         while num_token > 0 {
             let mid = *remains.iter().filter(|&&x| x > 0).min().unwrap_or(&0);
             for (info, batch) in info.iter_mut().zip_eq(remains.iter_mut()) {
@@ -297,48 +300,51 @@ impl Iterator for InferIter {
                 };
             }
             info.option = match (batch.1, remain) {
-                (InferOption::Last, 0) => Some(InferOption::Last),
-                (InferOption::Last, _) => None,
-                (InferOption::Full, _) => Some(InferOption::Full),
+                (RnnOption::Last, 0) => Some(RnnOption::Last),
+                (RnnOption::Last, _) => None,
+                (RnnOption::Full, _) => Some(RnnOption::Full),
             };
         }
 
-        Some(InferInfo(info))
+        Some(RnnInfo(info))
     }
 }
 
 #[derive(Debug, Clone, Deref, DerefMut)]
-pub struct InferOutputBatch(pub TensorCpu<f32>);
+pub struct RnnOutputBatch(pub TensorCpu<f32>);
 
 #[derive(Debug, Clone, Deref, DerefMut)]
-pub struct InferOutput(pub Vec<InferOutputBatch>);
+pub struct RnnOutput(pub Vec<RnnOutputBatch>);
+
+#[derive(Debug, Clone, Copy)]
+enum BatchState {
+    Gen,
+    Read(usize),
+}
 
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
 
-    use super::{InferInfo, InferInput, InferOption};
-    use crate::runtime::{
-        infer::{InferInfoBatch, InferInputBatch},
-        JobInput,
-    };
+    use super::{RnnInfo, RnnInfoBatch, RnnInput, RnnInputBatch, RnnOption};
+    use crate::runtime::JobInput;
 
-    impl From<(usize, Option<InferOption>)> for InferInfoBatch {
-        fn from((len, option): (usize, Option<InferOption>)) -> Self {
+    impl From<(usize, Option<RnnOption>)> for RnnInfoBatch {
+        fn from((len, option): (usize, Option<RnnOption>)) -> Self {
             Self { len, option }
         }
     }
 
     #[test]
     fn test_run_iter() -> Result<()> {
-        let run = InferInput {
+        let run = RnnInput {
             batches: [
-                (vec![0; 139], InferOption::Last),
-                (vec![1; 1], InferOption::Last),
-                (vec![2; 0], InferOption::Full),
-                (vec![3; 65], InferOption::Full),
+                (vec![0; 139], RnnOption::Last),
+                (vec![1; 1], RnnOption::Last),
+                (vec![2; 0], RnnOption::Full),
+                (vec![3; 65], RnnOption::Full),
             ]
-            .map(|(tokens, option)| InferInputBatch { tokens, option })
+            .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
         };
@@ -346,12 +352,12 @@ mod tests {
 
         assert_eq!(
             iter.next(),
-            Some(InferInfo(
+            Some(RnnInfo(
                 [
                     (65, None),
-                    (1, Some(InferOption::Last)),
-                    (0, Some(InferOption::Full)),
-                    (62, Some(InferOption::Full))
+                    (1, Some(RnnOption::Last)),
+                    (0, Some(RnnOption::Full)),
+                    (62, Some(RnnOption::Full))
                 ]
                 .map(Into::into)
                 .to_vec()
@@ -359,12 +365,12 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(InferInfo(
+            Some(RnnInfo(
                 [
                     (60, None),
-                    (1, Some(InferOption::Last)),
-                    (0, Some(InferOption::Full)),
-                    (3, Some(InferOption::Full))
+                    (1, Some(RnnOption::Last)),
+                    (0, Some(RnnOption::Full)),
+                    (3, Some(RnnOption::Full))
                 ]
                 .map(Into::into)
                 .to_vec()
@@ -372,12 +378,12 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(InferInfo(
+            Some(RnnInfo(
                 [
-                    (14, Some(InferOption::Last)),
-                    (1, Some(InferOption::Last)),
-                    (0, Some(InferOption::Full)),
-                    (1, Some(InferOption::Full))
+                    (14, Some(RnnOption::Last)),
+                    (1, Some(RnnOption::Last)),
+                    (0, Some(RnnOption::Full)),
+                    (1, Some(RnnOption::Full))
                 ]
                 .map(Into::into)
                 .to_vec()
@@ -385,12 +391,12 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(InferInfo(
+            Some(RnnInfo(
                 [
-                    (1, Some(InferOption::Last)),
-                    (1, Some(InferOption::Last)),
-                    (0, Some(InferOption::Full)),
-                    (1, Some(InferOption::Full))
+                    (1, Some(RnnOption::Last)),
+                    (1, Some(RnnOption::Last)),
+                    (0, Some(RnnOption::Full)),
+                    (1, Some(RnnOption::Full))
                 ]
                 .map(Into::into)
                 .to_vec()
@@ -398,12 +404,12 @@ mod tests {
         );
         assert_eq!(
             iter.next(),
-            Some(InferInfo(
+            Some(RnnInfo(
                 [
-                    (1, Some(InferOption::Last)),
-                    (1, Some(InferOption::Last)),
-                    (0, Some(InferOption::Full)),
-                    (1, Some(InferOption::Full))
+                    (1, Some(RnnOption::Last)),
+                    (1, Some(RnnOption::Last)),
+                    (0, Some(RnnOption::Full)),
+                    (1, Some(RnnOption::Full))
                 ]
                 .map(Into::into)
                 .to_vec()
@@ -415,14 +421,14 @@ mod tests {
 
     #[test]
     fn test_advance() -> Result<()> {
-        let mut run = InferInput {
+        let mut run = RnnInput {
             batches: [
-                (vec![0; 139], InferOption::Last),
-                (vec![1; 1], InferOption::Last),
-                (vec![2; 0], InferOption::Full),
-                (vec![3; 65], InferOption::Full),
+                (vec![0; 139], RnnOption::Last),
+                (vec![1; 1], RnnOption::Last),
+                (vec![2; 0], RnnOption::Full),
+                (vec![3; 65], RnnOption::Full),
             ]
-            .map(|(tokens, option)| InferInputBatch { tokens, option })
+            .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
         };
@@ -430,12 +436,12 @@ mod tests {
         run.step();
         assert_eq!(
             run.iter().next(),
-            Some(InferInfo(
+            Some(RnnInfo(
                 [
                     (61, None),
-                    (0, Some(InferOption::Last)),
-                    (0, Some(InferOption::Full)),
-                    (3, Some(InferOption::Full))
+                    (0, Some(RnnOption::Last)),
+                    (0, Some(RnnOption::Full)),
+                    (3, Some(RnnOption::Full))
                 ]
                 .map(Into::into)
                 .to_vec()
@@ -443,25 +449,25 @@ mod tests {
         );
 
         // simulate adding one token to batch 1 after advancing.
-        let run = InferInput {
+        let run = RnnInput {
             batches: [
-                (vec![0; 61], InferOption::Last),
-                (vec![1; 1], InferOption::Last),
-                (vec![2; 0], InferOption::Full),
-                (vec![3; 3], InferOption::Full),
+                (vec![0; 61], RnnOption::Last),
+                (vec![1; 1], RnnOption::Last),
+                (vec![2; 0], RnnOption::Full),
+                (vec![3; 3], RnnOption::Full),
             ]
-            .map(|(tokens, option)| InferInputBatch { tokens, option })
+            .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
         };
         assert_eq!(
             run.iter().next(),
-            Some(InferInfo(
+            Some(RnnInfo(
                 [
                     (60, None),
-                    (1, Some(InferOption::Last)),
-                    (0, Some(InferOption::Full)),
-                    (3, Some(InferOption::Full))
+                    (1, Some(RnnOption::Last)),
+                    (0, Some(RnnOption::Full)),
+                    (3, Some(RnnOption::Full))
                 ]
                 .map(Into::into)
                 .to_vec()
@@ -473,14 +479,14 @@ mod tests {
 
     #[test]
     fn test_redirect() -> Result<()> {
-        let run = InferInput {
+        let run = RnnInput {
             batches: [
-                (vec![0; 61], InferOption::Last),
-                (vec![1; 0], InferOption::Last),
-                (vec![2; 0], InferOption::Full),
-                (vec![3; 3], InferOption::Full),
+                (vec![0; 61], RnnOption::Last),
+                (vec![1; 0], RnnOption::Last),
+                (vec![2; 0], RnnOption::Full),
+                (vec![3; 3], RnnOption::Full),
             ]
-            .map(|(tokens, option)| InferInputBatch { tokens, option })
+            .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
         };
@@ -490,18 +496,18 @@ mod tests {
         assert_eq!(redirect.inputs, vec![(0, 61), (61, 61), (61, 61), (61, 64)]);
         assert_eq!(redirect.outputs, vec![(0, 1), (1, 1), (1, 1), (1, 4)]);
 
-        let run = InferInput {
+        let run = RnnInput {
             batches: [
-                (vec![0; 11], InferOption::Last),
-                (vec![1; 8], InferOption::Last),
-                (vec![2; 9], InferOption::Last),
-                (vec![3; 4], InferOption::Last),
-                (vec![0; 11], InferOption::Last),
-                (vec![1; 8], InferOption::Last),
-                (vec![2; 9], InferOption::Last),
-                (vec![3; 4], InferOption::Last),
+                (vec![0; 11], RnnOption::Last),
+                (vec![1; 8], RnnOption::Last),
+                (vec![2; 9], RnnOption::Last),
+                (vec![3; 4], RnnOption::Last),
+                (vec![0; 11], RnnOption::Last),
+                (vec![1; 8], RnnOption::Last),
+                (vec![2; 9], RnnOption::Last),
+                (vec![3; 4], RnnOption::Last),
             ]
-            .map(|(tokens, option)| InferInputBatch { tokens, option })
+            .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 32,
         };

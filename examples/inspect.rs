@@ -18,7 +18,7 @@ use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     num::Float,
     runtime::{
-        infer::{InferInput, InferInputBatch, InferOption},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         v7, Runtime, TokioRuntime,
@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
         .map(|_| v7::Runtime::<f16>::new(&context, &info, 1))
         .collect_vec();
 
-    let runtime: Box<dyn Runtime> = match info.version {
+    let runtime: Box<dyn Runtime<Rnn>> = match info.version {
         ModelVersion::V7 => {
             let model = builder.build_v7().await?;
             let hooks = make_hooks(&info, frames.clone())?;
@@ -227,11 +227,11 @@ async fn main() -> Result<()> {
 
     let mut data = Vec::with_capacity(tokens.len());
     for (ti, token) in tokens.into_iter().enumerate() {
-        let prompt = InferInputBatch {
+        let prompt = RnnInputBatch {
             tokens: vec![token],
-            option: InferOption::Last,
+            option: RnnOption::Last,
         };
-        let input = InferInput::new(vec![prompt], cli.token_chunk_size);
+        let input = RnnInput::new(vec![prompt], cli.token_chunk_size);
         let (_input, _output) = runtime.infer(input).await?;
 
         let mut buffers = HashMap::<String, _>::new();
