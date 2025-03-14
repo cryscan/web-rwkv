@@ -1,4 +1,4 @@
-use std::{future::Future, marker::PhantomData, sync::Arc};
+use std::{future::Future, marker::PhantomData};
 
 #[cfg(not(target_arch = "wasm32"))]
 use futures::future::BoxFuture;
@@ -106,7 +106,7 @@ where
         Self(sender)
     }
 
-    async fn run<M, J>(model: Arc<M>, receiver: flume::Receiver<Submission<I>>)
+    async fn run<M, J>(model: std::sync::Arc<M>, receiver: flume::Receiver<Submission<I>>)
     where
         M: Dispatcher<J, Info = T> + Send + Sync + 'static,
         J: Job<Input = I::Input, Output = I::Output> + Send + 'static,
@@ -197,20 +197,17 @@ where
                 }
             };
 
-            async fn back<J: Job>(
-                job: J,
-                mut input: J::Input,
-                sender: flume::Sender<Result<(J::Input, J::Output), RuntimeError>>,
-            ) {
-                let output = job.back().await;
-                input.step();
-                let _ = sender.send(output.map(|output| (input, output)));
-            }
-
             #[cfg(feature = "trace")]
             let _span = tracing::trace_span!("submit").entered();
             job.submit();
-            tokio::spawn(back(job, input, sender));
+
+            // read back the results asynchronously
+            tokio::spawn(async move {
+                let output = job.back().await;
+                let mut input = input;
+                input.step();
+                let _ = sender.send(output.map(|output| (input, output)));
+            });
         }
     }
 
@@ -298,7 +295,7 @@ where
 impl<M, I, J, T, F> Runtime<I> for SimpleRuntime<M, I, J>
 where
     I: infer::Infer,
-    J: Job<Input = I::Input, Output = I::Output> + Send + Sync + 'static,
+    J: Job<Input = I::Input, Output = I::Output> + Send + Sync,
     M: Dispatcher<J, Info = T> + Sync,
     T: JobInfo,
     F: Iterator<Item = T> + Send + 'static,
