@@ -33,7 +33,7 @@ pub trait JobInput: Send + Sync + 'static {
 }
 
 /// A [`Job`] to be executed on GPU.
-pub trait Job: Sized + Send + Sync + 'static {
+pub trait Job: Sized {
     type Input: JobInput;
     type Output: Send + Sync + 'static;
 
@@ -49,7 +49,7 @@ pub trait Job: Sized + Send + Sync + 'static {
     fn back(self) -> impl Future<Output = Result<Self::Output, RuntimeError>>;
 }
 
-pub trait Dispatcher<J: Job>: Clone + Send + Sync + 'static {
+pub trait Dispatcher<J: Job>: Clone {
     type Info;
 
     /// Build a [`Job`] from the given info.
@@ -91,9 +91,9 @@ where
     F: Iterator<Item = T> + Send + 'static,
     for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(bundle: impl Dispatcher<J, Info = T>) -> Self
+    pub async fn new<J>(bundle: impl Dispatcher<J, Info = T> + Send + 'static) -> Self
     where
-        J: Job<Input = I::Input, Output = I::Output>,
+        J: Job<Input = I::Input, Output = I::Output> + Send + 'static,
     {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let handle = tokio::spawn(Self::run(bundle, receiver));
@@ -107,10 +107,10 @@ where
     }
 
     async fn run<J>(
-        model: impl Dispatcher<J, Info = T>,
+        model: impl Dispatcher<J, Info = T> + Send + 'static,
         mut receiver: tokio::sync::mpsc::Receiver<Submission<I>>,
     ) where
-        J: Job<Input = I::Input, Output = I::Output>,
+        J: Job<Input = I::Input, Output = I::Output> + Send + 'static,
     {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J, RuntimeError>>)> = vec![];
         let mut iter: Option<F> = None;
@@ -198,10 +198,10 @@ where
                 }
             };
 
-            async fn back<J: Job, I: JobInput>(
+            async fn back<J: Job>(
                 job: J,
-                mut input: I,
-                sender: flume::Sender<Result<(I, J::Output), RuntimeError>>,
+                mut input: J::Input,
+                sender: flume::Sender<Result<(J::Input, J::Output), RuntimeError>>,
             ) {
                 let output = job.back().await;
                 input.step();
@@ -226,34 +226,40 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct SimpleRuntime<M, J, I> {
-    model: M,
-    _phantom: PhantomData<(J, I)>,
-}
+pub struct SimpleRuntime<M, I, J>(M, PhantomData<(I, J)>);
 
-impl<I, J, M, T, F> SimpleRuntime<M, J, I>
-where
-    I: infer::Infer,
-    J: Job<Input = I::Input, Output = I::Output>,
-    M: Dispatcher<J, Info = T>,
-    T: JobInfo,
-    F: Iterator<Item = T> + Send + 'static,
-    for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
-{
-    pub fn new(bundle: M) -> Self {
-        Self {
-            model: bundle,
-            _phantom: PhantomData,
-        }
+impl<M, I, J> SimpleRuntime<M, I, J> {
+    #[inline]
+    pub fn new<T, F>(bundle: M) -> Self
+    where
+        I: infer::Infer,
+        J: Job<Input = I::Input, Output = I::Output>,
+        T: JobInfo,
+        F: Iterator<Item = T> + Send + 'static,
+        M: Dispatcher<J, Info = T>,
+        for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
+    {
+        Self(bundle, PhantomData)
     }
 
-    pub async fn infer(&self, mut input: I::Input) -> Result<(I::Input, I::Output), RuntimeError> {
+    pub async fn infer<T, F>(
+        &self,
+        mut input: I::Input,
+    ) -> Result<(I::Input, I::Output), RuntimeError>
+    where
+        I: infer::Infer,
+        J: Job<Input = I::Input, Output = I::Output>,
+        T: JobInfo,
+        F: Iterator<Item = T> + Send + 'static,
+        M: Dispatcher<J, Info = T>,
+        for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
+    {
         let Some(info) = (&input).into_iter().next() else {
             return Err(RuntimeError::InputExhausted);
         };
         let chunk = input.chunk();
 
-        let mut job = self.model.dispatch(info)?.load(&chunk)?;
+        let mut job = self.0.dispatch(info)?.load(&chunk)?;
         job.submit();
 
         let output = job.back().await?;
@@ -290,11 +296,11 @@ where
 
 #[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::type_complexity)]
-impl<M, J, I, T, F> Runtime<I> for SimpleRuntime<M, J, I>
+impl<M, I, J, T, F> Runtime<I> for SimpleRuntime<M, I, J>
 where
     I: infer::Infer,
-    J: Job<Input = I::Input, Output = I::Output>,
-    M: Dispatcher<J, Info = T>,
+    J: Job<Input = I::Input, Output = I::Output> + Send + Sync + 'static,
+    M: Dispatcher<J, Info = T> + Sync,
     T: JobInfo,
     F: Iterator<Item = T> + Send + 'static,
     for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
@@ -306,7 +312,7 @@ where
 
 #[cfg(target_arch = "wasm32")]
 #[allow(clippy::type_complexity)]
-impl<M, J, I, T, F> Runtime<I> for SimpleRuntime<M, J, I>
+impl<M, I, J, T, F> Runtime<I> for SimpleRuntime<M, I, J>
 where
     I: infer::Infer,
     J: Job<Input = I::Input, Output = I::Output>,
