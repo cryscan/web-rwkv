@@ -1,4 +1,4 @@
-use std::{future::Future, marker::PhantomData};
+use std::{future::Future, marker::PhantomData, sync::Arc};
 
 #[cfg(not(target_arch = "wasm32"))]
 use futures::future::BoxFuture;
@@ -49,7 +49,7 @@ pub trait Job: Sized {
     fn back(self) -> impl Future<Output = Result<Self::Output, RuntimeError>>;
 }
 
-pub trait Dispatcher<J: Job>: Clone {
+pub trait Dispatcher<J: Job> {
     type Info;
 
     /// Build a [`Job`] from the given info.
@@ -80,7 +80,7 @@ pub enum RuntimeError {
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[derive(Debug, Clone)]
-pub struct TokioRuntime<I: infer::Infer>(tokio::sync::mpsc::Sender<Submission<I>>);
+pub struct TokioRuntime<I: infer::Infer>(flume::Sender<Submission<I>>);
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
 #[allow(clippy::type_complexity)]
@@ -91,32 +91,31 @@ where
     F: Iterator<Item = T> + Send + 'static,
     for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
 {
-    pub async fn new<J>(bundle: impl Dispatcher<J, Info = T> + Send + 'static) -> Self
+    pub async fn new<M, J>(bundle: M) -> Self
     where
+        M: Dispatcher<J, Info = T> + Send + Sync + 'static,
         J: Job<Input = I::Input, Output = I::Output> + Send + 'static,
     {
-        let (sender, receiver) = tokio::sync::mpsc::channel(1);
-        let handle = tokio::spawn(Self::run(bundle, receiver));
+        let (sender, receiver) = flume::bounded(1);
+        let handle = tokio::spawn(Self::run(bundle.into(), receiver));
         tokio::spawn(async move {
-            match handle.await {
-                Ok(_) => {}
-                Err(err) => log::error!("{}", err),
+            if let Err(err) = handle.await {
+                log::error!("{}", err);
             }
         });
         Self(sender)
     }
 
-    async fn run<J>(
-        model: impl Dispatcher<J, Info = T> + Send + 'static,
-        mut receiver: tokio::sync::mpsc::Receiver<Submission<I>>,
-    ) where
+    async fn run<M, J>(model: Arc<M>, receiver: flume::Receiver<Submission<I>>)
+    where
+        M: Dispatcher<J, Info = T> + Send + Sync + 'static,
         J: Job<Input = I::Input, Output = I::Output> + Send + 'static,
     {
         let mut queue: Vec<(T, tokio::task::JoinHandle<Result<J, RuntimeError>>)> = vec![];
         let mut iter: Option<F> = None;
         let mut predict: usize = 0;
 
-        'main: while let Some(Submission { input, sender }) = receiver.recv().await {
+        'main: while let Ok(Submission { input, sender }) = receiver.recv_async().await {
             let Some(info) = (&input).into_iter().next() else {
                 let _ = sender.send(Err(RuntimeError::InputExhausted));
                 continue 'main;
@@ -220,7 +219,7 @@ where
     pub async fn infer(&self, input: I::Input) -> Result<(I::Input, I::Output), RuntimeError> {
         let (sender, receiver) = flume::bounded(1);
         let submission = Submission { input, sender };
-        let _ = self.0.send(submission).await;
+        let _ = self.0.send_async(submission).await;
         receiver.recv_async().await?
     }
 }
@@ -232,11 +231,11 @@ impl<M, I, J> SimpleRuntime<M, I, J> {
     #[inline]
     pub fn new<T, F>(bundle: M) -> Self
     where
+        M: Dispatcher<J, Info = T>,
         I: infer::Infer,
         J: Job<Input = I::Input, Output = I::Output>,
         T: JobInfo,
         F: Iterator<Item = T> + Send + 'static,
-        M: Dispatcher<J, Info = T>,
         for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
     {
         Self(bundle, PhantomData)
@@ -247,11 +246,11 @@ impl<M, I, J> SimpleRuntime<M, I, J> {
         mut input: I::Input,
     ) -> Result<(I::Input, I::Output), RuntimeError>
     where
+        M: Dispatcher<J, Info = T>,
         I: infer::Infer,
         J: Job<Input = I::Input, Output = I::Output>,
         T: JobInfo,
         F: Iterator<Item = T> + Send + 'static,
-        M: Dispatcher<J, Info = T>,
         for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
     {
         let Some(info) = (&input).into_iter().next() else {
