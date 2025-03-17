@@ -160,13 +160,13 @@ impl RnnChunk {
 }
 
 #[derive(Debug, Default, Clone, Deref, DerefMut)]
-pub struct RnnChunkBatch(pub Vec<u16>);
+pub struct RnnChunkBatch(pub Vec<super::Token>);
 
 /// One batch of the input task.
 #[derive(Debug, Default, Clone)]
 pub struct RnnInputBatch {
     /// Tokens to infer. If this is empty, inference won't occur for the batch.
-    pub tokens: Vec<u16>,
+    pub tokens: Vec<super::Token>,
     /// Inference option for outputs.
     pub option: RnnOption,
 }
@@ -328,7 +328,7 @@ mod tests {
     use anyhow::Result;
 
     use super::{RnnInfo, RnnInfoBatch, RnnInput, RnnInputBatch, RnnOption};
-    use crate::runtime::JobInput;
+    use crate::runtime::{infer::IntoTokens, JobInput};
 
     impl From<(usize, Option<RnnOption>)> for RnnInfoBatch {
         fn from((len, option): (usize, Option<RnnOption>)) -> Self {
@@ -345,6 +345,7 @@ mod tests {
                 (vec![2; 0], RnnOption::Full),
                 (vec![3; 65], RnnOption::Full),
             ]
+            .map(|(tokens, option)| (tokens.into_tokens(), option))
             .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
@@ -429,6 +430,7 @@ mod tests {
                 (vec![2; 0], RnnOption::Full),
                 (vec![3; 65], RnnOption::Full),
             ]
+            .map(|(tokens, option)| (tokens.into_tokens(), option))
             .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
@@ -457,6 +459,7 @@ mod tests {
                 (vec![2; 0], RnnOption::Full),
                 (vec![3; 3], RnnOption::Full),
             ]
+            .map(|(tokens, option)| (tokens.into_tokens(), option))
             .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
@@ -487,6 +490,7 @@ mod tests {
                 (vec![2; 0], RnnOption::Full),
                 (vec![3; 3], RnnOption::Full),
             ]
+            .map(|(tokens, option)| (tokens.into_tokens(), option))
             .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 128,
@@ -508,6 +512,7 @@ mod tests {
                 (vec![2; 9], RnnOption::Last),
                 (vec![3; 4], RnnOption::Last),
             ]
+            .map(|(tokens, option)| (tokens.into_tokens(), option))
             .map(|(tokens, option)| RnnInputBatch { tokens, option })
             .to_vec(),
             token_chunk_size: 32,

@@ -4,7 +4,7 @@
 use std::{io::Write, path::PathBuf};
 
 use anyhow::Result;
-use clap::{Args, Parser, ValueEnum};
+use clap::{Args, Parser};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
@@ -19,7 +19,7 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
+        infer::{IntoTokens, Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
         loader::{Loader, Lora},
         model::{Bundle, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant, State},
         softmax::softmax_one,
@@ -93,22 +93,6 @@ async fn load_prompt(path: Option<PathBuf>) -> Result<Prompt> {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum EmbedDevice {
-    #[default]
-    Cpu,
-    Gpu,
-}
-
-impl From<EmbedDevice> for web_rwkv::runtime::model::EmbedDevice {
-    fn from(value: EmbedDevice) -> Self {
-        match value {
-            EmbedDevice::Cpu => Self::Cpu,
-            EmbedDevice::Gpu => Self::Gpu,
-        }
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -124,8 +108,6 @@ struct Cli {
     quant_sf4: usize,
     #[arg(short, long, action)]
     turbo: bool,
-    #[arg(short, long)]
-    embed_device: Option<EmbedDevice>,
     #[arg(long, default_value_t = 128)]
     token_chunk_size: usize,
     #[arg(short, long, action)]
@@ -236,7 +218,6 @@ async fn main() -> Result<()> {
         .chain((0..cli.quant_nf4).map(|layer| (layer, Quant::NF4)))
         .chain((0..cli.quant_sf4).map(|layer| (layer, Quant::SF4)))
         .collect();
-    let embed_device = cli.embed_device.unwrap_or(EmbedDevice::Cpu).into();
     let lora = match cli.lora {
         Some(path) => {
             let file = File::open(path).await?;
@@ -248,9 +229,7 @@ async fn main() -> Result<()> {
         None => None,
     };
 
-    let builder = ModelBuilder::new(&context, model)
-        .embed_device(embed_device)
-        .quant(quant);
+    let builder = ModelBuilder::new(&context, model).quant(quant);
     let builder = match &lora {
         Some(data) => {
             let data = SafeTensors::deserialize(data)?;
@@ -296,9 +275,10 @@ async fn main() -> Result<()> {
 
     // run initial prompt
     let prompt = load_prompt(cli.prompt).await?;
+    let tokens = tokenizer.encode(prompt.build().as_bytes())?;
     let mut inference = RnnInput::new(
         vec![RnnInputBatch {
-            tokens: tokenizer.encode(prompt.build().as_bytes())?,
+            tokens: tokens.into_tokens(),
             option: RnnOption::Last,
         }],
         cli.token_chunk_size,
@@ -358,9 +338,10 @@ async fn main() -> Result<()> {
         std::io::stdout().flush()?;
 
         let prompt = format!("{}: {}\n\n{}:", prompt.user, user_text, prompt.bot);
+        let tokens = tokenizer.encode(prompt.as_bytes())?;
         inference.batches[0]
             .tokens
-            .append(&mut tokenizer.encode(prompt.as_bytes())?);
+            .append(&mut tokens.into_tokens());
 
         // inference loop: read the user prompt and generate until the stop token "\n\n"
         loop {
@@ -390,7 +371,7 @@ async fn main() -> Result<()> {
             std::io::stdout().flush()?;
 
             inference.batches[0] = RnnInputBatch {
-                tokens: vec![token],
+                tokens: vec![Token::Token(token)],
                 option: RnnOption::Last,
             };
 

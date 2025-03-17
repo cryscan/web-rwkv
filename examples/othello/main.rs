@@ -1,7 +1,7 @@
 use std::{io::Write, path::PathBuf};
 
 use anyhow::Result;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
@@ -18,7 +18,7 @@ use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     num::Float,
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
+        infer::{IntoTokens, Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
         loader::Loader,
         model::{ContextAutoLimits, ModelBuilder, ModelInfo},
         v7, TokioRuntime,
@@ -120,29 +120,11 @@ fn make_hooks<F: Float>(info: &ModelInfo) -> Result<v7::HookMap<F>> {
     Ok(hooks)
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum EmbedDevice {
-    #[default]
-    Cpu,
-    Gpu,
-}
-
-impl From<EmbedDevice> for web_rwkv::runtime::model::EmbedDevice {
-    fn from(value: EmbedDevice) -> Self {
-        match value {
-            EmbedDevice::Cpu => Self::Cpu,
-            EmbedDevice::Gpu => Self::Gpu,
-        }
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[arg(short, long, value_name = "FILE")]
     model: Option<PathBuf>,
-    #[arg(short, long)]
-    embed_device: Option<EmbedDevice>,
     #[arg(long, default_value_t = 128)]
     token_chunk_size: usize,
     #[arg(short, long, action)]
@@ -173,11 +155,8 @@ async fn main() -> Result<()> {
     let context = create_context(&info, cli.adapter).await?;
     log::info!("{:#?}", context.adapter.get_info());
 
-    let embed_device = cli.embed_device.unwrap_or(EmbedDevice::Cpu).into();
-
     let hooks = make_hooks(&info)?;
     let model = ModelBuilder::new(&context, model)
-        .embed_device(embed_device)
         .rescale(0)
         .build_v7()
         .await?;
@@ -186,7 +165,7 @@ async fn main() -> Result<()> {
 
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
     let prompt = RnnInputBatch {
-        tokens,
+        tokens: tokens.into_tokens(),
         option: RnnOption::Last,
     };
     let mut prompt = RnnInput::new(vec![prompt], cli.token_chunk_size);
@@ -203,7 +182,7 @@ async fn main() -> Result<()> {
             // let output = softmax_one(&context, output).await?;
             let output = output.to_vec();
             let token = sample(&output[..info.num_vocab], 0.0);
-            prompt.batches[0].tokens.push(token);
+            prompt.batches[0].tokens.push(Token::Token(token));
 
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);

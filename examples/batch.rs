@@ -3,7 +3,7 @@
 use std::{path::PathBuf, str::FromStr};
 
 use anyhow::Result;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 #[cfg(not(debug_assertions))]
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -29,7 +29,7 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch},
+        infer::{IntoTokens, Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax,
@@ -103,22 +103,6 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) 
     Ok(terminal.show_cursor()?)
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum EmbedDevice {
-    #[default]
-    Cpu,
-    Gpu,
-}
-
-impl From<EmbedDevice> for web_rwkv::runtime::model::EmbedDevice {
-    fn from(value: EmbedDevice) -> Self {
-        match value {
-            EmbedDevice::Cpu => Self::Cpu,
-            EmbedDevice::Gpu => Self::Gpu,
-        }
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -132,8 +116,6 @@ struct Cli {
     quant_nf4: usize,
     #[arg(long, value_name = "LAYERS", default_value_t = 0)]
     quant_sf4: usize,
-    #[arg(short, long)]
-    embed_device: Option<EmbedDevice>,
     #[arg(long, default_value_t = 128)]
     token_chunk_size: usize,
     #[arg(short, long, default_value_t = 4)]
@@ -169,7 +151,6 @@ async fn main() -> Result<()> {
         .chain((0..cli.quant_nf4).map(|layer| (layer, Quant::NF4)))
         .chain((0..cli.quant_sf4).map(|layer| (layer, Quant::SF4)))
         .collect();
-    let embed_device = cli.embed_device.unwrap_or(EmbedDevice::Cpu).into();
     let lora = match cli.lora {
         Some(path) => {
             let file = File::open(path).await?;
@@ -181,9 +162,7 @@ async fn main() -> Result<()> {
         None => None,
     };
 
-    let builder = ModelBuilder::new(&context, model)
-        .embed_device(embed_device)
-        .quant(quant);
+    let builder = ModelBuilder::new(&context, model).quant(quant);
     let builder = match &lora {
         Some(data) => {
             let data = SafeTensors::deserialize(data)?;
@@ -240,8 +219,8 @@ async fn main() -> Result<()> {
         tokens
             .into_iter()
             .map(|tokens| RnnInputBatch {
-                tokens,
-                ..Default::default()
+                tokens: tokens.into_tokens(),
+                option: RnnOption::Last,
             })
             .collect(),
         cli.token_chunk_size,
@@ -314,7 +293,7 @@ async fn main() -> Result<()> {
                 let token = sample(&batch, 0.5);
                 let decoded = tokenizer.decode(&[token])?;
                 let word = String::from_utf8_lossy(&decoded);
-                inference.batches[index].tokens = vec![token];
+                inference.batches[index].tokens = vec![Token::Token(token)];
                 prompts[index].push_str(&word);
                 num_token[index] -= 1;
             }

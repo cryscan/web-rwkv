@@ -11,9 +11,9 @@ use web_rwkv_derive::DeserializeSeed;
 use wgpu::CommandBuffer;
 
 use super::{
-    infer::{RnnChunk, RnnInfo, RnnInput, RnnOutput, RnnOutputBatch, RnnRedirect},
+    infer::{RnnChunk, RnnInfo, RnnInput, RnnOutput, RnnOutputBatch, RnnRedirect, Token},
     loader::{Loader, LoaderError, Reader},
-    model::{AsAny, EmbedDevice, ModelBuilder, ModelInfo, Quant, State as _},
+    model::{AsAny, ModelBuilder, ModelInfo, Quant, State as _},
     Dispatcher, Job, RuntimeError,
 };
 use crate::{
@@ -105,7 +105,6 @@ pub struct Layer {
 pub struct Embed {
     pub layer_norm: LayerNorm,
     pub w: TensorCpu<f16>,
-    pub u: Option<TensorGpu<f16, ReadWrite>>,
 }
 
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
@@ -233,7 +232,6 @@ impl DeepClone for State {
 #[derive(Debug, Clone, Serialize, DeserializeSeed)]
 #[serde_seed(seed = "Seed", context = "Context")]
 pub struct Runtime<F: Float> {
-    pub tokens: TensorGpu<u32, ReadWrite>,
     pub cursors: TensorGpu<u32, ReadWrite>,
     pub input: TensorGpu<f16, ReadWrite>,
 
@@ -261,12 +259,10 @@ impl<F: Float> Runtime<F> {
     pub fn new(context: &Context, info: &ModelInfo, num_token: usize) -> Self {
         let shape = Shape::new(info.num_emb, num_token, 1, 1);
         let cursors_shape = Shape::new(num_token, 1, 1, 1);
-        let tokens_shape = Shape::new(num_token, 1, 1, 1);
         let hidden_shape = Shape::new(info.num_hidden, num_token, 1, 1);
 
         Self {
             cursors: context.tensor_init(cursors_shape),
-            tokens: context.tensor_init(tokens_shape),
             input: context.tensor_init(shape),
             x: context.tensor_init(shape),
             aux_x: context.tensor_init(shape),
@@ -341,11 +337,9 @@ pub struct RnnJob {
     commands: Vec<CommandBuffer>,
     redirect: RnnRedirect,
 
-    embed_device: EmbedDevice,
     embed: TensorCpu<f16>,
 
     cursors: TensorGpu<u32, ReadWrite>,
-    tokens: TensorGpu<u32, ReadWrite>,
     input: TensorGpu<f16, ReadWrite>,
     output: TensorGpu<f32, ReadWrite>,
 }
@@ -367,10 +361,13 @@ impl Job for RnnJob {
                 let data = self.embed.data();
                 let data = chunk
                     .iter()
-                    .map(|&token| {
-                        let start = num_emb * token as usize;
-                        let end = start + num_emb;
-                        data[start..end].to_vec()
+                    .map(|token| match token {
+                        &Token::Token(token) => {
+                            let start = num_emb * token as usize;
+                            let end = start + num_emb;
+                            data[start..end].to_vec()
+                        }
+                        Token::Embed(tensor) => tensor.clone(),
                     })
                     .concat();
                 let data = data.into_iter().collect_vec();
@@ -383,21 +380,7 @@ impl Job for RnnJob {
         let cursors = stack.cursors.clone().into_cursors();
         let cursors = TensorCpu::from_data(self.cursors.shape(), cursors)?;
         self.cursors.load(&cursors)?;
-
-        match self.embed_device {
-            EmbedDevice::Cpu => self.input.load(&stack.tensor)?,
-            EmbedDevice::Gpu => {
-                let tokens = input
-                    .iter()
-                    .map(|chunk| chunk.0.clone())
-                    .concat()
-                    .into_iter()
-                    .map(|token| token as u32)
-                    .collect_vec();
-                let tokens = TensorCpu::from_data(self.tokens.shape(), tokens)?;
-                self.tokens.load(&tokens)?;
-            }
-        }
+        self.input.load(&stack.tensor)?;
 
         Ok(self)
     }
@@ -562,16 +545,10 @@ impl<F: Float> Dispatcher<RnnJob> for Bundle<F> {
         context.maintain();
 
         if num_token == 0 {
-            let embed_device = match &tensor.embed.u {
-                Some(_) => EmbedDevice::Gpu,
-                None => EmbedDevice::Cpu,
-            };
             return Ok(RnnJob {
                 commands: vec![],
                 redirect,
-                embed_device,
                 embed: model.tensor.embed.w.clone(),
-                tokens: buffer.tokens.clone(),
                 cursors: buffer.cursors.clone(),
                 input: buffer.input.clone(),
                 output: header.head_o.clone(),
@@ -586,17 +563,10 @@ impl<F: Float> Dispatcher<RnnJob> for Bundle<F> {
         let hook_op = |hook: Hook| hook_op(&self.hooks, &hook, &frame);
         let mut ops = vec![];
 
-        let embed_device = {
+        {
             #[cfg(feature = "trace")]
             let _span = tracing::trace_span!("embed").entered();
 
-            let embed_device = match &tensor.embed.u {
-                Some(u) => {
-                    ops.push(TensorOp::embed(&buffer.tokens, u, &buffer.input)?);
-                    EmbedDevice::Gpu
-                }
-                None => EmbedDevice::Cpu,
-            };
             ops.extend([
                 hook_op(Hook::PostEmbedLoaded)?,
                 TensorOp::layer_norm(
@@ -608,7 +578,6 @@ impl<F: Float> Dispatcher<RnnJob> for Bundle<F> {
                 TensorOp::blit(&buffer.input, &buffer.x)?,
                 hook_op(Hook::PostEmbedLayerNorm)?,
             ]);
-            embed_device
         };
 
         for (index, layer) in tensor.layers.iter().enumerate() {
@@ -648,9 +617,7 @@ impl<F: Float> Dispatcher<RnnJob> for Bundle<F> {
         Ok(RnnJob {
             commands,
             redirect,
-            embed_device,
             embed: model.tensor.embed.w.clone(),
-            tokens: buffer.tokens.clone(),
             cursors: buffer.cursors.clone(),
             input: buffer.input.clone(),
             output: header.head_o.clone(),
@@ -866,7 +833,6 @@ impl<R: Reader> ModelBuilder<R> {
             sep,
             lora,
             quant,
-            embed_device,
             ..
         } = self;
 
@@ -886,10 +852,6 @@ impl<R: Reader> ModelBuilder<R> {
                 b: loader.load_vector_f16("blocks.0.ln0.bias")?,
             },
             w: loader.load_matrix_f16_padded_cpu("emb.weight")?,
-            u: match embed_device {
-                EmbedDevice::Cpu => None,
-                EmbedDevice::Gpu => Some(loader.load_matrix_f16_padded("emb.weight")?),
-            },
         };
 
         let head = Head {

@@ -134,15 +134,6 @@ pub enum Quant {
     SF4,
 }
 
-/// Device to put the model's embed tensor.
-#[wasm_bindgen]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EmbedDevice {
-    #[default]
-    Cpu,
-    Gpu,
-}
-
 pub struct ModelBuilder<R: Reader> {
     pub context: Context,
     pub model: R,
@@ -150,7 +141,6 @@ pub struct ModelBuilder<R: Reader> {
     pub sep: Option<usize>,
     pub lora: Vec<Lora<R>>,
     pub quant: HashMap<usize, Quant>,
-    pub embed_device: EmbedDevice,
 }
 
 impl<R: Reader> ModelBuilder<R> {
@@ -162,7 +152,6 @@ impl<R: Reader> ModelBuilder<R> {
             sep: None,
             lora: vec![],
             quant: Default::default(),
-            embed_device: Default::default(),
         }
     }
 
@@ -191,11 +180,6 @@ impl<R: Reader> ModelBuilder<R> {
 
     pub fn quant(mut self, value: HashMap<usize, Quant>) -> Self {
         self.quant = value;
-        self
-    }
-
-    pub fn embed_device(mut self, value: EmbedDevice) -> Self {
-        self.embed_device = value;
         self
     }
 }

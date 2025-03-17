@@ -1,7 +1,7 @@
 //! This example shows how to save/load potentially quantized models to a binary format.
 
 use anyhow::Result;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
@@ -20,7 +20,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
+        infer::{IntoTokens, Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
@@ -81,22 +81,6 @@ async fn load_tokenizer() -> Result<Tokenizer> {
     Ok(Tokenizer::new(&contents)?)
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum EmbedDevice {
-    #[default]
-    Cpu,
-    Gpu,
-}
-
-impl From<EmbedDevice> for web_rwkv::runtime::model::EmbedDevice {
-    fn from(value: EmbedDevice) -> Self {
-        match value {
-            EmbedDevice::Cpu => Self::Cpu,
-            EmbedDevice::Gpu => Self::Gpu,
-        }
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -110,8 +94,6 @@ struct Cli {
     quant_nf4: usize,
     #[arg(long, value_name = "LAYERS", default_value_t = 0)]
     quant_sf4: usize,
-    #[arg(short, long)]
-    embed_device: Option<EmbedDevice>,
     #[arg(short, long, action)]
     turbo: bool,
     #[arg(long, default_value_t = 128)]
@@ -154,7 +136,6 @@ async fn main() -> Result<()> {
         .chain((0..cli.quant_nf4).map(|layer| (layer, Quant::NF4)))
         .chain((0..cli.quant_sf4).map(|layer| (layer, Quant::SF4)))
         .collect();
-    let embed_device = cli.embed_device.unwrap_or(EmbedDevice::Cpu).into();
     let lora = match cli.lora {
         Some(path) => {
             let file = File::open(path).await?;
@@ -166,9 +147,7 @@ async fn main() -> Result<()> {
         None => None,
     };
 
-    let builder = ModelBuilder::new(&context, model)
-        .embed_device(embed_device)
-        .quant(quant);
+    let builder = ModelBuilder::new(&context, model).quant(quant);
     let builder = match &lora {
         Some(data) => {
             let data = SafeTensors::deserialize(data)?;
@@ -217,7 +196,7 @@ async fn main() -> Result<()> {
     const PROMPT: &str = include_str!("prompt.md");
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
     let prompt = RnnInputBatch {
-        tokens,
+        tokens: tokens.into_tokens(),
         option: RnnOption::Last,
     };
     let mut prompt = RnnInput::new(vec![prompt], cli.token_chunk_size);
@@ -233,7 +212,7 @@ async fn main() -> Result<()> {
             let output = softmax_one(&context, output).await?;
             let output = output.to_vec();
             let token = sample(&output, 0.0);
-            prompt.batches[0].tokens.push(token);
+            prompt.batches[0].tokens.push(Token::Token(token));
 
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);
