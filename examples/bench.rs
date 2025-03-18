@@ -22,7 +22,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{IntoTokens, Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
@@ -184,10 +184,7 @@ async fn main() -> Result<()> {
         let tokens: Vec<u16> = (0..prompt_len)
             .map(|_| fastrand::u16(0..((info.num_vocab - 1) as u16)))
             .collect();
-        let prompt = RnnInputBatch {
-            tokens: tokens.into_tokens(),
-            option: RnnOption::Last,
-        };
+        let prompt = RnnInputBatch::new(tokens, RnnOption::Last);
         let mut prompt = RnnInput::new(vec![prompt], cli.token_chunk_size);
         let instant = Instant::now();
         for _ in 0..prompt_len {
@@ -221,10 +218,7 @@ async fn main() -> Result<()> {
     let mut generation = Duration::ZERO;
     for _ in 0..REPEAT {
         let tokens: Vec<u16> = vec![0];
-        let prompt = RnnInputBatch {
-            tokens: tokens.into_tokens(),
-            option: RnnOption::Last,
-        };
+        let prompt = RnnInputBatch::new(tokens, RnnOption::Last);
         let mut prompt = RnnInput::new(vec![prompt], cli.token_chunk_size);
         let instant = Instant::now();
         for _ in 0..num_token {

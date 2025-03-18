@@ -29,7 +29,7 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{IntoTokens, Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax,
@@ -218,10 +218,7 @@ async fn main() -> Result<()> {
     let mut inference = RnnInput::new(
         tokens
             .into_iter()
-            .map(|tokens| RnnInputBatch {
-                tokens: tokens.into_tokens(),
-                option: RnnOption::Last,
-            })
+            .map(|tokens| RnnInputBatch::new(tokens, RnnOption::Last))
             .collect(),
         cli.token_chunk_size,
     );

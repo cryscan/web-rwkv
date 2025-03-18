@@ -28,12 +28,21 @@ impl Default for Token {
     }
 }
 
-pub trait IntoTokens {
-    fn into_tokens(self) -> Vec<Token>;
+impl From<u16> for Token {
+    fn from(value: u16) -> Self {
+        Self::Token(value)
+    }
 }
 
-impl IntoTokens for Vec<u16> {
-    fn into_tokens(self) -> Vec<Token> {
-        self.into_iter().map(Token::Token).collect()
+impl From<Vec<f16>> for Token {
+    fn from(value: Vec<f16>) -> Self {
+        Self::Embed(value)
+    }
+}
+
+impl From<Vec<f32>> for Token {
+    fn from(value: Vec<f32>) -> Self {
+        let value = value.into_iter().map(f16::from_f32).collect();
+        Self::Embed(value)
     }
 }

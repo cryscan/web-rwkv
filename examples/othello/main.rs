@@ -18,7 +18,7 @@ use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     num::Float,
     runtime::{
-        infer::{IntoTokens, Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
         loader::Loader,
         model::{ContextAutoLimits, ModelBuilder, ModelInfo},
         v7, TokioRuntime,
@@ -164,10 +164,7 @@ async fn main() -> Result<()> {
     let runtime = TokioRuntime::<Rnn>::new(bundle).await;
 
     let tokens = tokenizer.encode(PROMPT.as_bytes())?;
-    let prompt = RnnInputBatch {
-        tokens: tokens.into_tokens(),
-        option: RnnOption::Last,
-    };
+    let prompt = RnnInputBatch::new(tokens, RnnOption::Last);
     let mut prompt = RnnInput::new(vec![prompt], cli.token_chunk_size);
 
     print!("{PROMPT}");

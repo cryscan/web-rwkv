@@ -19,7 +19,7 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{IntoTokens, Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
         loader::{Loader, Lora},
         model::{Bundle, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant, State},
         softmax::softmax_one,
@@ -277,10 +277,7 @@ async fn main() -> Result<()> {
     let prompt = load_prompt(cli.prompt).await?;
     let tokens = tokenizer.encode(prompt.build().as_bytes())?;
     let mut inference = RnnInput::new(
-        vec![RnnInputBatch {
-            tokens: tokens.into_tokens(),
-            option: RnnOption::Last,
-        }],
+        vec![RnnInputBatch::new(tokens, RnnOption::Last)],
         cli.token_chunk_size,
     );
 
@@ -339,9 +336,7 @@ async fn main() -> Result<()> {
 
         let prompt = format!("{}: {}\n\n{}:", prompt.user, user_text, prompt.bot);
         let tokens = tokenizer.encode(prompt.as_bytes())?;
-        inference.batches[0]
-            .tokens
-            .append(&mut tokens.into_tokens());
+        inference.batches[0].append(tokens);
 
         // inference loop: read the user prompt and generate until the stop token "\n\n"
         loop {
