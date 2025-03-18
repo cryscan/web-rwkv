@@ -32,7 +32,7 @@ use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     num::Float,
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
         loader::Loader,
         model::{ContextAutoLimits, ModelBuilder, ModelInfo},
         v6, TokioRuntime,
@@ -179,7 +179,7 @@ async fn main() -> Result<()> {
             // let output = softmax_one(&context, output).await?;
             let output = output.to_vec();
             let token = sample(&output[..info.num_vocab], 0.0);
-            prompt.batches[0].tokens.push(Token::Token(token));
+            prompt.batches[0].push(token);
 
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);

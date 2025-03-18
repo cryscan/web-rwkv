@@ -29,7 +29,7 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax,
@@ -290,7 +290,7 @@ async fn main() -> Result<()> {
                 let token = sample(&batch, 0.5);
                 let decoded = tokenizer.decode(&[token])?;
                 let word = String::from_utf8_lossy(&decoded);
-                inference.batches[index].tokens = vec![Token::Token(token)];
+                inference.batches[index].replace(vec![token]);
                 prompts[index].push_str(&word);
                 num_token[index] -= 1;
             }

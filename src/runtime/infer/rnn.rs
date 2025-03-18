@@ -185,6 +185,11 @@ impl RnnInputBatch {
         let mut tokens = tokens.into_iter().map(Into::into).collect();
         self.tokens.append(&mut tokens);
     }
+
+    pub fn replace(&mut self, tokens: Vec<impl Into<super::Token>>) -> Vec<super::Token> {
+        let tokens = tokens.into_iter().map(Into::into).collect();
+        std::mem::replace(&mut self.tokens, tokens)
+    }
 }
 
 #[derive(Debug, Clone)]

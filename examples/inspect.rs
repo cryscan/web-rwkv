@@ -18,7 +18,7 @@ use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     num::Float,
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         v7, Runtime, TokioRuntime,
@@ -206,10 +206,7 @@ async fn main() -> Result<()> {
 
     let mut data = Vec::with_capacity(tokens.len());
     for (ti, token) in tokens.into_iter().enumerate() {
-        let prompt = RnnInputBatch {
-            tokens: vec![Token::Token(token)],
-            option: RnnOption::Last,
-        };
+        let prompt = RnnInputBatch::new(vec![token], RnnOption::Last);
         let input = RnnInput::new(vec![prompt], cli.token_chunk_size);
         let (_input, _output) = runtime.infer(input).await?;
 

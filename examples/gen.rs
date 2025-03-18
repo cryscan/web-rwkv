@@ -22,7 +22,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
         loader::{Loader, Lora},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
             let output = softmax_one(&context, output).await?;
             let output = output.to_vec();
             let token = sample(&output, 0.0);
-            prompt.batches[0].tokens.push(Token::Token(token));
+            prompt.batches[0].push(token);
 
             let decoded = tokenizer.decode(&[token])?;
             let word = String::from_utf8_lossy(&decoded);

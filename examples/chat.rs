@@ -19,7 +19,7 @@ use tokio::{
 use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
-        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption, Token},
+        infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
         loader::{Loader, Lora},
         model::{Bundle, ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant, State},
         softmax::softmax_one,
@@ -318,10 +318,7 @@ async fn main() -> Result<()> {
             "+" => {
                 // retry: reset the prompt and state to the last turn
                 user_text.clone_from(&last_user_text);
-                inference.batches[0] = RnnInputBatch {
-                    tokens: last_tokens.clone(),
-                    option: RnnOption::Last,
-                };
+                inference.batches[0] = RnnInputBatch::new(last_tokens.clone(), RnnOption::Last);
                 state.load(backed.clone(), 0)?;
             }
             _ => {
@@ -365,10 +362,7 @@ async fn main() -> Result<()> {
             print!("{}", word);
             std::io::stdout().flush()?;
 
-            inference.batches[0] = RnnInputBatch {
-                tokens: vec![Token::Token(token)],
-                option: RnnOption::Last,
-            };
+            inference.batches[0] = RnnInputBatch::new(vec![token], RnnOption::Last);
 
             if model_text.contains("\n\n") {
                 break;
