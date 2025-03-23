@@ -420,9 +420,9 @@ impl Job for RnnJob {
     type Input = RnnInput;
     type Output = RnnOutput;
 
-    fn load(self, input: &RnnChunk) -> Result<Self, RuntimeError> {
+    fn load(&self, input: &RnnChunk) -> Result<(), RuntimeError> {
         if input.num_token() == 0 {
-            return Ok(self);
+            return Ok(());
         }
 
         let stack: Vec<TensorCpu<f16>> = input
@@ -454,7 +454,7 @@ impl Job for RnnJob {
         self.cursors.load(&cursors)?;
         self.input.load(&stack.tensor)?;
 
-        Ok(self)
+        Ok(())
     }
 
     fn submit(&mut self) {

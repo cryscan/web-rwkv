@@ -33,12 +33,12 @@ pub trait JobInput: Send + Sync + 'static {
 }
 
 /// A [`Job`] to be executed on GPU.
-pub trait Job: Sized {
+pub trait Job {
     type Input: JobInput;
     type Output: Send + Sync + 'static;
 
     /// Load the data from CPU to GPU.
-    fn load(self, input: &<Self::Input as JobInput>::Chunk) -> Result<Self, RuntimeError>;
+    fn load(&self, input: &<Self::Input as JobInput>::Chunk) -> Result<(), RuntimeError>;
     /// Submit the job to GPU and execute it immediately.
     fn submit(&mut self);
     #[cfg(not(target_arch = "wasm32"))]
@@ -123,7 +123,7 @@ where
 
             let chunk = input.chunk();
 
-            let job = loop {
+            let mut job = loop {
                 let mut candidates = vec![];
                 let mut remain = vec![];
                 for (key, handle) in queue {
@@ -186,16 +186,12 @@ where
                         }
                     };
                 }
-            }
-            .load(&chunk);
-
-            let mut job = match job {
-                Ok(job) => job,
-                Err(error) => {
-                    let _ = sender.send(Err(error));
-                    continue 'main;
-                }
             };
+
+            if let Err(error) = job.load(&chunk) {
+                let _ = sender.send(Err(error));
+                continue 'main;
+            }
 
             #[cfg(feature = "trace")]
             let _span = tracing::trace_span!("submit").entered();
@@ -255,7 +251,8 @@ impl<M, I, J> SimpleRuntime<M, I, J> {
         };
         let chunk = input.chunk();
 
-        let mut job = self.0.dispatch(info)?.load(&chunk)?;
+        let mut job = self.0.dispatch(info)?;
+        job.load(&chunk)?;
         job.submit();
 
         let output = job.back().await?;

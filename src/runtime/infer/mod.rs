@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{JobInfo, JobInput};
 
+pub mod encoder;
 pub mod rnn;
 
 pub use rnn::{
