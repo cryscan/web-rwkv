@@ -1,4 +1,9 @@
-use crate::runtime::{JobInfo, JobInput};
+use web_rwkv_derive::{Deref, DerefMut};
+
+use crate::{
+    runtime::{JobInfo, JobInput},
+    tensor::TensorCpu,
+};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Encoder;
@@ -15,23 +20,23 @@ pub struct EncoderInfo {
 }
 
 impl JobInfo for EncoderInfo {
-    fn check(&self, _info: &Self) -> bool {
-        todo!()
+    fn check(&self, info: &Self) -> bool {
+        self.eq(info)
     }
 }
 
-pub struct EncoderInput;
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct EncoderInput(pub Vec<super::Token>);
 
 impl JobInput for EncoderInput {
-    type Chunk = ();
+    type Chunk = Self;
 
-    fn step(&mut self) {
-        todo!()
-    }
+    fn step(&mut self) {}
 
     fn chunk(&self) -> Self::Chunk {
-        todo!()
+        self.clone()
     }
 }
 
-pub struct EncoderOutput;
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct EncoderOutput(pub TensorCpu<f32>);

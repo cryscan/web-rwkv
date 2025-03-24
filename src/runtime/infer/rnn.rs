@@ -191,9 +191,12 @@ impl RnnInputBatch {
     }
 }
 
+/// Batches of input tasks.
 #[derive(Debug, Clone)]
 pub struct RnnInput {
+    /// Batches of input tasks.
     pub batches: Vec<RnnInputBatch>,
+    /// Actual token chunk size. Should be a multiple of [`MIN_TOKEN_CHUNK_SIZE`].
     token_chunk_size: usize,
 }
 

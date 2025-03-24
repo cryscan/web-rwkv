@@ -387,7 +387,6 @@ impl Job for RnnJob {
             .iter()
             .map(|chunk| {
                 let num_emb = self.embed.shape()[0];
-                let num_token = chunk.len();
                 let data = self.embed.data();
                 let data = chunk
                     .iter()
@@ -395,14 +394,13 @@ impl Job for RnnJob {
                         &Token::Token(token) => {
                             let start = num_emb * token as usize;
                             let end = start + num_emb;
-                            data[start..end].to_vec()
+                            let data = data[start..end].to_vec();
+                            TensorCpu::from_data_1d(data)
                         }
                         Token::Embed(tensor) => tensor.clone(),
                     })
-                    .concat();
-                let data = data.into_iter().collect_vec();
-                let shape = Shape::new(num_emb, num_token, 1, 1);
-                TensorCpu::from_data(shape, data)
+                    .collect_vec();
+                TensorCpu::stack(data)
             })
             .try_collect()?;
         let stack = TensorStack::try_from(stack)?;

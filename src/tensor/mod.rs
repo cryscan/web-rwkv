@@ -190,6 +190,13 @@ pub trait TensorInit<T: Scalar>: Sized {
     fn from_data(shape: impl Into<Shape>, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError>;
     /// Init the tensor with given shape.
     fn init(shape: impl Into<Shape>) -> Self;
+
+    /// Init an 1-D tensor from data.
+    fn from_data_1d(data: impl Into<Arc<[T]>>) -> Self {
+        let data = data.into();
+        let shape = [data.len(), 1, 1, 1];
+        Self::from_data(shape, data).expect("tensor 1d from data")
+    }
 }
 
 pub trait TensorInto<Into> {

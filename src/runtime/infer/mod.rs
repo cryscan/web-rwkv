@@ -2,6 +2,7 @@ use half::f16;
 use serde::{Deserialize, Serialize};
 
 use super::{JobInfo, JobInput};
+use crate::tensor::{TensorCpu, TensorInit};
 
 pub mod encoder;
 pub mod rnn;
@@ -20,7 +21,7 @@ pub trait Infer: Send + Sync + 'static {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Token {
     Token(u16),
-    Embed(Vec<f16>),
+    Embed(TensorCpu<f16>),
 }
 
 impl Default for Token {
@@ -37,13 +38,13 @@ impl From<u16> for Token {
 
 impl From<Vec<f16>> for Token {
     fn from(value: Vec<f16>) -> Self {
-        Self::Embed(value)
+        Self::Embed(TensorCpu::from_data_1d(value))
     }
 }
 
 impl From<Vec<f32>> for Token {
     fn from(value: Vec<f32>) -> Self {
-        let value = value.into_iter().map(f16::from_f32).collect();
-        Self::Embed(value)
+        let value: Vec<_> = value.into_iter().map(f16::from_f32).collect();
+        Self::Embed(TensorCpu::from_data_1d(value))
     }
 }
