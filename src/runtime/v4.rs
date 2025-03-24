@@ -370,9 +370,12 @@ impl Job for RnnJob {
                         Token::Embed(tensor) => tensor.clone(),
                     })
                     .collect_vec();
-                TensorCpu::stack(data)
+                match TensorCpu::stack(data, 1) {
+                    Ok(tensor) => tensor,
+                    Err(_) => TensorCpu::init([num_emb, 0, 1, 1]),
+                }
             })
-            .try_collect()?;
+            .collect();
         let stack = TensorStack::try_from(stack)?;
 
         let cursors = stack.cursors.clone().into_cursors();
