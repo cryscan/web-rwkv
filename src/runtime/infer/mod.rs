@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::{JobInfo, JobInput};
 use crate::tensor::{TensorCpu, TensorInit};
 
-pub mod encoder;
+pub mod vision;
 pub mod rnn;
 
 pub use rnn::{
