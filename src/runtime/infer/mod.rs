@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use super::{JobInfo, JobInput};
 use crate::tensor::{TensorCpu, TensorInit};
 
-pub mod vision;
 pub mod rnn;
+pub mod vision;
 
 pub use rnn::{
     Rnn, RnnChunk, RnnChunkBatch, RnnInfo, RnnInfoBatch, RnnInput, RnnInputBatch, RnnIter,

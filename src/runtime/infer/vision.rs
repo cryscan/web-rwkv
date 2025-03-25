@@ -23,6 +23,7 @@ impl JobInfo for VisionInfo {
     }
 }
 
+/// An input picture consists of a list of patches. The shape of the tensor should be `[X, Y, C, N]`.
 #[derive(Debug, Clone, Deref, DerefMut)]
 pub struct VisionInput(pub TensorCpu<f32>);
 
@@ -76,5 +77,6 @@ impl Iterator for &VisionInput {
     }
 }
 
+/// The embedding vector of the picture.
 #[derive(Debug, Clone, Deref, DerefMut)]
 pub struct VisionOutput(pub TensorCpu<f32>);
