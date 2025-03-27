@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
 use web_rwkv_derive::{Deref, DerefMut};
 
 use crate::{
@@ -10,7 +9,7 @@ use crate::{
 
 pub const MIN_TOKEN_CHUNK_SIZE: usize = 32;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Rnn;
 
 impl super::Infer for Rnn {
@@ -192,9 +191,12 @@ impl RnnInputBatch {
     }
 }
 
+/// Batches of input tasks.
 #[derive(Debug, Clone)]
 pub struct RnnInput {
+    /// Batches of input tasks.
     pub batches: Vec<RnnInputBatch>,
+    /// Actual token chunk size. Should be a multiple of [`MIN_TOKEN_CHUNK_SIZE`].
     token_chunk_size: usize,
 }
 

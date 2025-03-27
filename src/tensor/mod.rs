@@ -190,6 +190,13 @@ pub trait TensorInit<T: Scalar>: Sized {
     fn from_data(shape: impl Into<Shape>, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError>;
     /// Init the tensor with given shape.
     fn init(shape: impl Into<Shape>) -> Self;
+
+    /// Init an 1-D tensor from data.
+    fn from_data_1d(data: impl Into<Arc<[T]>>) -> Self {
+        let data = data.into();
+        let shape = [data.len(), 1, 1, 1];
+        Self::from_data(shape, data).expect("tensor 1d from data")
+    }
 }
 
 pub trait TensorInto<Into> {
@@ -866,9 +873,9 @@ impl<T: Scalar> TensorCpu<T> {
 
     /// Repeat the tensor along a given axis.
     pub fn repeat(self, axis: usize, repeat: usize) -> Self {
-        let Self {
-            mut shape, data, ..
-        } = self;
+        let mut shape = self.shape;
+        let data = self.data;
+
         let num_chunk: usize = shape.iter().skip(axis + 1).product();
         let chunk_size = data.len() / num_chunk;
 
@@ -894,18 +901,26 @@ impl<T: Scalar> TensorCpu<T> {
     }
 
     /// Concat a batch of tensors.
-    pub fn stack(batches: Vec<Self>) -> Result<Self, TensorError> {
+    pub fn stack(batches: Vec<Self>, axis: usize) -> Result<Self, TensorError> {
         let mut shape = match batches.first() {
             Some(batch) => batch.shape,
             None => Err(TensorErrorKind::Empty)?,
         };
 
-        batches
-            .iter()
-            .try_for_each(|batch| batch.check_shape([shape[0], shape[1], batch.shape[2], 1]))?;
+        // batches
+        //     .iter()
+        //     .try_for_each(|batch| batch.check_shape([shape[0], shape[1], batch.shape[2], 1]))?;
 
-        let num_batch: usize = batches.iter().map(|batch| batch.shape[2]).sum();
-        shape[2] = num_batch;
+        batches.iter().try_for_each(|batch| match axis {
+            0 => batch.check_shape([batch.shape[0], 1, 1, 1]),
+            1 => batch.check_shape([shape[0], batch.shape[1], 1, 1]),
+            2 => batch.check_shape([shape[0], shape[1], batch.shape[2], 1]),
+            3 => batch.check_shape([shape[0], shape[1], shape[2], batch.shape[3]]),
+            _ => unreachable!(),
+        })?;
+
+        let num_batch: usize = batches.iter().map(|batch| batch.shape[axis]).sum();
+        shape[axis] = num_batch;
 
         let data = batches
             .into_iter()

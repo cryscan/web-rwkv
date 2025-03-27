@@ -143,7 +143,7 @@ impl State {
         for tensor in tensors {
             backed.push(tensor.back().await);
         }
-        TensorCpu::stack(backed)
+        TensorCpu::stack(backed, 2)
     }
 }
 
@@ -378,16 +378,15 @@ impl Job for RnnJob {
     type Input = RnnInput;
     type Output = RnnOutput;
 
-    fn load(self, input: &RnnChunk) -> Result<Self, RuntimeError> {
+    fn load(&self, input: &RnnChunk) -> Result<(), RuntimeError> {
         if input.num_token() == 0 {
-            return Ok(self);
+            return Ok(());
         }
 
         let stack: Vec<TensorCpu<f16>> = input
             .iter()
             .map(|chunk| {
                 let num_emb = self.embed.shape()[0];
-                let num_token = chunk.len();
                 let data = self.embed.data();
                 let data = chunk
                     .iter()
@@ -395,16 +394,18 @@ impl Job for RnnJob {
                         &Token::Token(token) => {
                             let start = num_emb * token as usize;
                             let end = start + num_emb;
-                            data[start..end].to_vec()
+                            let data = data[start..end].to_vec();
+                            TensorCpu::from_data_1d(data)
                         }
                         Token::Embed(tensor) => tensor.clone(),
                     })
-                    .concat();
-                let data = data.into_iter().collect_vec();
-                let shape = Shape::new(num_emb, num_token, 1, 1);
-                TensorCpu::from_data(shape, data)
+                    .collect_vec();
+                match TensorCpu::stack(data, 1) {
+                    Ok(tensor) => tensor,
+                    Err(_) => TensorCpu::init([num_emb, 0, 1, 1]),
+                }
             })
-            .try_collect()?;
+            .collect();
         let stack = TensorStack::try_from(stack)?;
 
         let cursors = stack.cursors.clone().into_cursors();
@@ -412,7 +413,7 @@ impl Job for RnnJob {
         self.cursors.load(&cursors)?;
         self.input.load(&stack.tensor)?;
 
-        Ok(self)
+        Ok(())
     }
 
     fn submit(&mut self) {
