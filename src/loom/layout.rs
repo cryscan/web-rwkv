@@ -1,11 +1,13 @@
+use std::fmt::Debug;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum LayoutError {
-    #[error("shape and stride have different length:\nshape: {0}, stride: {1}")]
-    ShapeStrideLen(usize, usize),
-    #[error("layout and coord have different length:\nlayout: {0}, coord: {1}")]
-    LayoutCoordLen(usize, usize),
+    #[error("len error: shape {0} vs. stride {1}")]
+    ShapeStrideLen(Shape, Stride),
+    #[error("len error: layout {0} vs. coord {1}")]
+    LayoutCoordLen(Layout, Coord),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -25,6 +27,12 @@ impl std::ops::Index<usize> for Shape {
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
+    }
+}
+
+impl std::fmt::Display for Shape {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -72,6 +80,12 @@ impl std::ops::Index<usize> for Stride {
     }
 }
 
+impl std::fmt::Display for Stride {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl Stride {
     /// Dimension of the stride.
     #[inline]
@@ -104,6 +118,12 @@ impl std::ops::Index<usize> for Coord {
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
+    }
+}
+
+impl std::fmt::Display for Coord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -141,11 +161,19 @@ where
         let stride: Stride = stride.into();
 
         if shape.len() != stride.len() {
-            Err(LayoutError::ShapeStrideLen(shape.len(), stride.len()))?
+            Err(LayoutError::ShapeStrideLen(shape.clone(), stride.clone()))?
         }
 
         let value = shape.0.into_iter().zip(stride.0).collect();
         Ok(Self(value))
+    }
+}
+
+impl std::fmt::Display for Layout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let shape = self.shape();
+        let stride = self.stride();
+        write!(f, "<{shape}, {stride}>")
     }
 }
 
@@ -217,7 +245,7 @@ impl Layout {
     #[inline]
     pub fn value_coord(&self, coord: &Coord) -> Result<usize, LayoutError> {
         if self.len() != coord.len() {
-            Err(LayoutError::LayoutCoordLen(self.len(), coord.len()))?
+            Err(LayoutError::LayoutCoordLen(self.clone(), coord.clone()))?
         }
 
         Ok(self
