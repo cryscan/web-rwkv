@@ -1,5 +1,4 @@
-use std::fmt::Debug;
-
+use itertools::Itertools;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -8,6 +7,8 @@ pub enum LayoutError {
     ShapeStrideLen(Shape, Stride),
     #[error("len error: layout {0} vs. coord {1}")]
     LayoutCoordLen(Layout, Coord),
+    #[error("complement error: layout {0} vs. size {1}")]
+    Complement(Layout, usize),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -32,7 +33,7 @@ impl std::ops::Index<usize> for Shape {
 
 impl std::fmt::Display for Shape {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{:?}", self.0)
     }
 }
 
@@ -82,7 +83,7 @@ impl std::ops::Index<usize> for Stride {
 
 impl std::fmt::Display for Stride {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{:?}", self.0)
     }
 }
 
@@ -123,7 +124,7 @@ impl std::ops::Index<usize> for Coord {
 
 impl std::fmt::Display for Coord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{:?}", self.0)
     }
 }
 
@@ -146,7 +147,7 @@ impl Coord {
 /// For more information, check:
 /// - [CuTe documents](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute);
 /// - [A note on the algebra of CuTe Layouts](https://leimao.github.io/downloads/article/2024-10-20-CuTe-Layout-Algebra/layout_algebra.pdf).
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Layout(pub Vec<(usize, usize)>);
 
 impl<S, D> TryFrom<(S, D)> for Layout
@@ -164,7 +165,7 @@ where
             Err(LayoutError::ShapeStrideLen(shape.clone(), stride.clone()))?
         }
 
-        let value = shape.0.into_iter().zip(stride.0).collect();
+        let value = shape.0.into_iter().zip_eq(stride.0).collect();
         Ok(Self(value))
     }
 }
@@ -178,6 +179,32 @@ impl std::fmt::Display for Layout {
 }
 
 impl Layout {
+    #[inline]
+    pub fn from_shape(shape: impl Into<Shape>) -> Self {
+        let shape: Shape = shape.into();
+        let stride = Stride(
+            shape
+                .0
+                .iter()
+                .scan(1, |p, x| {
+                    let q = *p;
+                    *p *= x;
+                    Some(q)
+                })
+                .collect(),
+        );
+        Self::from_shape_stride(shape, stride)
+    }
+
+    /// Creates a layout from shape and stride.
+    /// **Panics** if lengths of the shape and the stride don't match.
+    #[inline]
+    pub fn from_shape_stride(shape: impl Into<Shape>, stride: impl Into<Stride>) -> Self {
+        let shape: Shape = shape.into();
+        let stride: Stride = stride.into();
+        Self(shape.0.into_iter().zip_eq(stride.0).collect())
+    }
+
     /// Retrieves the shape of the layout.
     #[inline]
     pub fn shape(&self) -> Shape {
@@ -200,6 +227,12 @@ impl Layout {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.shape().is_empty()
+    }
+
+    /// Number of elements in the shape of the layout.
+    #[inline]
+    pub fn size(&self) -> usize {
+        self.shape().size()
     }
 
     /// Maps a linear index to a multi-dimensional coordinate.
@@ -234,6 +267,72 @@ impl Layout {
         )
     }
 
+    /// Returns a simplified coalesce of the layout.
+    pub fn coalesced(&self) -> Self {
+        let mut layout = self.0.clone();
+
+        loop {
+            if layout.len() < 2 {
+                break Self(layout);
+            }
+
+            let extended = [layout.clone(), vec![(1, 0)]].concat();
+            let coalesced = extended
+                .iter()
+                .tuples()
+                .map(|(&x, &y)| match (x, y) {
+                    ((1, _), y) => vec![y],
+                    (x, (1, _)) => vec![x],
+                    ((s0, d0), (s1, d1)) if d1 == s0 * d0 => vec![(s0 * s1, d0)],
+                    (x, y) => vec![x, y],
+                })
+                .concat();
+            if coalesced == layout {
+                break Self(layout);
+            }
+
+            layout = coalesced;
+        }
+    }
+
+    /// Returns a sorted clone of the layout.
+    #[inline]
+    pub fn sorted(&self) -> Self {
+        Self(
+            self.0
+                .iter()
+                .sorted_by_key(|(s, d)| (d, s))
+                .copied()
+                .collect(),
+        )
+    }
+
+    /// Returns the complement of the layout and a size, if being admissible for complement.
+    pub fn complement(&self, size: usize) -> Result<Self, LayoutError> {
+        let sorted = self.sorted();
+        let shape = sorted.shape();
+        let stride = sorted.stride();
+        let product = shape
+            .0
+            .iter()
+            .zip_eq(stride.0.iter())
+            .map(|(n, d)| n * d)
+            .collect_vec();
+
+        let stride = [stride.0, vec![size]].concat(); // [d0, d1, ..., dα, M]
+        let product = [vec![1], product].concat(); // [1, N0 d0, N1 d1, ..., Nα dα]
+
+        let shape: Vec<_> = stride
+            .iter()
+            .zip_eq(product.iter())
+            .map(|(d, p)| match d % p {
+                0 => Ok(d / p),
+                _ => Err(LayoutError::Complement(self.clone(), size)),
+            })
+            .try_collect()?;
+        Ok(Self::from_shape_stride(shape, product))
+    }
+
     /// Send an index to the layout's value.
     #[inline]
     pub fn value(&self, index: usize) -> usize {
@@ -251,16 +350,25 @@ impl Layout {
         Ok(self
             .0
             .iter()
-            .zip(coord.0.iter())
+            .zip_eq(coord.0.iter())
             .map(|(&(_, d), &x)| d * x)
             .sum())
+    }
+
+    /// Returns `true` if two layouts are totally equal as index mappings.
+    /// Note that this check is exponentially slow so only use it in tests.
+    #[cfg(test)]
+    #[inline]
+    pub fn check_congruent(&self, other: &Layout) -> bool {
+        if self.size() != other.size() {
+            return false;
+        }
+        (0..self.size()).all(|index| self.value(index) == other.value(index))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
-
     use super::{Coord, Layout};
 
     #[test]
@@ -270,8 +378,8 @@ mod tests {
     }
 
     #[test]
-    fn test_isomorphism() -> Result<()> {
-        let layout = Layout::try_from(([2, 3, 4], [3, 1, 6]))?;
+    fn test_isomorphism() {
+        let layout = Layout::from_shape_stride([2, 3, 4], [3, 1, 6]);
 
         assert_eq!(layout.iota(0), Coord(vec![0, 0, 0]));
         assert_eq!(layout.iota(1), Coord(vec![1, 0, 0]));
@@ -334,7 +442,37 @@ mod tests {
 
         assert_eq!(layout.iota_extend(24), Coord(vec![0, 0, 4]));
         assert_eq!(layout.iota_extend(25), Coord(vec![1, 0, 4]));
+    }
 
-        Ok(())
+    #[test]
+    fn test_coalesce() {
+        fn check(x: Layout) {
+            let coalesced = x.coalesced();
+            println!("{x} → {coalesced}");
+            assert!(x.check_congruent(&coalesced))
+        }
+
+        check(Layout::from_shape_stride([1], [0]));
+        check(Layout::from_shape_stride([1], [1]));
+
+        check(Layout::from_shape([2, 4]));
+        check(Layout::from_shape([2, 4, 6]));
+        check(Layout::from_shape([2, 4, 6, 2]));
+
+        check(Layout::from_shape_stride([2, 1, 6], [1, 6, 2]));
+        check(Layout::from_shape_stride([2, 1, 6], [1, 7, 2]));
+
+        check(Layout::from_shape_stride([2, 4, 6], [4, 1, 8]));
+        check(Layout::from_shape_stride([2, 1, 3], [1, 1, 2]));
+        check(Layout::from_shape_stride([2, 1, 3], [2, 4, 4]));
+        check(Layout::from_shape_stride([2, 1, 3], [2, 0, 4]));
+    }
+
+    #[test]
+    fn test_sort() {
+        assert_eq!(
+            Layout::from_shape_stride([2, 3, 4], [6, 2, 2]).sorted(),
+            Layout::from_shape_stride([3, 4, 2], [2, 2, 6])
+        );
     }
 }
