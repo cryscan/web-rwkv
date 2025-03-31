@@ -118,17 +118,62 @@ impl Shape {
         };
 
         assert!(i < self.len());
-
-        let c = d / p;
         let (r, q) = self.0.split_at(i);
 
-        assert_ne!(q.len(), 0);
+        assert!(!q.is_empty());
         assert_eq!(q[0], n);
 
-        let r = [r.to_vec(), vec![c]].concat();
-        let q = [vec![n / c], q[1..].to_vec()].concat();
+        let c = d / p;
+        let r = [r, &[c]].concat();
+        let q = [&[n / c], &q[1..]].concat();
 
         Ok((Shape(q), Shape(r)))
+    }
+
+    /// Performs weak shape division.
+    /// Since `c` doesn't necessarily divides `N(i)`, we can only get the remainder here.
+    pub fn shape_mod(&self, d: usize) -> Result<Self, LayoutError> {
+        if d == 0 {
+            return Err(LayoutError::ShapeDiv(self.clone(), d));
+        }
+        if self.is_empty() {
+            return Ok(Default::default());
+        }
+
+        // [`1`, `N0`, `N0 × N1`, ..., `N0 × N1 × ... × N(α - 1)`]
+        // [`N0`, `N1`, ..., `N(α)`]
+        let products = self
+            .0
+            .iter()
+            .scan(1, |p, &n| {
+                let q = *p;
+                *p *= n;
+                Some((q, n))
+            })
+            .collect_vec();
+
+        // find the division index
+        let Some((i, &(p, _))) = products.iter().enumerate().find(|&(i, &(p, n))| {
+            // 1. `p = N0 × N1 × ... × N(i-1)` divides d
+            if d % p != 0 {
+                return false;
+            }
+            // 2. if `i < α`, let `c = d / p`, we need `1 ≤ c < N(i)`
+            match (i, d / p) {
+                (i, _) if i + 1 == self.len() => true,
+                (_, c) => c > 0 && c < n,
+            }
+        }) else {
+            return Err(LayoutError::ShapeDiv(self.clone(), d));
+        };
+
+        assert!(i < self.len());
+        let r = &self.0[..i];
+
+        let c = d / p;
+        let r = [r, &[c]].concat();
+
+        Ok(Shape(r))
     }
 }
 
