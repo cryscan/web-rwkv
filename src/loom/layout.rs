@@ -5,8 +5,8 @@ use thiserror::Error;
 pub enum LayoutError {
     #[error("complement error: layout {0} vs. size {1}")]
     Complement(Layout, usize),
-    #[error("compose error: layout composition {1} ◦ {0} is not valid")]
-    Compose(Layout, Layout),
+    #[error("shape {0} is not left divisible by {1}")]
+    ShapeDiv(Shape, usize),
 }
 
 /// An [`IndexFunction`] is a mapping that maps an index to another.
@@ -70,6 +70,65 @@ impl Shape {
             0 => 0,
             _ => self.0.iter().product(),
         }
+    }
+
+    /// Performs shape division according to Definition 2.11 in [2](https://leimao.github.io/downloads/article/2024-10-20-CuTe-Layout-Algebra/layout_algebra.pdf).
+    ///
+    /// ## Brief Explanation
+    ///
+    /// Suppose the shape is `(N0, N1, ..., N(α))`,
+    /// and `d` can be divided "up to" `(N0, N1, ..., N(i - 1), c)`, where `c = d / (N0 × N1 × ... × N(i - 1))`.
+    ///
+    /// We can then divide the shape into
+    /// 1. A quotient part `(N(i) / c, N(i + 1), ..., N(α))`, and
+    /// 2. A remainder part `(N0, N1, ..., N(i - 1), c)`.
+    pub fn shape_div(&self, d: usize) -> Result<(Self, Self), LayoutError> {
+        if d == 0 {
+            return Err(LayoutError::ShapeDiv(self.clone(), d));
+        }
+        if self.is_empty() {
+            return Ok((self.clone(), Default::default()));
+        }
+
+        // [`1`, `N0`, `N0 × N1`, ..., `N0 × N1 × ... × N(α - 1)`]
+        // [`N0`, `N1`, ..., `N(α)`]
+        let products = self
+            .0
+            .iter()
+            .scan(1, |p, &n| {
+                let q = *p;
+                *p *= n;
+                Some((q, n))
+            })
+            .collect_vec();
+
+        // find the division index
+        let Some((i, &(p, n))) = products.iter().enumerate().find(|&(i, &(p, n))| {
+            // 1. `p = N0 × N1 × ... × N(i-1)` divides d
+            if d % p != 0 {
+                return false;
+            }
+            // 2. if `i < α`, let `c = d / p`, we need `1 ≤ c < N(i)`, and `c` divides `N(i)`
+            match (i, d / p) {
+                (i, _) if i + 1 == self.len() => true,
+                (_, c) => c > 0 && c < n && n % c == 0,
+            }
+        }) else {
+            return Err(LayoutError::ShapeDiv(self.clone(), d));
+        };
+
+        assert!(i < self.len());
+
+        let c = d / p;
+        let (r, q) = self.0.split_at(i);
+
+        assert_ne!(q.len(), 0);
+        assert_eq!(q[0], n);
+
+        let r = [r.to_vec(), vec![c]].concat();
+        let q = [vec![n / c], q[1..].to_vec()].concat();
+
+        Ok((Shape(q), Shape(r)))
     }
 }
 
@@ -158,8 +217,8 @@ impl Coord {
 /// A [`Layout`] is a mapping of multi-dimensional indices.
 ///
 /// For more information, check:
-/// - [CuTe documents](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute);
-/// - [A note on the algebra of CuTe Layouts](https://leimao.github.io/downloads/article/2024-10-20-CuTe-Layout-Algebra/layout_algebra.pdf).
+/// 1. [CuTe documents](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute);
+/// 2. [A note on the algebra of CuTe Layouts](https://leimao.github.io/downloads/article/2024-10-20-CuTe-Layout-Algebra/layout_algebra.pdf).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Layout(pub Vec<(usize, usize)>);
 
@@ -449,6 +508,22 @@ impl Compose<&Swizzle> for Layout {
     }
 }
 
+impl Compose<Layout> for Swizzle {
+    type Output = ComposedFn<Swizzle, Layout>;
+
+    fn compose(&self, f: Layout) -> Result<Self::Output, LayoutError> {
+        Ok(ComposedFn(self.clone(), f))
+    }
+}
+
+impl Compose<&Layout> for Swizzle {
+    type Output = ComposedFn<Swizzle, Layout>;
+
+    fn compose(&self, f: &Layout) -> Result<Self::Output, LayoutError> {
+        self.compose(f.clone())
+    }
+}
+
 /// Composition of 2 (possibly different types of) index functions `t` and `f`, i.e., `f ◦ t`.
 #[derive(Debug, Clone)]
 pub struct ComposedFn<T, F>(pub T, pub F);
@@ -469,7 +544,7 @@ where
 mod tests {
     use itertools::Itertools;
 
-    use super::{Coord, IndexFn, Layout, LayoutError};
+    use super::{Coord, IndexFn, Layout, LayoutError, Shape};
 
     #[test]
     fn test_isomorphism() {
@@ -637,6 +712,18 @@ mod tests {
         check(&Layout::from_shape_stride([4], [4]), 16)?;
         check(&Layout::from_shape_stride([2, 2], [4, 1]), 32)?;
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_shape_div() -> Result<(), LayoutError> {
+        let s = Shape::from([2, 6, 4]);
+        for d in 0..=s.size() {
+            let Ok((q, r)) = s.shape_div(d) else {
+                continue;
+            };
+            println!("{s} / {d} = {q}...{r}");
+        }
         Ok(())
     }
 }
