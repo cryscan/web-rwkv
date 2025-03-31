@@ -10,9 +10,18 @@ pub enum LayoutError {
 }
 
 /// An [`IndexFunction`] is a mapping that maps an index to another.
-pub trait IndexFunction<Index> {
+pub trait IndexFn<Index> {
+    type Output;
+
     /// Sends an index to a mapped value.
-    fn value(&self, index: Index) -> usize;
+    fn value(&self, index: Index) -> Self::Output;
+}
+
+pub trait Compose<F> {
+    type Output;
+
+    /// Apply `f` after `self`.
+    fn compose(&self, f: F) -> Result<Self::Output, LayoutError>;
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -353,14 +362,11 @@ impl Layout {
 
         Ok(Self::from_shape_stride(shape, product).coalesced())
     }
-
-    /// Layout composition. `a.compose(b)` corresponds to `B ◦ A` in layout algebra.
-    pub fn compose(&self, _layout: Layout) -> Result<Self, LayoutError> {
-        todo!()
-    }
 }
 
-impl IndexFunction<&Coord> for Layout {
+impl IndexFn<&Coord> for Layout {
+    type Output = usize;
+
     #[inline]
     fn value(&self, index: &Coord) -> usize {
         self.0
@@ -371,14 +377,18 @@ impl IndexFunction<&Coord> for Layout {
     }
 }
 
-impl IndexFunction<Coord> for Layout {
+impl IndexFn<Coord> for Layout {
+    type Output = usize;
+
     #[inline]
     fn value(&self, index: Coord) -> usize {
         self.value(&index)
     }
 }
 
-impl IndexFunction<usize> for Layout {
+impl IndexFn<usize> for Layout {
+    type Output = usize;
+
     #[inline]
     fn value(&self, index: usize) -> usize {
         let coord = self.iota_extend(index);
@@ -386,11 +396,80 @@ impl IndexFunction<usize> for Layout {
     }
 }
 
+impl Compose<&Layout> for Layout {
+    type Output = Layout;
+
+    /// Layout composition. `a.compose(b)` corresponds to `B ◦ A` in layout algebra.
+    fn compose(&self, _f: &Layout) -> Result<Self::Output, LayoutError> {
+        todo!()
+    }
+}
+
+impl Compose<Layout> for Layout {
+    type Output = Layout;
+
+    fn compose(&self, f: Layout) -> Result<Self::Output, LayoutError> {
+        self.compose(&f)
+    }
+}
+
+/// A swizzle functor.
+/// See [CuTe documentation](https://github.com/NVIDIA/cutlass/blob/main/include/cute/swizzle.hpp#L44) for more info.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+pub struct Swizzle {
+    pub base: usize,
+    pub bits: usize,
+    pub shift: usize,
+}
+
+impl IndexFn<usize> for Swizzle {
+    type Output = usize;
+
+    fn value(&self, index: usize) -> Self::Output {
+        assert!(self.shift > self.base);
+        let mask = (1 << self.base) - 1;
+        let mask = mask << (self.base + self.shift);
+        index ^ ((index & mask) >> self.shift)
+    }
+}
+
+impl Compose<Swizzle> for Layout {
+    type Output = ComposedFn<Layout, Swizzle>;
+
+    fn compose(&self, f: Swizzle) -> Result<Self::Output, LayoutError> {
+        Ok(ComposedFn(self.clone(), f))
+    }
+}
+
+impl Compose<&Swizzle> for Layout {
+    type Output = ComposedFn<Layout, Swizzle>;
+
+    fn compose(&self, f: &Swizzle) -> Result<Self::Output, LayoutError> {
+        self.compose(f.clone())
+    }
+}
+
+/// Composition of 2 (possibly different types of) index functions `t` and `f`, i.e., `f ◦ t`.
+#[derive(Debug, Clone)]
+pub struct ComposedFn<T, F>(pub T, pub F);
+
+impl<T, F, I, J, K> IndexFn<I> for ComposedFn<T, F>
+where
+    T: IndexFn<I, Output = J>,
+    F: IndexFn<J, Output = K>,
+{
+    type Output = K;
+
+    fn value(&self, index: I) -> Self::Output {
+        self.1.value(self.0.value(index))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
 
-    use super::{Coord, IndexFunction, Layout, LayoutError};
+    use super::{Coord, IndexFn, Layout, LayoutError};
 
     #[test]
     fn test_isomorphism() {
