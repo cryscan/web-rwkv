@@ -3,12 +3,16 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum LayoutError {
-    #[error("len error: shape {0} vs. stride {1}")]
-    ShapeStrideLen(Shape, Stride),
-    #[error("len error: layout {0} vs. coord {1}")]
-    LayoutCoordLen(Layout, Coord),
     #[error("complement error: layout {0} vs. size {1}")]
     Complement(Layout, usize),
+    #[error("compose error: layout composition {1} ◦ {0} is not valid")]
+    Compose(Layout, Layout),
+}
+
+/// An [`IndexFunction`] is a mapping that maps an index to another.
+pub trait IndexFunction<Index> {
+    /// Sends an index to a mapped value.
+    fn value(&self, index: Index) -> usize;
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -150,26 +154,6 @@ impl Coord {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Layout(pub Vec<(usize, usize)>);
 
-impl<S, D> TryFrom<(S, D)> for Layout
-where
-    S: Into<Shape>,
-    D: Into<Stride>,
-{
-    type Error = LayoutError;
-
-    fn try_from((shape, stride): (S, D)) -> Result<Self, Self::Error> {
-        let shape: Shape = shape.into();
-        let stride: Stride = stride.into();
-
-        if shape.len() != stride.len() {
-            return Err(LayoutError::ShapeStrideLen(shape.clone(), stride.clone()));
-        }
-
-        let value = shape.0.into_iter().zip_eq(stride.0).collect();
-        Ok(Self(value))
-    }
-}
-
 impl std::fmt::Display for Layout {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let shape = self.shape();
@@ -276,28 +260,6 @@ impl Layout {
         )
     }
 
-    /// Send an index to the layout's value.
-    #[inline]
-    pub fn value(&self, index: usize) -> usize {
-        let coord = self.iota_extend(index);
-        self.value_coord(&coord).expect("this couldn't happen")
-    }
-
-    /// Send a coordinate to the layout's value. The coordinate must have the same length as the layout.
-    #[inline]
-    pub fn value_coord(&self, coord: &Coord) -> Result<usize, LayoutError> {
-        if self.len() != coord.len() {
-            return Err(LayoutError::LayoutCoordLen(self.clone(), coord.clone()));
-        }
-
-        Ok(self
-            .0
-            .iter()
-            .zip_eq(coord.0.iter())
-            .map(|(&(_, d), &x)| d * x)
-            .sum())
-    }
-
     /// Returns `true` if two layouts are totally equal as index mappings.
     /// Note that this check is exponentially slow so only use it in tests.
     #[inline]
@@ -361,11 +323,11 @@ impl Layout {
         )
     }
 
-    /// Returns the complement of the layout and a size, if being admissible for complement.
-    pub fn complement(&self, co_size: usize) -> Result<Self, LayoutError> {
+    /// Complements of the layout to a given size, if being admissible for complement.
+    pub fn complement(&self, size: usize) -> Result<Self, LayoutError> {
         let layout = self.filtered().sorted();
         if layout.is_empty() {
-            return Ok(Layout::from_shape([co_size]));
+            return Ok(Layout::from_shape([size]));
         }
 
         let shape = layout.shape();
@@ -377,7 +339,7 @@ impl Layout {
             .map(|(n, d)| n * d)
             .collect_vec();
 
-        let stride = [stride.0, vec![co_size]].concat(); // [d0, d1, ..., dα, M]
+        let stride = [stride.0, vec![size]].concat(); // [d0, d1, ..., dα, M]
         let product = [vec![1], product].concat(); // [1, N0 d0, N1 d1, ..., Nα dα]
 
         let shape: Vec<_> = stride
@@ -385,10 +347,42 @@ impl Layout {
             .zip_eq(product.iter())
             .map(|(d, p)| match d % p {
                 0 => Ok(d / p),
-                _ => Err(LayoutError::Complement(self.clone(), co_size)),
+                _ => Err(LayoutError::Complement(self.clone(), size)),
             })
             .try_collect()?;
+
         Ok(Self::from_shape_stride(shape, product).coalesced())
+    }
+
+    /// Layout composition. `a.compose(b)` corresponds to `B ◦ A` in layout algebra.
+    pub fn compose(&self, _layout: Layout) -> Result<Self, LayoutError> {
+        todo!()
+    }
+}
+
+impl IndexFunction<&Coord> for Layout {
+    #[inline]
+    fn value(&self, index: &Coord) -> usize {
+        self.0
+            .iter()
+            .zip_eq(index.0.iter())
+            .map(|(&(_, d), &x)| d * x)
+            .sum()
+    }
+}
+
+impl IndexFunction<Coord> for Layout {
+    #[inline]
+    fn value(&self, index: Coord) -> usize {
+        self.value(&index)
+    }
+}
+
+impl IndexFunction<usize> for Layout {
+    #[inline]
+    fn value(&self, index: usize) -> usize {
+        let coord = self.iota_extend(index);
+        self.value(&coord)
     }
 }
 
@@ -396,13 +390,7 @@ impl Layout {
 mod tests {
     use itertools::Itertools;
 
-    use super::{Coord, Layout, LayoutError};
-
-    #[test]
-    fn test_layout_simple() {
-        assert!(Layout::try_from(([2, 2], [4, 1])).is_ok());
-        assert!(Layout::try_from(([2, 2, 4], [4, 1])).is_err());
-    }
+    use super::{Coord, IndexFunction, Layout, LayoutError};
 
     #[test]
     fn test_isomorphism() {
