@@ -530,8 +530,8 @@ impl IndexFn<usize> for Swizzle {
     type Output = usize;
 
     fn value(&self, index: usize) -> Self::Output {
-        assert!(self.shift > self.base);
-        let mask = (1 << self.base) - 1;
+        assert!(self.shift >= self.bits);
+        let mask = (1 << self.bits) - 1;
         let mask = mask << (self.base + self.shift);
         index ^ ((index & mask) >> self.shift)
     }
@@ -549,22 +549,6 @@ impl Compose<&Swizzle> for Layout {
     type Output = ComposedFn<Layout, Swizzle>;
 
     fn compose(&self, f: &Swizzle) -> Result<Self::Output, LayoutError> {
-        self.compose(f.clone())
-    }
-}
-
-impl Compose<Layout> for Swizzle {
-    type Output = ComposedFn<Swizzle, Layout>;
-
-    fn compose(&self, f: Layout) -> Result<Self::Output, LayoutError> {
-        Ok(ComposedFn(self.clone(), f))
-    }
-}
-
-impl Compose<&Layout> for Swizzle {
-    type Output = ComposedFn<Swizzle, Layout>;
-
-    fn compose(&self, f: &Layout) -> Result<Self::Output, LayoutError> {
         self.compose(f.clone())
     }
 }
@@ -589,7 +573,7 @@ where
 mod tests {
     use itertools::Itertools;
 
-    use super::{Coord, IndexFn, Layout, LayoutError, Shape};
+    use super::{Compose, Coord, IndexFn, Layout, LayoutError, Shape, Swizzle};
 
     #[test]
     fn test_isomorphism() {
@@ -761,14 +745,92 @@ mod tests {
     }
 
     #[test]
-    fn test_shape_div() -> Result<(), LayoutError> {
-        let s = Shape::from([2, 6, 4]);
-        for d in 0..=s.size() {
-            let Ok((q, r)) = s.shape_div(d) else {
-                continue;
-            };
-            println!("{s} / {d} = {q}...{r}");
+    fn test_swizzle() -> Result<(), LayoutError> {
+        let x = 16;
+        let y = 8;
+
+        let src: Vec<usize> = (0..x * y).collect();
+        let mut dst = vec![0usize; src.len()];
+        let mut ta: Vec<usize> = vec![0usize; src.len()];
+        let mut tb: Vec<usize> = vec![0usize; src.len()];
+
+        let swizzle = Swizzle {
+            base: 0,
+            bits: 4,
+            shift: 4,
+        };
+
+        let layout_u = Layout::from_shape_stride([x, y], [1, x]);
+        let layout_u_s = Layout::from_shape_stride([x, y], [1, x]).compose(&swizzle)?;
+
+        let layout_v = Layout::from_shape_stride([y, x], [1, y]);
+        let layout_v_s = Layout::from_shape_stride([y, x], [1, y]).compose(&swizzle)?;
+        let layout_v_t = Layout::from_shape_stride([x, y], [y, 1]);
+
+        for (j, i) in (0..y).cartesian_product(0..x) {
+            let u = Coord::from([i, j]);
+            let v = Coord::from([j, i]);
+
+            ta[layout_u_s.value(&u)] = src[layout_u.value(&u)];
+            tb[layout_v_s.value(&v)] = ta[layout_u_s.value(&u)];
         }
+
+        for (i, j) in (0..x).cartesian_product(0..y) {
+            let v = Coord::from([j, i]);
+            dst[layout_v.value(&v)] = tb[layout_v_s.value(&v)];
+        }
+
+        for j in 0..y {
+            for i in 0..x {
+                let u = Coord::from([i, j]);
+                print!("{}\t", src[layout_u.value(u)]);
+            }
+            print!("\n")
+        }
+        println!();
+
+        for j in 0..y {
+            for i in 0..x {
+                let u = Coord::from([i, j]);
+                print!("{}\t", ta[layout_u.value(u)]);
+            }
+            print!("\n")
+        }
+        println!();
+
+        for i in 0..x {
+            for j in 0..y {
+                let v = Coord::from([j, i]);
+                print!("{}\t", tb[layout_v.value(v)]);
+            }
+            print!("\n")
+        }
+        println!();
+
+        for i in 0..x {
+            for j in 0..y {
+                let v = Coord::from([j, i]);
+                print!("{}\t", dst[layout_v.value(v)]);
+            }
+            print!("\n")
+        }
+        println!();
+
+        for (j, i) in (0..y).cartesian_product(0..x) {
+            let u = Coord::from([i, j]);
+
+            assert_eq!(src[j * x + i], dst[i * y + j]);
+            assert_eq!(src[layout_u.value(&u)], dst[layout_v_t.value(&u)]);
+        }
+
         Ok(())
+    }
+
+    #[test]
+    fn test_shape_div() {
+        let s = Shape::from([2, 6, 4]);
+        (0..=s.size())
+            .filter_map(|d| s.shape_div(d).map(|(q, r)| (d, q, r)).ok())
+            .for_each(|(d, q, r)| println!("{s} = {r} + {d} • {q}"));
     }
 }
