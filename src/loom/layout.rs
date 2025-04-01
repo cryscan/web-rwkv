@@ -20,7 +20,7 @@ pub trait IndexFn<Index> {
 pub trait Compose<F> {
     type Output;
 
-    /// Apply `f` after `self`.
+    /// Functional composition. `t.compose(f)` is `f ◦ t` in algebra.
     fn compose(&self, f: F) -> Result<Self::Output, LayoutError>;
 }
 
@@ -450,6 +450,7 @@ impl Layout {
     }
 
     /// Returns a mostly simplified coalesce of the layout.
+    #[inline]
     pub fn coalesce(&self) -> Self {
         self.coalesce_to(1)
     }
@@ -510,12 +511,19 @@ impl Layout {
     }
 
     /// Complement the layout to the least size for which is admissible.
+    #[inline]
     pub fn complement_full(&self) -> Self {
         let layout = self.filter().sort();
         let Some((n, d)) = layout.0.last() else {
             return Default::default();
         };
         self.complement(n * d).expect("this complement cannot fail")
+    }
+
+    /// Logical division.
+    #[inline]
+    pub fn div_logic(&self, tile: &Self) -> Result<Self, LayoutError> {
+        tile.concat(&tile.complement(self.size())?).compose(self)
     }
 }
 
@@ -994,6 +1002,37 @@ mod tests {
 
         // capping a layout with 1:0 extends in stride-0
         check([24], ([4, 3, 1], [3, 1, 0]))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_div_logic() -> Result<(), LayoutError> {
+        fn check(layout: impl Into<Layout>, tile: impl Into<Layout>) -> Result<(), LayoutError> {
+            let layout: Layout = layout.into();
+            let tile: Layout = tile.into();
+            let block = layout.div_logic(&tile)?;
+
+            println!("{layout} / {tile} = {block}\n");
+            print_layout(&layout);
+            print_layout(&tile);
+            print_layout(&block);
+            println!("------\n");
+
+            Ok(())
+        }
+
+        check([6, 1], [2, 3])?;
+        check([6, 1], ([2, 3], [3, 1]))?;
+
+        check([6, 2], [2, 3])?;
+        check([6, 2], ([2, 3], [3, 1]))?;
+
+        check(([6, 6], [1, 12]), ([6, 3], [3, 1]))?;
+        check(([6, 6], [12, 1]), ([6, 3], [3, 1]))?;
+
+        check([4, 6], ([2, 2], [1, 4]))?;
+        check([4, 6], ([2, 2], [2, 4]))?;
 
         Ok(())
     }
