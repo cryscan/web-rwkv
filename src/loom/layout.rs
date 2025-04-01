@@ -92,7 +92,7 @@ impl Shape {
 
         // [`1`, `N0`, `N0 × N1`, ..., `N0 × N1 × ... × N(α - 1)`]
         // [`N0`, `N1`, ..., `N(α)`]
-        let products = self
+        let product = self
             .0
             .iter()
             .scan(1, |p, &n| {
@@ -103,7 +103,7 @@ impl Shape {
             .collect_vec();
 
         // find the division index
-        let Some((i, &(p, n))) = products.iter().enumerate().find(|&(i, &(p, n))| {
+        let Some((i, &(p, n))) = product.iter().enumerate().find(|&(i, &(p, n))| {
             // 1. `p = N0 × N1 × ... × N(i-1)` divides d
             if d % p != 0 {
                 return false;
@@ -142,7 +142,7 @@ impl Shape {
 
         // [`1`, `N0`, `N0 × N1`, ..., `N0 × N1 × ... × N(α - 1)`]
         // [`N0`, `N1`, ..., `N(α)`]
-        let products = self
+        let product = self
             .0
             .iter()
             .scan(1, |p, &n| {
@@ -153,7 +153,7 @@ impl Shape {
             .collect_vec();
 
         // find the division index
-        let Some((i, &(p, _))) = products.iter().enumerate().find(|&(i, &(p, n))| {
+        let Some((i, &(p, _))) = product.iter().enumerate().find(|&(i, &(p, n))| {
             // 1. `p = N0 × N1 × ... × N(i-1)` divides d
             if d % p != 0 {
                 return false;
@@ -383,6 +383,11 @@ impl Layout {
         (0..self.size()).all(|index| self.value(index) == other.value(index))
     }
 
+    #[inline]
+    pub fn concat(&self, other: &Layout) -> Self {
+        Self([self.0.clone(), other.0.clone()].concat())
+    }
+
     /// Returns a simplified coalesce of the layout.
     pub fn coalesced(&self) -> Self {
         let mut layout = self.0.clone();
@@ -465,6 +470,15 @@ impl Layout {
             .try_collect()?;
 
         Ok(Self::from_shape_stride(shape, product).coalesced())
+    }
+
+    /// Complement the layout to the least size for which is admissible.
+    pub fn complement_full(&self) -> Self {
+        let layout = self.filtered().sorted();
+        let Some((n, d)) = layout.0.last() else {
+            return Default::default();
+        };
+        self.complement(n * d).expect("this complement cannot fail")
     }
 }
 
@@ -569,11 +583,39 @@ where
     }
 }
 
+pub fn print_tensor(data: &[usize], layout: &Layout) {
+    assert_eq!(data.len(), layout.size());
+    assert!(layout.len() > 1);
+
+    let mut sketch = vec![0; layout.size()];
+    for i in 0..layout.size() {
+        sketch[i] = data[layout.value(i)];
+    }
+
+    let x: usize = layout.0.iter().step_by(2).map(|&(n, _)| n).product();
+    let y: usize = layout
+        .0
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .map(|&(n, _)| n)
+        .product();
+
+    println!("{layout}");
+    for j in 0..y {
+        for i in 0..x {
+            print!("{}\t", sketch[i + j * x]);
+        }
+        println!()
+    }
+    println!()
+}
+
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
 
-    use super::{Compose, Coord, IndexFn, Layout, LayoutError, Shape, Swizzle};
+    use super::{print_tensor, Compose, Coord, IndexFn, Layout, LayoutError, Shape, Swizzle};
 
     #[test]
     fn test_isomorphism() {
@@ -686,6 +728,9 @@ mod tests {
                 assert!(complement.co_size() <= co_size / layout.co_size() * layout.co_size());
             }
 
+            // 4. complement
+            assert!(layout.concat(&complement).complement_full().size() <= 1);
+
             Ok(())
         }
 
@@ -751,8 +796,7 @@ mod tests {
 
         let src: Vec<usize> = (0..x * y).collect();
         let mut dst = vec![0usize; src.len()];
-        let mut ta: Vec<usize> = vec![0usize; src.len()];
-        let mut tb: Vec<usize> = vec![0usize; src.len()];
+        let mut tmp: Vec<usize> = vec![0usize; src.len()];
 
         let swizzle = Swizzle {
             base: 0,
@@ -761,8 +805,6 @@ mod tests {
         };
 
         let layout_u = Layout::from_shape_stride([x, y], [1, x]);
-        let layout_u_s = Layout::from_shape_stride([x, y], [1, x]).compose(&swizzle)?;
-
         let layout_v = Layout::from_shape_stride([y, x], [1, y]);
         let layout_v_s = Layout::from_shape_stride([y, x], [1, y]).compose(&swizzle)?;
         let layout_v_t = Layout::from_shape_stride([x, y], [y, 1]);
@@ -770,55 +812,20 @@ mod tests {
         for (j, i) in (0..y).cartesian_product(0..x) {
             let u = Coord::from([i, j]);
             let v = Coord::from([j, i]);
-
-            ta[layout_u_s.value(&u)] = src[layout_u.value(&u)];
-            tb[layout_v_s.value(&v)] = ta[layout_u_s.value(&u)];
+            tmp[layout_v_s.value(&v)] = src[layout_u.value(&u)];
         }
 
-        for (i, j) in (0..x).cartesian_product(0..y) {
-            let v = Coord::from([j, i]);
-            dst[layout_v.value(&v)] = tb[layout_v_s.value(&v)];
+        for i in 0..src.len() {
+            dst[layout_v.value(i)] = tmp[layout_v_s.value(i)];
         }
 
-        for j in 0..y {
-            for i in 0..x {
-                let u = Coord::from([i, j]);
-                print!("{}\t", src[layout_u.value(u)]);
-            }
-            print!("\n")
-        }
-        println!();
-
-        for j in 0..y {
-            for i in 0..x {
-                let u = Coord::from([i, j]);
-                print!("{}\t", ta[layout_u.value(u)]);
-            }
-            print!("\n")
-        }
-        println!();
-
-        for i in 0..x {
-            for j in 0..y {
-                let v = Coord::from([j, i]);
-                print!("{}\t", tb[layout_v.value(v)]);
-            }
-            print!("\n")
-        }
-        println!();
-
-        for i in 0..x {
-            for j in 0..y {
-                let v = Coord::from([j, i]);
-                print!("{}\t", dst[layout_v.value(v)]);
-            }
-            print!("\n")
-        }
-        println!();
+        print_tensor(&src, &layout_u);
+        print_tensor(&tmp, &layout_v);
+        print_tensor(&dst, &layout_v);
+        print_tensor(&dst, &layout_v_t);
 
         for (j, i) in (0..y).cartesian_product(0..x) {
             let u = Coord::from([i, j]);
-
             assert_eq!(src[j * x + i], dst[i * y + j]);
             assert_eq!(src[layout_u.value(&u)], dst[layout_v_t.value(&u)]);
         }
