@@ -140,11 +140,15 @@ impl Shape {
     /// Performs weak shape division.
     /// Since `c` doesn't necessarily divides `N(i)`, we can only get the remainder here.
     pub fn shape_mod(&self, d: usize) -> Result<Self, LayoutError> {
-        if d == 0 {
-            return Err(LayoutError::ShapeDiv(self.clone(), d));
-        }
         if self.is_empty() {
             return Ok(Default::default());
+        }
+        if d == 0 {
+            assert_ne!(self.len(), 0);
+            // in this case, since all nature numbers divide 0, we must have `i = α`, and c = 0
+            let mut r = self.clone();
+            r.0[self.len() - 1] = 0;
+            return Ok(r);
         }
 
         // [`1`, `N0`, `N0 × N1`, ..., `N0 × N1 × ... × N(α - 1)`]
