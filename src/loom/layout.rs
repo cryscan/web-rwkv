@@ -27,12 +27,15 @@ pub trait Compose<F> {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Shape(pub Vec<usize>);
 
-impl<T> From<T> for Shape
-where
-    T: IntoIterator<Item = usize>,
-{
-    fn from(value: T) -> Self {
+impl<const N: usize> From<[usize; N]> for Shape {
+    fn from(value: [usize; N]) -> Self {
         Self(value.into_iter().collect())
+    }
+}
+
+impl From<Vec<usize>> for Shape {
+    fn from(value: Vec<usize>) -> Self {
+        Self(value)
     }
 }
 
@@ -83,11 +86,15 @@ impl Shape {
     /// 1. A quotient part `(N(i) / c, N(i + 1), ..., N(α))`, and
     /// 2. A remainder part `(N0, N1, ..., N(i - 1), c)`.
     pub fn shape_div(&self, d: usize) -> Result<(Self, Self), LayoutError> {
-        if d == 0 {
-            return Err(LayoutError::ShapeDiv(self.clone(), d));
-        }
         if self.is_empty() {
             return Ok((self.clone(), Default::default()));
+        }
+        if d == 0 {
+            assert_ne!(self.len(), 0);
+            // in this case, since all nature numbers divide 0, we must have `i = α`, and c = 0
+            let mut r = self.clone();
+            r.0[self.len() - 1] = 0;
+            return Ok((Default::default(), r));
         }
 
         // [`1`, `N0`, `N0 × N1`, ..., `N0 × N1 × ... × N(α - 1)`]
@@ -181,12 +188,15 @@ impl Shape {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Stride(pub Vec<usize>);
 
-impl<T> From<T> for Stride
-where
-    T: IntoIterator<Item = usize>,
-{
-    fn from(value: T) -> Self {
+impl<const N: usize> From<[usize; N]> for Stride {
+    fn from(value: [usize; N]) -> Self {
         Self(value.into_iter().collect())
+    }
+}
+
+impl From<Vec<usize>> for Stride {
+    fn from(value: Vec<usize>) -> Self {
+        Self(value)
     }
 }
 
@@ -222,12 +232,15 @@ impl Stride {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Coord(pub Vec<usize>);
 
-impl<T> From<T> for Coord
-where
-    T: IntoIterator<Item = usize>,
-{
-    fn from(value: T) -> Self {
+impl<const N: usize> From<[usize; N]> for Coord {
+    fn from(value: [usize; N]) -> Self {
         Self(value.into_iter().collect())
+    }
+}
+
+impl From<Vec<usize>> for Coord {
+    fn from(value: Vec<usize>) -> Self {
+        Self(value)
     }
 }
 
@@ -272,6 +285,25 @@ impl std::fmt::Display for Layout {
         let shape = self.shape();
         let stride = self.stride();
         write!(f, "<{shape}, {stride}>")
+    }
+}
+
+impl<S, D> From<(S, D)> for Layout
+where
+    S: Into<Shape>,
+    D: Into<Stride>,
+{
+    fn from((s, d): (S, D)) -> Self {
+        Self::from_shape_stride(s, d)
+    }
+}
+
+impl<S> From<S> for Layout
+where
+    S: Into<Shape>,
+{
+    fn from(s: S) -> Self {
+        Self::from_shape(s)
     }
 }
 
@@ -388,12 +420,12 @@ impl Layout {
         Self([self.0.clone(), other.0.clone()].concat())
     }
 
-    /// Returns a simplified coalesce of the layout.
-    pub fn coalesced(&self) -> Self {
+    /// Simplifies a layout to some length.
+    pub fn coalesce_to(&self, len: usize) -> Self {
         let mut layout = self.0.clone();
 
         loop {
-            if layout.len() < 2 {
+            if layout.len() <= len.max(1) {
                 break Self(layout);
             }
 
@@ -417,9 +449,14 @@ impl Layout {
         }
     }
 
+    /// Returns a mostly simplified coalesce of the layout.
+    pub fn coalesce(&self) -> Self {
+        self.coalesce_to(1)
+    }
+
     /// Returns the layout whose strides are in sorted order.
     #[inline]
-    pub fn sorted(&self) -> Self {
+    pub fn sort(&self) -> Self {
         Self(
             self.0
                 .iter()
@@ -431,7 +468,7 @@ impl Layout {
 
     /// Removes stride-0 or size-1 modes.
     #[inline]
-    pub fn filtered(&self) -> Self {
+    pub fn filter(&self) -> Self {
         Self(
             self.0
                 .iter()
@@ -443,7 +480,7 @@ impl Layout {
 
     /// Complements of the layout to a given size, if being admissible for complement.
     pub fn complement(&self, size: usize) -> Result<Self, LayoutError> {
-        let layout = self.filtered().sorted();
+        let layout = self.filter().sort();
         if layout.is_empty() {
             return Ok(Layout::from_shape([size]));
         }
@@ -469,12 +506,12 @@ impl Layout {
             })
             .try_collect()?;
 
-        Ok(Self::from_shape_stride(shape, product).coalesced())
+        Ok(Self::from_shape_stride(shape, product).coalesce())
     }
 
     /// Complement the layout to the least size for which is admissible.
     pub fn complement_full(&self) -> Self {
-        let layout = self.filtered().sorted();
+        let layout = self.filter().sort();
         let Some((n, d)) = layout.0.last() else {
             return Default::default();
         };
@@ -518,8 +555,37 @@ impl Compose<&Layout> for Layout {
     type Output = Layout;
 
     /// Layout composition. `a.compose(b)` corresponds to `B ◦ A` in layout algebra.
-    fn compose(&self, _f: &Layout) -> Result<Self::Output, LayoutError> {
-        todo!()
+    fn compose(&self, f: &Layout) -> Result<Self::Output, LayoutError> {
+        if self.is_empty() {
+            return Ok(self.clone());
+        }
+
+        let modes: Vec<_> = self
+            .0
+            .iter()
+            .map(|&(n, r)| {
+                let s = f.shape();
+                let d = f.stride();
+                let (q, r) = s.shape_div(r)?;
+                match r.len() {
+                    0 => Ok(Layout::from_shape_stride([n], [0])),
+                    i if i == s.len() => Ok(Layout::from_shape_stride([n], [r[i - 1] * d[i - 1]])),
+                    i => {
+                        let c = r[i - 1];
+                        let s = q.shape_mod(n)?;
+                        let mut d = Stride::from(d.0[i - 1..i - 1 + s.len()].to_vec());
+                        d.0[0] *= c;
+                        Ok(Layout::from_shape_stride(s, d))
+                    }
+                }
+            })
+            .try_collect()?;
+
+        let layout = modes
+            .into_iter()
+            .fold(Layout::default(), |acc, x| acc.concat(&x));
+
+        Ok(layout.coalesce_to(self.len()))
     }
 }
 
@@ -583,39 +649,55 @@ where
     }
 }
 
-pub fn print_tensor(data: &[usize], layout: &Layout) {
-    assert_eq!(data.len(), layout.size());
-    assert!(layout.len() > 1);
-
-    let mut sketch = vec![0; layout.size()];
-    for i in 0..layout.size() {
-        sketch[i] = data[layout.value(i)];
-    }
-
-    let x: usize = layout.0.iter().step_by(2).map(|&(n, _)| n).product();
-    let y: usize = layout
-        .0
-        .iter()
-        .skip(1)
-        .step_by(2)
-        .map(|&(n, _)| n)
-        .product();
-
-    println!("{layout}");
-    for j in 0..y {
-        for i in 0..x {
-            print!("{}\t", sketch[i + j * x]);
-        }
-        println!()
-    }
-    println!()
-}
-
 #[cfg(test)]
 mod tests {
     use itertools::Itertools;
 
-    use super::{print_tensor, Compose, Coord, IndexFn, Layout, LayoutError, Shape, Swizzle};
+    use super::{Compose, Coord, IndexFn, Layout, LayoutError, Shape, Swizzle};
+
+    #[allow(unused)]
+    fn print_tensor(data: &[usize], layout: &Layout) {
+        assert_eq!(data.len(), layout.size());
+
+        let mut sketch = vec![0; layout.size()];
+        for i in 0..layout.size() {
+            sketch[i] = data[layout.value(i)];
+        }
+
+        let n = layout.len() / 2;
+        let x: usize = layout.0.iter().take(n).map(|&(n, _)| n).product();
+        let y: usize = layout.0.iter().skip(n).map(|&(n, _)| n).product();
+
+        println!("{layout}");
+        for j in 0..y {
+            for i in 0..x {
+                print!("{}\t", sketch[i + j * x]);
+            }
+            println!()
+        }
+        println!()
+    }
+
+    #[allow(unused)]
+    fn print_layout(layout: &Layout) {
+        let mut sketch = vec![0; layout.size()];
+        for i in 0..layout.size() {
+            sketch[i] = layout.value(i);
+        }
+
+        let n = layout.len() / 2;
+        let x: usize = layout.0.iter().take(n).map(|&(n, _)| n).product();
+        let y: usize = layout.0.iter().skip(n).map(|&(n, _)| n).product();
+
+        println!("{layout}");
+        for j in 0..y {
+            for i in 0..x {
+                print!("{:<3}→ {}\t", i + j * x, sketch[i + j * x]);
+            }
+            println!()
+        }
+        println!()
+    }
 
     #[test]
     fn test_isomorphism() {
@@ -686,26 +768,27 @@ mod tests {
 
     #[test]
     fn test_coalesce() {
-        fn check(layout: Layout) {
-            let coalesced = layout.coalesced();
+        fn check(layout: impl Into<Layout>) {
+            let layout: Layout = layout.into();
+            let coalesced = layout.coalesce();
             println!("{layout} → {coalesced}");
             assert!(layout.check_isomorphic(&coalesced))
         }
 
-        check(Layout::from_shape_stride([1], [0]));
-        check(Layout::from_shape_stride([1], [1]));
+        check(([1], [0]));
+        check(([1], [1]));
 
-        check(Layout::from_shape([2, 4]));
-        check(Layout::from_shape([2, 4, 6]));
-        check(Layout::from_shape([2, 4, 6, 2]));
+        check([2, 4]);
+        check([2, 4, 6]);
+        check([2, 4, 6, 2]);
 
-        check(Layout::from_shape_stride([2, 1, 6], [1, 6, 2]));
-        check(Layout::from_shape_stride([2, 1, 6], [1, 7, 2]));
+        check(([2, 1, 6], [1, 6, 2]));
+        check(([2, 1, 6], [1, 7, 2]));
 
-        check(Layout::from_shape_stride([2, 4, 6], [4, 1, 8]));
-        check(Layout::from_shape_stride([2, 1, 3], [1, 1, 2]));
-        check(Layout::from_shape_stride([2, 1, 3], [2, 4, 4]));
-        check(Layout::from_shape_stride([2, 1, 3], [2, 0, 4]));
+        check(([2, 4, 6], [4, 1, 8]));
+        check(([2, 1, 3], [1, 1, 2]));
+        check(([2, 1, 3], [2, 4, 4]));
+        check(([2, 1, 3], [2, 0, 4]));
     }
 
     #[test]
@@ -835,9 +918,83 @@ mod tests {
 
     #[test]
     fn test_shape_div() {
-        let s = Shape::from([2, 6, 4]);
-        (0..=s.size())
-            .filter_map(|d| s.shape_div(d).map(|(q, r)| (d, q, r)).ok())
-            .for_each(|(d, q, r)| println!("{s} = {r} + {d} • {q}"));
+        fn check(s: impl Into<Shape>) {
+            let s: Shape = s.into();
+            (0..=s.size())
+                .filter_map(|d| s.shape_div(d).map(|(q, r)| (d, q, r)).ok())
+                .for_each(|(d, q, r)| println!("{s} = {r} + {d} • {q}"));
+            println!()
+        }
+
+        check([2, 0, 3]);
+        check([2, 6, 4]);
+    }
+
+    #[test]
+    fn test_layout_composition() -> Result<(), LayoutError> {
+        fn check(a: impl Into<Layout>, b: impl Into<Layout>) -> Result<(), LayoutError> {
+            let a: Layout = a.into();
+            let b: Layout = b.into();
+
+            let c = a.compose(&b)?;
+            println!("{b} ◦ {a} → {c}\n");
+            print_layout(&a);
+            print_layout(&b);
+            print_layout(&c);
+            println!("------\n");
+
+            assert_eq!(c.size(), a.size());
+            assert!((0..a.size()).all(|index| b.value(a.value(index)) == c.value(index)));
+
+            Ok(())
+        }
+
+        check(([1], [0]), ([1], [0]))?;
+        check(([1], [0]), ([1], [1]))?;
+        check(([1], [1]), ([1], [0]))?;
+        check(([1], [1]), ([1], [1]))?;
+
+        check(([4], [1]), ([4], [2]))?;
+        check(([4], [1]), ([4], [0]))?;
+        check(([4], [0]), ([4], [1]))?;
+
+        check(([2], [1]), ([4], [1]))?;
+        check(([2], [1]), ([4], [2]))?;
+        check(([2], [2]), ([4], [2]))?;
+
+        check([12], [4, 3])?;
+        check([4, 3], [12])?;
+        check([4, 3], ([12], [2]))?;
+        check(([4, 3], [3, 1]), [12])?;
+        check(([4, 3], [3, 1]), ([12], [2]))?;
+        check(([2, 3], [2, 4]), [12])?;
+        check([4, 3], [4, 3])?;
+        check(([6], [2]), [4, 3])?;
+        check(([6, 2], [2, 1]), [4, 3])?;
+        check([4, 3], ([4, 3], [3, 1]))?;
+        check([12], ([4, 3], [3, 1]))?;
+        check(([6], [2]), ([4, 3], [3, 1]))?;
+        check(([6, 2], [2, 1]), ([4, 3], [3, 1]))?;
+
+        check(([2, 2, 2, 2, 2, 2], [1, 16, 4, 8, 2, 32]), [8, 8])?;
+        check(([2, 2, 2, 2, 2, 2], [1, 16, 4, 8, 2, 32]), ([8, 8], [8, 1]))?;
+
+        check(([4, 2], [2, 1]), ([4, 2], [1, 16]))?;
+        check(([2, 2], [2, 1]), ([2, 2], [2, 1]))?;
+
+        check(([2, 2, 2], [2, 8, 1]), [4, 8, 2])?;
+        check(([2, 2, 2], [1, 8, 2]), ([4, 8, 2], [2, 8, 1]))?;
+        check(([4, 2, 2], [2, 8, 1]), ([4, 8, 2], [2, 8, 1]))?;
+
+        // last mode gets extended
+        check([24], ([4, 3], [3, 1]))?;
+
+        // last mode extension even without last mode divisibility
+        check([8], ([4, 3], [3, 1]))?;
+
+        // capping a layout with 1:0 extends in stride-0
+        check([24], ([4, 3, 1], [3, 1, 0]))?;
+
+        Ok(())
     }
 }
