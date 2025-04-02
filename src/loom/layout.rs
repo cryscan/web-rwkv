@@ -21,7 +21,7 @@ pub trait Compose<F> {
     type Output;
 
     /// Functional composition. `t.compose(f)` is `f ◦ t` in algebra.
-    fn compose(&self, f: F) -> Result<Self::Output, LayoutError>;
+    fn compose(&self, f: F) -> Self::Output;
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -392,6 +392,16 @@ impl Layout {
         }
     }
 
+    /// The whole span of the layout.
+    #[inline]
+    pub fn full_size(&self) -> usize {
+        let layout = self.filter().sort();
+        match layout.0.last() {
+            Some((n, d)) => n * d,
+            None => 0,
+        }
+    }
+
     /// Maps a linear index to a multi-dimensional coordinate.
     #[inline]
     pub fn iota(&self, index: usize) -> Coord {
@@ -432,11 +442,6 @@ impl Layout {
             return false;
         }
         (0..self.size()).all(|index| self.value(index) == other.value(index))
-    }
-
-    #[inline]
-    pub fn concat(&self, other: &Layout) -> Self {
-        Self([self.0.clone(), other.0.clone()].concat())
     }
 
     /// Simplifies a layout to some length.
@@ -529,20 +534,34 @@ impl Layout {
         Ok(Self::from_shape_stride(shape, product).coalesce())
     }
 
-    /// Complement the layout to the least size for which is admissible.
+    /// Complement the layout to its full size, which is the least size that is admissible for completion.
     #[inline]
     pub fn complement_full(&self) -> Self {
-        let layout = self.filter().sort();
-        let Some((n, d)) = layout.0.last() else {
-            return Default::default();
-        };
-        self.complement(n * d).expect("this complement cannot fail")
+        self.complement(self.full_size())
+            .expect("this complement cannot fail")
     }
 
-    /// Logical division.
     #[inline]
-    pub fn div_logic(&self, tile: &Self) -> Result<Self, LayoutError> {
-        tile.concat(&tile.complement(self.size())?).compose(self)
+    fn concat(&self, t: impl std::borrow::Borrow<Layout>) -> Self {
+        let t: &Layout = t.borrow();
+        Self([&self.0[..], &t.0[..]].concat())
+    }
+
+    /// [Tile division](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute/02_layout_algebra.md#division-tiling).
+    ///
+    /// `A ⊘ B := A ∘ (B, B∗)`.
+    #[inline]
+    pub fn div(&self, tile: &Self) -> Result<Self, LayoutError> {
+        tile.concat(tile.complement(self.size())?).compose(self)
+    }
+
+    /// [Tile product](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute/02_layout_algebra.md#product-tiling).
+    ///
+    /// `A ⊗ B := (A, A∗ ∘ B)`.
+    #[inline]
+    pub fn prod(&self, tile: &Self) -> Result<Self, LayoutError> {
+        let size = self.size() * tile.full_size();
+        Ok(self.concat(tile.compose(self.complement(size)?)?))
     }
 }
 
@@ -579,10 +598,10 @@ impl IndexFn<usize> for Layout {
 }
 
 impl Compose<&Layout> for Layout {
-    type Output = Layout;
+    type Output = Result<Self, LayoutError>;
 
-    /// Layout composition. `a.compose(b)` corresponds to `B ◦ A` in layout algebra.
-    fn compose(&self, f: &Layout) -> Result<Self::Output, LayoutError> {
+    /// Layout composition. `a.compose(b)` corresponds to `B ∘ A` in layout algebra.
+    fn compose(&self, f: &Layout) -> Self::Output {
         if self.is_empty() {
             return Ok(self.clone());
         }
@@ -621,9 +640,10 @@ impl Compose<&Layout> for Layout {
 }
 
 impl Compose<Layout> for Layout {
-    type Output = Layout;
+    type Output = Result<Self, LayoutError>;
 
-    fn compose(&self, f: Layout) -> Result<Self::Output, LayoutError> {
+    #[inline]
+    fn compose(&self, f: Layout) -> Self::Output {
         self.compose(&f)
     }
 }
@@ -651,20 +671,20 @@ impl IndexFn<usize> for Swizzle {
 impl Compose<Swizzle> for Layout {
     type Output = ComposedFn<Layout, Swizzle>;
 
-    fn compose(&self, f: Swizzle) -> Result<Self::Output, LayoutError> {
-        Ok(ComposedFn(self.clone(), f))
+    fn compose(&self, f: Swizzle) -> Self::Output {
+        ComposedFn(self.clone(), f)
     }
 }
 
 impl Compose<&Swizzle> for Layout {
     type Output = ComposedFn<Layout, Swizzle>;
 
-    fn compose(&self, f: &Swizzle) -> Result<Self::Output, LayoutError> {
-        self.compose(f.clone())
+    fn compose(&self, f: &Swizzle) -> Self::Output {
+        ComposedFn(self.clone(), f.clone())
     }
 }
 
-/// Composition of 2 (possibly different types of) index functions `t` and `f`, i.e., `f ◦ t`.
+/// Composition of 2 (possibly different types of) index functions `t` and `f`, i.e., `f ∘ t`.
 #[derive(Debug, Clone)]
 pub struct ComposedFn<T, F>(pub T, pub F);
 
@@ -843,7 +863,7 @@ mod tests {
             }
 
             // 4. complement
-            assert!(layout.concat(&complement).complement_full().size() <= 1);
+            assert!(layout.concat(complement).complement_full().size() <= 1);
 
             Ok(())
         }
@@ -920,7 +940,7 @@ mod tests {
 
         let layout_u = Layout::from_shape_stride([x, y], [1, x]);
         let layout_v = Layout::from_shape_stride([y, x], [1, y]);
-        let layout_v_s = Layout::from_shape_stride([y, x], [1, y]).compose(&swizzle)?;
+        let layout_v_s = Layout::from_shape_stride([y, x], [1, y]).compose(swizzle);
         let layout_v_t = Layout::from_shape_stride([x, y], [y, 1]);
 
         for (j, i) in (0..y).cartesian_product(0..x) {
@@ -968,7 +988,7 @@ mod tests {
             let b: Layout = b.into();
 
             let c = a.compose(&b)?;
-            println!("{b} ◦ {a} → {c}\n");
+            println!("{b} ∘ {a} → {c}\n");
             print_layout(&a);
             print_layout(&b);
             print_layout(&c);
@@ -1030,16 +1050,16 @@ mod tests {
     }
 
     #[test]
-    fn test_div_logic() -> Result<(), LayoutError> {
+    fn test_div() -> Result<(), LayoutError> {
         fn check(layout: impl Into<Layout>, tile: impl Into<Layout>) -> Result<(), LayoutError> {
             let layout: Layout = layout.into();
             let tile: Layout = tile.into();
-            let block = layout.div_logic(&tile)?;
+            let div = layout.div(&tile)?;
 
-            println!("{layout} / {tile} = {block}\n");
+            println!("{layout} ⊘ {tile} = {div}\n");
             print_layout(&layout);
             print_layout(&tile);
-            print_layout(&block);
+            print_layout(&div);
             println!("------\n");
 
             Ok(())
@@ -1058,6 +1078,29 @@ mod tests {
         check([4, 6], ([2, 2], [2, 4]))?;
 
         check([16, 4], [4])?;
+        check(([4, 2, 3], [2, 1, 8]), ([4], [2]))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prod() -> Result<(), LayoutError> {
+        fn check(layout: impl Into<Layout>, tile: impl Into<Layout>) -> Result<(), LayoutError> {
+            let layout: Layout = layout.into();
+            let tile: Layout = tile.into();
+            let prod = layout.prod(&tile)?;
+
+            println!("{layout} ⊗ {tile} = {prod}\n");
+            print_layout(&layout);
+            print_layout(&tile);
+            print_layout(&prod);
+            println!("------\n");
+
+            Ok(())
+        }
+
+        check(([2, 2], [4, 1]), ([6], [1]))?;
+        check(([2, 5], [5, 1]), ([3, 2], [1, 3]))?;
 
         Ok(())
     }
