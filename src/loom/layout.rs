@@ -54,6 +54,11 @@ impl std::fmt::Display for Shape {
 }
 
 impl Shape {
+    #[inline]
+    pub fn from_slice(slice: &[usize]) -> Self {
+        Self(slice.to_vec())
+    }
+
     /// Dimension of the shape.
     #[inline]
     pub fn len(&self) -> usize {
@@ -219,6 +224,11 @@ impl std::fmt::Display for Stride {
 }
 
 impl Stride {
+    #[inline]
+    pub fn from_slice(slice: &[usize]) -> Self {
+        Self(slice.to_vec())
+    }
+
     /// Dimension of the stride.
     #[inline]
     pub fn len(&self) -> usize {
@@ -263,6 +273,11 @@ impl std::fmt::Display for Coord {
 }
 
 impl Coord {
+    #[inline]
+    pub fn from_slice(slice: &[usize]) -> Self {
+        Self(slice.to_vec())
+    }
+
     /// Dimension of the coordinate.
     #[inline]
     pub fn len(&self) -> usize {
@@ -585,6 +600,10 @@ impl Compose<&Layout> for Layout {
                     i => {
                         let c = r[i - 1];
                         let s = q.shape_mod(n)?;
+                        let s = match s.0.last() {
+                            Some(1) => Shape::from_slice(&s.0[..s.len() - 1]),
+                            _ => s,
+                        };
                         let mut d = Stride::from(d.0[i - 1..i - 1 + s.len()].to_vec());
                         d.0[0] *= c;
                         Ok(Layout::from_shape_stride(s, d))
@@ -597,7 +616,7 @@ impl Compose<&Layout> for Layout {
             .into_iter()
             .fold(Layout::default(), |acc, x| acc.concat(&x));
 
-        Ok(layout.coalesce_to(self.len()))
+        Ok(layout)
     }
 }
 
@@ -1037,6 +1056,8 @@ mod tests {
 
         check([4, 6], ([2, 2], [1, 4]))?;
         check([4, 6], ([2, 2], [2, 4]))?;
+
+        check([16, 4], [4])?;
 
         Ok(())
     }
