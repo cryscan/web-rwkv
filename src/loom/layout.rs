@@ -192,6 +192,7 @@ impl Shape {
 
         let c = d / p;
         let r = [r, &[c]].concat();
+        assert_ne!(r.len(), 0);
 
         Ok(Shape(r))
     }
@@ -327,6 +328,12 @@ where
 {
     fn from(s: S) -> Self {
         Self::from_shape(s)
+    }
+}
+
+impl From<(usize, usize)> for Layout {
+    fn from((s, d): (usize, usize)) -> Self {
+        Self::from_shape_stride([s], [d])
     }
 }
 
@@ -550,7 +557,7 @@ impl Layout {
             })
             .try_collect()?;
 
-        Ok(Self::from_shape_stride(shape, product).coalesce())
+        Ok(Self::from_shape_stride(shape, product).coalesce_to(self.len()))
     }
 
     /// Complement the layout to its full size, which is the least size that is admissible for completion.
@@ -565,6 +572,18 @@ impl Layout {
     fn concat(&self, other: impl Borrow<Self>) -> Self {
         let other: &Self = other.borrow();
         Self([&self.0[..], &other.0[..]].concat())
+    }
+
+    /// Make a tiler from this layout.
+    #[inline]
+    pub fn tiler(&self, tiler: impl IntoIterator<Item = (usize, usize)>) -> Self {
+        let (shape, stride): (Vec<_>, Vec<_>) = tiler.into_iter().unzip();
+        let stride = stride
+            .into_iter()
+            .zip_eq(self.0.iter())
+            .map(|(d, &(_, r))| d * r)
+            .collect_vec();
+        Self::from_shape_stride(shape, stride)
     }
 
     /// [Tile division](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute/02_layout_algebra.md#division-tiling).
@@ -619,48 +638,75 @@ impl IndexFn<usize> for Layout {
     }
 }
 
-impl Compose<&Layout> for Layout {
-    type Output = Result<Self, LayoutError>;
+impl Compose<&Layout> for (usize, usize) {
+    type Output = Result<Layout, LayoutError>;
 
-    /// Layout composition. `a.compose(b)` corresponds to `B ∘ A` in layout algebra.
     fn compose(&self, f: &Layout) -> Self::Output {
-        if self.is_empty() {
-            return Ok(self.clone());
-        }
-        if !self.check_disjoint() {
-            return Err(LayoutError::Disjoint(self.clone()));
-        }
-
-        let modes: Vec<_> = self
-            .0
-            .iter()
-            .map(|&(n, r)| {
+        let &(n, r) = self;
+        match n {
+            0 | 1 => Ok(Layout::from((n, r))),
+            n => {
                 let s = f.shape();
                 let d = f.stride();
                 let (q, r) = s.shape_div(r)?;
                 match r.len() {
-                    0 => Ok(Layout::from_shape_stride([n], [0])),
-                    i if i == s.len() => Ok(Layout::from_shape_stride([n], [r[i - 1] * d[i - 1]])),
+                    0 => Ok(Layout::from((n, 0))),
+                    i if i == s.len() => Ok(Layout::from((n, r[i - 1] * d[i - 1]))),
                     i => {
-                        let c = r[i - 1];
+                        let i = i - 1;
+                        let c = r[i];
                         let s = q.shape_mod(n)?;
                         let s = match s.0.last() {
                             Some(1) => Shape::from_slice(&s.0[..s.len() - 1]),
                             _ => s,
                         };
-                        let mut d = Stride::from(d.0[i - 1..i - 1 + s.len()].to_vec());
+                        let mut d = Stride::from(d.0[i..i + s.len()].to_vec());
                         d.0[0] *= c;
                         Ok(Layout::from_shape_stride(s, d))
                     }
                 }
-            })
-            .try_collect()?;
+            }
+        }
+    }
+}
 
+impl Compose<&mut Layout> for (usize, usize) {
+    type Output = Result<Layout, LayoutError>;
+
+    fn compose(&self, f: &mut Layout) -> Self::Output {
+        self.compose(f as &Layout)
+    }
+}
+
+impl Compose<Layout> for (usize, usize) {
+    type Output = Result<Layout, LayoutError>;
+
+    fn compose(&self, f: Layout) -> Self::Output {
+        self.compose(&f)
+    }
+}
+
+impl Compose<&Layout> for Layout {
+    type Output = Result<Self, LayoutError>;
+
+    /// Layout composition. `a.compose(b)` corresponds to `B ∘ A` in layout algebra.
+    fn compose(&self, f: &Layout) -> Self::Output {
+        if !self.check_disjoint() {
+            return Err(LayoutError::Disjoint(self.clone()));
+        }
+        let modes: Vec<_> = self.0.iter().map(|&mode| mode.compose(f)).try_collect()?;
         let layout = modes
             .into_iter()
             .fold(Layout::default(), |acc, x| acc.concat(&x));
-
         Ok(layout)
+    }
+}
+
+impl Compose<&mut Layout> for Layout {
+    type Output = Result<Layout, LayoutError>;
+
+    fn compose(&self, f: &mut Layout) -> Self::Output {
+        self.compose(f as &Layout)
     }
 }
 
@@ -705,6 +751,14 @@ impl Compose<&Swizzle> for Layout {
     type Output = ComposedFn<Layout, Swizzle>;
 
     fn compose(&self, f: &Swizzle) -> Self::Output {
+        ComposedFn(self.clone(), f.clone())
+    }
+}
+
+impl Compose<&mut Swizzle> for Layout {
+    type Output = ComposedFn<Layout, Swizzle>;
+
+    fn compose(&self, f: &mut Swizzle) -> Self::Output {
         ComposedFn(self.clone(), f.clone())
     }
 }
@@ -874,9 +928,10 @@ mod tests {
 
     #[test]
     fn test_complement() -> Result<(), LayoutError> {
-        fn check(layout: &Layout, co_size: usize) -> Result<(), LayoutError> {
-            let complement = layout.complement(co_size)?;
-            println!("{{{layout}, {co_size}}} → {complement}");
+        fn check(layout: impl Borrow<Layout>, size: usize) -> Result<(), LayoutError> {
+            let layout: &Layout = layout.borrow();
+            let complement = layout.complement(size)?;
+            println!("{{{layout}, {size}}} → {complement}");
 
             // 1. disjoint
             assert!((1..layout.size()).all(|index| layout.value(index) != complement.value(index)));
@@ -888,8 +943,8 @@ mod tests {
 
             // 3. bounded
             if layout.size() > 0 {
-                assert!(complement.size() >= co_size / layout.size());
-                assert!(complement.co_size() <= co_size / layout.co_size() * layout.co_size());
+                assert!(complement.size() >= size / layout.size());
+                assert!(complement.co_size() <= size / layout.co_size() * layout.co_size());
             }
 
             // 4. complement
@@ -942,13 +997,9 @@ mod tests {
             assert!(check(&layout, 19).is_err());
         }
 
-        {
-            let layout = Layout::from_shape_stride([4], [4]);
-            check(&layout, 16)?;
-        }
-
-        check(&Layout::from_shape_stride([4], [4]), 16)?;
-        check(&Layout::from_shape_stride([2, 2], [4, 1]), 32)?;
+        check(Layout::from_shape_stride([4], [4]), 16)?;
+        check(Layout::from_shape_stride([4], [4]), 16)?;
+        check(Layout::from_shape_stride([2, 2], [4, 1]), 32)?;
 
         Ok(())
     }
@@ -968,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_composition() -> Result<(), LayoutError> {
+    fn test_composition() -> Result<(), LayoutError> {
         fn check(a: impl Into<Layout>, b: impl Into<Layout>) -> Result<(), LayoutError> {
             let a: Layout = a.into();
             let b: Layout = b.into();
@@ -1159,8 +1210,8 @@ mod tests {
 
         let (bm, bn, bk) = (2, 2, 4);
 
-        let layout_xa = layout_a.div(Layout::from_shape_stride([bm, bk], [1, m]))?;
-        let layout_xb = layout_b.div(Layout::from_shape_stride([bn, bk], [1, n]))?;
+        let layout_xa = layout_a.div(layout_a.tiler([(bm, 1), (bk, 1)]))?;
+        let layout_xb = layout_b.div(layout_b.tiler([(bn, 1), (bk, 1)]))?;
 
         print_layout(&layout_xa);
         print_layout(&layout_xb);
