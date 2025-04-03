@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use itertools::Itertools;
 use thiserror::Error;
 
@@ -439,11 +441,12 @@ impl Layout {
     /// Returns `true` if two layouts are totally equal as index mappings.
     /// Note that this check is exponentially slow so only use it in tests.
     #[inline]
-    pub fn check_isomorphic(&self, other: &Layout) -> bool {
-        if self.size() != other.size() {
-            return false;
+    pub fn check_isomorphic(&self, other: impl Borrow<Layout>) -> bool {
+        let other: &Self = other.borrow();
+        match self.size() == other.size() {
+            true => (0..self.size()).all(|index| self.value(index) == other.value(index)),
+            false => false,
         }
-        (0..self.size()).all(|index| self.value(index) == other.value(index))
     }
 
     /// Returns `true` if all modes cover disjoint ranges.
@@ -557,17 +560,19 @@ impl Layout {
             .expect("this complement cannot fail")
     }
 
+    /// Stack another layout onto `self`.
     #[inline]
-    fn concat(&self, t: impl std::borrow::Borrow<Layout>) -> Self {
-        let t: &Layout = t.borrow();
-        Self([&self.0[..], &t.0[..]].concat())
+    fn concat(&self, other: impl Borrow<Self>) -> Self {
+        let other: &Self = other.borrow();
+        Self([&self.0[..], &other.0[..]].concat())
     }
 
     /// [Tile division](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute/02_layout_algebra.md#division-tiling).
     ///
     /// `A ⊘ B := A ∘ (B, B∗)`.
     #[inline]
-    pub fn div(&self, tile: &Self) -> Result<Self, LayoutError> {
+    pub fn div(&self, tile: impl Borrow<Self>) -> Result<Self, LayoutError> {
+        let tile: &Self = tile.borrow();
         tile.concat(tile.complement(self.size())?).compose(self)
     }
 
@@ -575,7 +580,8 @@ impl Layout {
     ///
     /// `A ⊗ B := (A, A∗ ∘ B)`.
     #[inline]
-    pub fn prod(&self, tile: &Self) -> Result<Self, LayoutError> {
+    pub fn prod(&self, tile: impl Borrow<Self>) -> Result<Self, LayoutError> {
+        let tile: &Self = tile.borrow();
         let size = self.size() * tile.full_size();
         Ok(self.concat(tile.compose(self.complement(size)?)?))
     }
@@ -721,12 +727,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Borrow;
+
     use itertools::Itertools;
 
     use super::{Compose, Coord, IndexFn, Layout, LayoutError, Shape, Swizzle};
 
     #[allow(unused)]
-    fn print_tensor(data: &[usize], layout: &Layout) {
+    fn print_tensor(data: &[usize], layout: impl Borrow<Layout>) {
+        let layout: &Layout = layout.borrow();
         assert_eq!(data.len(), layout.size());
 
         let mut sketch = vec![0; layout.size()];
@@ -749,7 +758,9 @@ mod tests {
     }
 
     #[allow(unused)]
-    fn print_layout(layout: &Layout) {
+    fn print_layout(layout: impl Borrow<Layout>) {
+        let layout: &Layout = layout.borrow();
+
         let mut sketch = vec![0; layout.size()];
         for i in 0..layout.size() {
             sketch[i] = layout.value(i);
@@ -943,50 +954,6 @@ mod tests {
     }
 
     #[test]
-    fn test_swizzle() -> Result<(), LayoutError> {
-        let x = 16;
-        let y = 8;
-
-        let src: Vec<usize> = (0..x * y).collect();
-        let mut dst = vec![0usize; src.len()];
-        let mut tmp: Vec<usize> = vec![0usize; src.len()];
-
-        let swizzle = Swizzle {
-            base: 0,
-            bits: 4,
-            shift: 4,
-        };
-
-        let layout_u = Layout::from_shape_stride([x, y], [1, x]);
-        let layout_v = Layout::from_shape_stride([y, x], [1, y]);
-        let layout_v_s = Layout::from_shape_stride([y, x], [1, y]).compose(swizzle);
-        let layout_v_t = Layout::from_shape_stride([x, y], [y, 1]);
-
-        for (j, i) in (0..y).cartesian_product(0..x) {
-            let u = Coord::from([i, j]);
-            let v = Coord::from([j, i]);
-            tmp[layout_v_s.value(&v)] = src[layout_u.value(&u)];
-        }
-
-        for i in 0..src.len() {
-            dst[layout_v.value(i)] = tmp[layout_v_s.value(i)];
-        }
-
-        print_tensor(&src, &layout_u);
-        print_tensor(&tmp, &layout_v);
-        print_tensor(&dst, &layout_v);
-        print_tensor(&dst, &layout_v_t);
-
-        for (j, i) in (0..y).cartesian_product(0..x) {
-            let u = Coord::from([i, j]);
-            assert_eq!(src[j * x + i], dst[i * y + j]);
-            assert_eq!(src[layout_u.value(&u)], dst[layout_v_t.value(&u)]);
-        }
-
-        Ok(())
-    }
-
-    #[test]
     fn test_shape_div() {
         fn check(s: impl Into<Shape>) {
             let s: Shape = s.into();
@@ -1079,9 +1046,9 @@ mod tests {
             let c = a.div(&b)?;
 
             println!("{a} / {b} = {c}\n");
-            print_layout(&a);
-            print_layout(&b);
-            print_layout(&c);
+            print_layout(a);
+            print_layout(b);
+            print_layout(c);
             println!("------\n");
 
             Ok(())
@@ -1113,9 +1080,9 @@ mod tests {
             let c = a.prod(&b)?;
 
             println!("{a} • {b} = {c}\n");
-            print_layout(&a);
-            print_layout(&b);
-            print_layout(&c);
+            print_layout(a);
+            print_layout(b);
+            print_layout(c);
             println!("------\n");
 
             Ok(())
@@ -1123,6 +1090,80 @@ mod tests {
 
         check(([2, 2], [4, 1]), ([6], [1]))?;
         check(([2, 5], [5, 1]), ([3, 2], [1, 3]))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_transpose() -> Result<(), LayoutError> {
+        let x = 8;
+        let y = 6;
+
+        let src = (0..x * y).collect_vec();
+        let mut dst = vec![0usize; src.len()];
+        let mut tmp = vec![0usize; src.len()];
+
+        let swizzle = Swizzle {
+            base: 0,
+            bits: 3,
+            shift: 3,
+        };
+
+        let layout_u = Layout::from_shape_stride([x, y], [1, x]);
+        let layout_v = Layout::from_shape_stride([y, x], [1, y]);
+        let layout_v_s = layout_v.compose(&swizzle);
+
+        let layout_uv = Layout::from_shape_stride([x, y], [y, 1]);
+        let layout_uv_s = layout_uv.compose(&swizzle);
+
+        // for (j, i) in (0..y).cartesian_product(0..x) {
+        //     let u = Coord::from([i, j]);
+        //     let v = Coord::from([j, i]);
+        //     tmp[layout_v_s.value(&v)] = src[layout_u.value(&u)];
+        // }
+
+        for i in 0..src.len() {
+            tmp[layout_uv_s.value(i)] = src[layout_u.value(i)];
+        }
+
+        for i in 0..src.len() {
+            dst[layout_v.value(i)] = tmp[layout_v_s.value(i)];
+        }
+
+        print_tensor(&src, &layout_u);
+        print_tensor(&tmp, &layout_v);
+        print_tensor(&dst, &layout_v);
+        print_tensor(&dst, &layout_uv);
+
+        for i in 0..src.len() {
+            assert_eq!(src[layout_u.value(i)], dst[layout_uv.value(i)]);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_gemm_nt() -> Result<(), LayoutError> {
+        let (m, n, k) = (4, 8, 12);
+
+        let a = (0..m * k).collect_vec();
+        let b = (0..n * k).collect_vec();
+        let _c = vec![0usize, m * n];
+
+        let layout_a = Layout::from_shape([m, k]); // M-major
+        let layout_b = Layout::from_shape([n, k]); // N-major
+        let _layout_c = Layout::from_shape([m, n]); // M-major
+
+        print_tensor(&a, &layout_a);
+        print_tensor(&b, &layout_b);
+
+        let (bm, bn, bk) = (2, 2, 4);
+
+        let layout_xa = layout_a.div(Layout::from_shape_stride([bm, bk], [1, m]))?;
+        let layout_xb = layout_b.div(Layout::from_shape_stride([bn, bk], [1, n]))?;
+
+        print_layout(&layout_xa);
+        print_layout(&layout_xb);
 
         Ok(())
     }
