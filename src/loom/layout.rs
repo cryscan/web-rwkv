@@ -7,6 +7,8 @@ pub enum LayoutError {
     Complement(Layout, usize),
     #[error("shape {0} is not left divisible by {1}")]
     ShapeDiv(Shape, usize),
+    #[error("layout {0} is not disjoint")]
+    Disjoint(Layout),
 }
 
 /// An [`IndexFunction`] is a mapping that maps an index to another.
@@ -444,6 +446,20 @@ impl Layout {
         (0..self.size()).all(|index| self.value(index) == other.value(index))
     }
 
+    /// Returns `true` if all modes cover disjoint ranges.
+    #[inline]
+    pub fn check_disjoint(&self) -> bool {
+        if self.is_empty() {
+            return true;
+        }
+        self.0
+            .iter()
+            .filter(|(n, _)| *n > 1)
+            .map(|&(n, d)| (d, (n - 1) * d))
+            .tuple_combinations()
+            .all(|((a, b), (c, d))| b < c || a > d)
+    }
+
     /// Simplifies a layout to some length.
     pub fn coalesce_to(&self, len: usize) -> Self {
         let mut layout = self.0.clone();
@@ -604,6 +620,9 @@ impl Compose<&Layout> for Layout {
     fn compose(&self, f: &Layout) -> Self::Output {
         if self.is_empty() {
             return Ok(self.clone());
+        }
+        if !self.check_disjoint() {
+            return Err(LayoutError::Disjoint(self.clone()));
         }
 
         let modes: Vec<_> = self
@@ -1046,20 +1065,23 @@ mod tests {
         // capping a layout with 1:0 extends in stride-0
         check([24], ([4, 3, 1], [3, 1, 0]))?;
 
+        // disjoint requirement
+        assert!(check(([3, 2], [2, 3]), ([6, 2], [1, 7])).is_err());
+
         Ok(())
     }
 
     #[test]
     fn test_div() -> Result<(), LayoutError> {
         fn check(layout: impl Into<Layout>, tile: impl Into<Layout>) -> Result<(), LayoutError> {
-            let layout: Layout = layout.into();
-            let tile: Layout = tile.into();
-            let div = layout.div(&tile)?;
+            let a: Layout = layout.into();
+            let b: Layout = tile.into();
+            let c = a.div(&b)?;
 
-            println!("{layout} ⊘ {tile} = {div}\n");
-            print_layout(&layout);
-            print_layout(&tile);
-            print_layout(&div);
+            println!("{a} / {b} = {c}\n");
+            print_layout(&a);
+            print_layout(&b);
+            print_layout(&c);
             println!("------\n");
 
             Ok(())
@@ -1086,14 +1108,14 @@ mod tests {
     #[test]
     fn test_prod() -> Result<(), LayoutError> {
         fn check(layout: impl Into<Layout>, tile: impl Into<Layout>) -> Result<(), LayoutError> {
-            let layout: Layout = layout.into();
-            let tile: Layout = tile.into();
-            let prod = layout.prod(&tile)?;
+            let a: Layout = layout.into();
+            let b: Layout = tile.into();
+            let c = a.prod(&b)?;
 
-            println!("{layout} ⊗ {tile} = {prod}\n");
-            print_layout(&layout);
-            print_layout(&tile);
-            print_layout(&prod);
+            println!("{a} • {b} = {c}\n");
+            print_layout(&a);
+            print_layout(&b);
+            print_layout(&c);
             println!("------\n");
 
             Ok(())
