@@ -376,6 +376,18 @@ impl Layout {
         Stride(self.0.iter().map(|&(_, x)| x).collect())
     }
 
+    /// Retrieves the shape of a specific mode in the layout.
+    #[inline]
+    pub fn shape_of(&self, mode: usize) -> usize {
+        self.0[mode].0
+    }
+
+    /// Retrieves the stride of a specific mode in the layout.
+    #[inline]
+    pub fn stride_of(&self, mode: usize) -> usize {
+        self.0[mode].1
+    }
+
     /// Dimension of the layout.
     #[inline]
     pub fn len(&self) -> usize {
@@ -536,14 +548,8 @@ impl Layout {
             return Ok(Layout::from_shape([size]));
         }
 
-        let shape = layout.shape();
         let stride = layout.stride();
-        let product = shape
-            .0
-            .iter()
-            .zip_eq(stride.0.iter())
-            .map(|(n, d)| n * d)
-            .collect_vec();
+        let product = layout.0.iter().map(|(n, d)| n * d).collect_vec();
 
         let stride = [stride.0, vec![size]].concat(); // [d0, d1, ..., dα, M]
         let product = [vec![1], product].concat(); // [1, N0 d0, N1 d1, ..., Nα dα]
@@ -557,7 +563,7 @@ impl Layout {
             })
             .try_collect()?;
 
-        Ok(Self::from_shape_stride(shape, product).coalesce_to(self.len()))
+        Ok(Self::from((shape, product)).coalesce_to(self.len()))
     }
 
     /// Complement the layout to its full size, which is the least size that is admissible for completion.
@@ -576,14 +582,14 @@ impl Layout {
 
     /// Make a tiler from this layout.
     #[inline]
-    pub fn tiler(&self, tiler: impl IntoIterator<Item = (usize, usize)>) -> Self {
-        let (shape, stride): (Vec<_>, Vec<_>) = tiler.into_iter().unzip();
+    pub fn tiler(&self, tile: impl IntoIterator<Item = (usize, usize)>) -> Self {
+        let (shape, stride): (Vec<_>, Vec<_>) = tile.into_iter().unzip();
         let stride = stride
             .into_iter()
             .zip_eq(self.0.iter())
             .map(|(d, &(_, r))| d * r)
             .collect_vec();
-        Self::from_shape_stride(shape, stride)
+        Self::from((shape, stride))
     }
 
     /// [Tile division](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute/02_layout_algebra.md#division-tiling).
@@ -593,6 +599,15 @@ impl Layout {
     pub fn div(&self, tile: impl Borrow<Self>) -> Result<Self, LayoutError> {
         let tile: &Self = tile.borrow();
         tile.concat(tile.complement(self.size())?).compose(self)
+    }
+
+    /// Shortcut for calling [`Self::div`] on `self.tiler(tile)`.
+    #[inline]
+    pub fn div_tiler(
+        &self,
+        tile: impl IntoIterator<Item = (usize, usize)>,
+    ) -> Result<Self, LayoutError> {
+        self.div(self.tiler(tile))
     }
 
     /// [Tile product](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute/02_layout_algebra.md#product-tiling).
@@ -619,12 +634,28 @@ impl IndexFn<&Coord> for Layout {
     }
 }
 
+impl IndexFn<&mut Coord> for Layout {
+    type Output = usize;
+
+    fn value(&self, index: &mut Coord) -> Self::Output {
+        self.value(index as &Coord)
+    }
+}
+
 impl IndexFn<Coord> for Layout {
     type Output = usize;
 
     #[inline]
     fn value(&self, index: Coord) -> usize {
         self.value(&index)
+    }
+}
+
+impl<const N: usize> IndexFn<[usize; N]> for Layout {
+    type Output = usize;
+
+    fn value(&self, index: [usize; N]) -> Self::Output {
+        self.value(Coord::from(index))
     }
 }
 
@@ -662,7 +693,7 @@ impl Compose<&Layout> for (usize, usize) {
                         };
                         let mut d = Stride::from(d.0[i..i + s.len()].to_vec());
                         d.0[0] *= c;
-                        Ok(Layout::from_shape_stride(s, d))
+                        Ok(Layout::from((s, d)))
                     }
                 }
             }
@@ -836,7 +867,7 @@ mod tests {
 
     #[test]
     fn test_isomorphism() {
-        let layout = Layout::from_shape_stride([2, 3, 4], [3, 1, 6]);
+        let layout = Layout::from(([2, 3, 4], [3, 1, 6]));
 
         assert_eq!(layout.iota(0), Coord(vec![0, 0, 0]));
         assert_eq!(layout.iota(1), Coord(vec![1, 0, 0]));
@@ -954,21 +985,21 @@ mod tests {
         }
 
         {
-            let layout = Layout::from_shape_stride([1], [0]);
+            let layout = Layout::from(([1], [0]));
             check(&layout, 1)?;
             check(&layout, 2)?;
             check(&layout, 5)?;
         }
 
         {
-            let layout = Layout::from_shape_stride([1], [1]);
+            let layout = Layout::from(([1], [1]));
             check(&layout, 1)?;
             check(&layout, 2)?;
             check(&layout, 5)?;
         }
 
         {
-            let layout = Layout::from_shape_stride([1], [2]);
+            let layout = Layout::from(([1], [2]));
             check(&layout, 1)?;
             check(&layout, 5)?;
             check(&layout, 2)?;
@@ -976,14 +1007,14 @@ mod tests {
         }
 
         {
-            let layout = Layout::from_shape_stride([4], [0]);
+            let layout = Layout::from(([4], [0]));
             check(&layout, 1)?;
             check(&layout, 2)?;
             check(&layout, 8)?;
         }
 
         {
-            let layout = Layout::from_shape_stride([4], [1]);
+            let layout = Layout::from(([4], [1]));
             assert!(check(&layout, 1).is_err());
             assert!(check(&layout, 2).is_err());
             check(&layout, 4)?;
@@ -991,15 +1022,15 @@ mod tests {
         }
 
         {
-            let layout = Layout::from_shape_stride([4], [2]);
+            let layout = Layout::from(([4], [2]));
             check(&layout, 8)?;
             check(&layout, 16)?;
             assert!(check(&layout, 19).is_err());
         }
 
-        check(Layout::from_shape_stride([4], [4]), 16)?;
-        check(Layout::from_shape_stride([4], [4]), 16)?;
-        check(Layout::from_shape_stride([2, 2], [4, 1]), 32)?;
+        check(Layout::from(([4], [4])), 16)?;
+        check(Layout::from(([4], [4])), 16)?;
+        check(Layout::from(([2, 2], [4, 1])), 32)?;
 
         Ok(())
     }
@@ -1160,21 +1191,15 @@ mod tests {
             shift: 3,
         };
 
-        let layout_u = Layout::from_shape_stride([x, y], [1, x]);
-        let layout_v = Layout::from_shape_stride([y, x], [1, y]);
+        let layout_u = Layout::from(([x, y], [1, x]));
+        let layout_v = Layout::from(([y, x], [1, y]));
         let layout_v_s = layout_v.compose(&swizzle);
 
-        let layout_uv = Layout::from_shape_stride([x, y], [y, 1]);
-        let layout_uv_s = layout_uv.compose(&swizzle);
-
-        // for (j, i) in (0..y).cartesian_product(0..x) {
-        //     let u = Coord::from([i, j]);
-        //     let v = Coord::from([j, i]);
-        //     tmp[layout_v_s.value(&v)] = src[layout_u.value(&u)];
-        // }
+        let layout_t = Layout::from(([x, y], [y, 1]));
+        let layout_t_s = layout_t.compose(&swizzle);
 
         for i in 0..src.len() {
-            tmp[layout_uv_s.value(i)] = src[layout_u.value(i)];
+            tmp[layout_t_s.value(i)] = src[layout_u.value(i)];
         }
 
         for i in 0..src.len() {
@@ -1184,10 +1209,10 @@ mod tests {
         print_tensor(&src, &layout_u);
         print_tensor(&tmp, &layout_v);
         print_tensor(&dst, &layout_v);
-        print_tensor(&dst, &layout_uv);
+        print_tensor(&dst, &layout_t);
 
         for i in 0..src.len() {
-            assert_eq!(src[layout_u.value(i)], dst[layout_uv.value(i)]);
+            assert_eq!(src[layout_u.value(i)], dst[layout_t.value(i)]);
         }
 
         Ok(())
@@ -1199,22 +1224,60 @@ mod tests {
 
         let a = (0..m * k).collect_vec();
         let b = (0..n * k).collect_vec();
-        let _c = vec![0usize, m * n];
+        let mut c = vec![0; m * n];
 
-        let layout_a = Layout::from_shape([m, k]); // M-major
-        let layout_b = Layout::from_shape([n, k]); // N-major
-        let _layout_c = Layout::from_shape([m, n]); // M-major
+        let layout_a = Layout::from([m, k]); // M-major
+        let layout_b = Layout::from([n, k]); // N-major
+        let layout_c = Layout::from([m, n]); // M-major
 
         print_tensor(&a, &layout_a);
         print_tensor(&b, &layout_b);
 
         let (bm, bn, bk) = (2, 2, 4);
 
-        let layout_xa = layout_a.div(layout_a.tiler([(bm, 1), (bk, 1)]))?;
-        let layout_xb = layout_b.div(layout_b.tiler([(bn, 1), (bk, 1)]))?;
+        let layout_ta = layout_a.div_tiler([(bm, 1), (bk, 1)])?;
+        let layout_tb = layout_b.div_tiler([(bn, 1), (bk, 1)])?;
+        let layout_tc = layout_c.div_tiler([(bm, 1), (bn, 1)])?;
 
-        print_layout(&layout_xa);
-        print_layout(&layout_xb);
+        print_layout(&layout_ta);
+        print_layout(&layout_tb);
+        print_layout(&layout_tc);
+
+        let mut sa = vec![0; bm * bk];
+        let mut sb = vec![0; bn * bk];
+
+        let layout_sa = Layout::from([bm, bk]);
+        let layout_sb = Layout::from([bn, bk]);
+
+        for ((k, j), i) in (0..layout_ta.shape_of(3))
+            .cartesian_product(0..layout_tc.shape_of(3))
+            .cartesian_product(0..layout_tc.shape_of(2))
+        {
+            for (y, x) in (0..bk).cartesian_product(0..bm) {
+                sa[layout_sa.value([x, y])] = a[layout_ta.value([x, y, i, k])];
+            }
+
+            for (y, x) in (0..bk).cartesian_product(0..bn) {
+                sb[layout_sb.value([x, y])] = b[layout_tb.value([x, y, j, k])];
+            }
+
+            for ((z, y), x) in (0..bk).cartesian_product(0..bn).cartesian_product(0..bm) {
+                let ra = sa[layout_sa.value([x, z])];
+                let rb = sb[layout_sb.value([y, z])];
+                c[layout_tc.value([x, y, i, j])] += ra * rb;
+            }
+        }
+
+        print_tensor(&c, &layout_c);
+
+        let mut xc = vec![0; m * n];
+        for ((z, y), x) in (0..k).cartesian_product(0..n).cartesian_product(0..m) {
+            let ra = a[layout_a.value([x, z])];
+            let rb = b[layout_b.value([y, z])];
+            xc[layout_c.value([x, y])] += ra * rb;
+        }
+
+        assert_eq!(c, xc);
 
         Ok(())
     }
