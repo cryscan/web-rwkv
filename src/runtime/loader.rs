@@ -329,7 +329,7 @@ impl<R: Reader> Loader<R> {
                 .blend
                 .iter()
                 .filter(|blend| blend.pattern.is_match(name))
-                .last()
+                .next_back()
             else {
                 continue;
             };
@@ -358,7 +358,7 @@ impl<R: Reader> Loader<R> {
                 .blend
                 .iter()
                 .filter(|blend| blend.pattern.is_match(name))
-                .last()
+                .next_back()
             else {
                 continue;
             };

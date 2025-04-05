@@ -2,6 +2,7 @@ use std::borrow::Borrow;
 
 use itertools::Itertools;
 use thiserror::Error;
+use web_rwkv_derive::{Deref, DerefMut};
 
 #[derive(Debug, Error)]
 pub enum LayoutError {
@@ -28,7 +29,7 @@ pub trait Compose<F> {
     fn compose(&self, f: F) -> Self::Output;
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
 pub struct Shape(pub Vec<usize>);
 
 impl<const N: usize> From<[usize; N]> for Shape {
@@ -43,11 +44,9 @@ impl From<Vec<usize>> for Shape {
     }
 }
 
-impl std::ops::Index<usize> for Shape {
-    type Output = usize;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
+impl From<Shape> for Vec<usize> {
+    fn from(value: Shape) -> Self {
+        value.0
     }
 }
 
@@ -63,15 +62,9 @@ impl Shape {
         Self(slice.to_vec())
     }
 
-    /// Dimension of the shape.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
     /// Returns `true` if the shape is of size 0.
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub fn is_zero(&self) -> bool {
         self.size() == 0
     }
 
@@ -95,7 +88,7 @@ impl Shape {
     /// 1. A quotient part `(N(i) / c, N(i + 1), ..., N(α))`, and
     /// 2. A remainder part `(N0, N1, ..., N(i - 1), c)`.
     pub fn shape_div(&self, d: usize) -> Result<(Self, Self), LayoutError> {
-        if self.is_empty() {
+        if self.is_zero() {
             return Ok((self.clone(), Default::default()));
         }
         if d == 0 {
@@ -149,7 +142,7 @@ impl Shape {
     /// Performs weak shape division.
     /// Since `c` doesn't necessarily divides `N(i)`, we can only get the remainder here.
     pub fn shape_mod(&self, d: usize) -> Result<Self, LayoutError> {
-        if self.is_empty() {
+        if self.is_zero() {
             return Ok(Default::default());
         }
         if d == 0 {
@@ -199,7 +192,7 @@ impl Shape {
 }
 
 /// Defines the step to add to when increase 1 along coordinates.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
 pub struct Stride(pub Vec<usize>);
 
 impl<const N: usize> From<[usize; N]> for Stride {
@@ -214,11 +207,9 @@ impl From<Vec<usize>> for Stride {
     }
 }
 
-impl std::ops::Index<usize> for Stride {
-    type Output = usize;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
+impl From<Stride> for Vec<usize> {
+    fn from(value: Stride) -> Self {
+        value.0
     }
 }
 
@@ -233,22 +224,10 @@ impl Stride {
     pub fn from_slice(slice: &[usize]) -> Self {
         Self(slice.to_vec())
     }
-
-    /// Dimension of the stride.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns `true` if the stride contains no elements.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
 }
 
 /// A multi-dimensional coordinate.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
 pub struct Coord(pub Vec<usize>);
 
 impl<const N: usize> From<[usize; N]> for Coord {
@@ -263,11 +242,9 @@ impl From<Vec<usize>> for Coord {
     }
 }
 
-impl std::ops::Index<usize> for Coord {
-    type Output = usize;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
+impl From<Coord> for Vec<usize> {
+    fn from(value: Coord) -> Self {
+        value.0
     }
 }
 
@@ -282,18 +259,6 @@ impl Coord {
     pub fn from_slice(slice: &[usize]) -> Self {
         Self(slice.to_vec())
     }
-
-    /// Dimension of the coordinate.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Returns `true` if the coordinate contains no elements.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
 }
 
 /// A [`Layout`] is a mapping of multi-dimensional indices.
@@ -301,16 +266,8 @@ impl Coord {
 /// For more information, check:
 /// 1. [CuTe documents](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute);
 /// 2. [A note on the algebra of CuTe Layouts](https://leimao.github.io/downloads/article/2024-10-20-CuTe-Layout-Algebra/layout_algebra.pdf).
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
 pub struct Layout(pub Vec<(usize, usize)>);
-
-impl std::fmt::Display for Layout {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let shape = self.shape();
-        let stride = self.stride();
-        write!(f, "<{shape}, {stride}>")
-    }
-}
 
 impl<S, D> From<(S, D)> for Layout
 where
@@ -334,6 +291,20 @@ where
 impl From<(usize, usize)> for Layout {
     fn from((s, d): (usize, usize)) -> Self {
         Self::from_shape_stride([s], [d])
+    }
+}
+
+impl From<Layout> for Vec<(usize, usize)> {
+    fn from(value: Layout) -> Self {
+        value.0
+    }
+}
+
+impl std::fmt::Display for Layout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let shape = self.shape();
+        let stride = self.stride();
+        write!(f, "<{shape}, {stride}>")
     }
 }
 
@@ -388,16 +359,10 @@ impl Layout {
         self.0[mode].1
     }
 
-    /// Dimension of the layout.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
     /// Returns `true` if the layout is of size 0.
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.shape().is_empty()
+    pub fn is_zero(&self) -> bool {
+        self.shape().is_zero()
     }
 
     /// Number of elements in the shape of the layout.
@@ -471,7 +436,7 @@ impl Layout {
     /// Returns `true` if all modes cover disjoint ranges.
     #[inline]
     pub fn check_disjoint(&self) -> bool {
-        if self.is_empty() {
+        if self.is_zero() {
             return true;
         }
         self.0
@@ -544,7 +509,7 @@ impl Layout {
     /// Complements of the layout to a given size, if being admissible for complement.
     pub fn complement(&self, size: usize) -> Result<Self, LayoutError> {
         let layout = self.filter().sort();
-        if layout.is_empty() {
+        if layout.is_zero() {
             return Ok(Layout::from_shape([size]));
         }
 
