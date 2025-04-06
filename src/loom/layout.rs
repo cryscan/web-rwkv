@@ -1,8 +1,8 @@
 use std::borrow::Borrow;
 
+use derive_more::{Deref, DerefMut, Display, From, Into};
 use itertools::Itertools;
 use thiserror::Error;
-use web_rwkv_derive::{Deref, DerefMut};
 
 #[derive(Debug, Error)]
 pub enum LayoutError {
@@ -29,30 +29,13 @@ pub trait Compose<F> {
     fn compose(&self, f: F) -> Self::Output;
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut, From, Into, Display)]
+#[display("{_0:?}")]
 pub struct Shape(pub Vec<usize>);
 
 impl<const N: usize> From<[usize; N]> for Shape {
     fn from(value: [usize; N]) -> Self {
         Self(value.into_iter().collect())
-    }
-}
-
-impl From<Vec<usize>> for Shape {
-    fn from(value: Vec<usize>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Shape> for Vec<usize> {
-    fn from(value: Shape) -> Self {
-        value.0
-    }
-}
-
-impl std::fmt::Display for Shape {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.0)
     }
 }
 
@@ -192,30 +175,13 @@ impl Shape {
 }
 
 /// Defines the step to add to when increase 1 along coordinates.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut, From, Into, Display)]
+#[display("{_0:?}")]
 pub struct Stride(pub Vec<usize>);
 
 impl<const N: usize> From<[usize; N]> for Stride {
     fn from(value: [usize; N]) -> Self {
         Self(value.into_iter().collect())
-    }
-}
-
-impl From<Vec<usize>> for Stride {
-    fn from(value: Vec<usize>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Stride> for Vec<usize> {
-    fn from(value: Stride) -> Self {
-        value.0
-    }
-}
-
-impl std::fmt::Display for Stride {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.0)
     }
 }
 
@@ -227,30 +193,13 @@ impl Stride {
 }
 
 /// A multi-dimensional coordinate.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut, From, Into, Display)]
+#[display("{_0:?}")]
 pub struct Coord(pub Vec<usize>);
 
 impl<const N: usize> From<[usize; N]> for Coord {
     fn from(value: [usize; N]) -> Self {
         Self(value.into_iter().collect())
-    }
-}
-
-impl From<Vec<usize>> for Coord {
-    fn from(value: Vec<usize>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<Coord> for Vec<usize> {
-    fn from(value: Coord) -> Self {
-        value.0
-    }
-}
-
-impl std::fmt::Display for Coord {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.0)
     }
 }
 
@@ -266,7 +215,8 @@ impl Coord {
 /// For more information, check:
 /// 1. [CuTe documents](https://github.com/NVIDIA/cutlass/blob/main/media/docs/cute);
 /// 2. [A note on the algebra of CuTe Layouts](https://leimao.github.io/downloads/article/2024-10-20-CuTe-Layout-Algebra/layout_algebra.pdf).
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut, From, Into, Display)]
+#[display("<{}, {}>", self.shape(), self.stride())]
 pub struct Layout(pub Vec<(usize, usize)>);
 
 impl<S, D> From<(S, D)> for Layout
@@ -291,20 +241,6 @@ where
 impl From<(usize, usize)> for Layout {
     fn from((s, d): (usize, usize)) -> Self {
         Self::from_shape_stride([s], [d])
-    }
-}
-
-impl From<Layout> for Vec<(usize, usize)> {
-    fn from(value: Layout) -> Self {
-        value.0
-    }
-}
-
-impl std::fmt::Display for Layout {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let shape = self.shape();
-        let stride = self.stride();
-        write!(f, "<{shape}, {stride}>")
     }
 }
 

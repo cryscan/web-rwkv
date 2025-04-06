@@ -28,6 +28,13 @@ version.workspace = true
 ahash = "0.8"
 bytemuck = { version = "1.21", features = ["extern_crate_alloc"] }
 derive-getters = "0.5"
+derive_more = { version = "2.0.1", features = [
+    "from",
+    "into",
+    "deref",
+    "deref_mut",
+    "display",
+] }
 document-features = "0.2.8"
 embed-doc-image = "0.1.4"
 flume = "0.11"
