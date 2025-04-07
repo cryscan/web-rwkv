@@ -63,6 +63,19 @@ impl From<std::ops::RangeFull> for Axis {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut, From, Into)]
 pub struct Slice(pub Vec<Axis>);
 
+impl std::fmt::Display for Slice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        for (index, axis) in self.0.iter().enumerate() {
+            match index {
+                x if x + 1 == self.len() => write!(f, "{axis}")?,
+                _ => write!(f, "{axis}, ")?,
+            }
+        }
+        write!(f, "]")
+    }
+}
+
 macro_rules! impl_slice_from {
     ($t:ident, $v:ident) => {
         impl<$t: Into<Axis>> From<$t> for Slice {
@@ -90,3 +103,17 @@ impl_slice_from!((T0, T1, T2, T3), (t0, t1, t2, t3));
 impl_slice_from!((T0, T1, T2, T3, T4), (t0, t1, t2, t3, t4));
 impl_slice_from!((T0, T1, T2, T3, T4, T5), (t0, t1, t2, t3, t4, t5));
 impl_slice_from!((T0, T1, T2, T3, T4, T5, T6), (t0, t1, t2, t3, t4, t5, t6));
+
+#[cfg(test)]
+mod tests {
+    use super::Slice;
+
+    #[test]
+    fn test_slice() {
+        println!("{}", Slice::from(1));
+        println!("{}", Slice::from(..));
+        println!("{}", Slice::from((0, 1)));
+        println!("{}", Slice::from((1, ..)));
+        println!("{}", Slice::from((0, .., 1, 5)));
+    }
+}
