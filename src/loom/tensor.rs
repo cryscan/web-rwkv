@@ -2,33 +2,13 @@ use std::{marker::PhantomData, sync::Arc};
 
 use derive_more::{Deref, DerefMut, Display, From, Into};
 
-use super::layout::Layout;
+use super::{device::Device, layout::Layout};
 use crate::num::Scalar;
-
-pub trait Device {
-    type Data: ?Sized;
-}
-
-#[derive(Debug)]
-pub struct Cpu<T: Scalar>(PhantomData<T>);
-
-impl<T: Scalar> Device for Cpu<T> {
-    #[cfg(feature = "tokio")]
-    type Data = tokio::sync::RwLock<[T]>;
-    #[cfg(not(feature = "tokio"))]
-    type Data = std::sync::RwLock<[T]>;
-}
-
-#[derive(Debug)]
-pub struct Gpu;
-
-impl Device for Gpu {
-    type Data = wgpu::Buffer;
-}
 
 #[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct Tensor<D: Device, T: Scalar> {
+    device: D,
     layout: Layout,
     slice: Slice,
     data: Arc<D::Data>,
