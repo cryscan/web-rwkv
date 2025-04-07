@@ -1,6 +1,7 @@
 use std::{marker::PhantomData, sync::Arc};
 
 use derive_more::{Deref, DerefMut, Display, From, Into};
+use itertools::Itertools;
 
 use super::{device::Device, layout::Layout};
 use crate::num::Scalar;
@@ -40,21 +41,9 @@ impl From<std::ops::RangeFull> for Axis {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut, From, Into)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Deref, DerefMut, From, Into, Display)]
+#[display("[{}]", _0.iter().format(", "))]
 pub struct Slice(pub Vec<Axis>);
-
-impl std::fmt::Display for Slice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[")?;
-        for (index, axis) in self.0.iter().enumerate() {
-            match index {
-                x if x + 1 == self.len() => write!(f, "{axis}")?,
-                _ => write!(f, "{axis}, ")?,
-            }
-        }
-        write!(f, "]")
-    }
-}
 
 macro_rules! impl_slice_from {
     ($t:ident, $v:ident) => {
