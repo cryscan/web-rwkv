@@ -6,15 +6,14 @@ use itertools::Itertools;
 use super::{device::Device, layout::Layout};
 use crate::num::Scalar;
 
-#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct Tensor<D: Device, T: Scalar> {
-    device: D,
-    layout: Layout,
-    slice: Slice,
-    data: Arc<D::Data>,
-    id: uid::Id<TensorId>,
-    phantom: PhantomData<T>,
+    pub device: D,
+    pub layout: Layout,
+    pub slice: Slice,
+    pub data: Arc<D::Data>,
+    pub id: uid::Id<TensorId>,
+    pub phantom: PhantomData<T>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
