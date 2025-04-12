@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use thiserror::Error;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -11,8 +9,8 @@ pub trait Device: Send + Sync {
     /// Extra parameters for buffer allocation.
     type Params;
 
-    /// Allocate buffer.
-    fn alloc<T: Scalar>(&self, len: usize, params: Self::Params) -> Arc<Self::Data>;
+    /// Allocate buffer on the device.
+    fn alloc<T: Scalar>(&self, len: usize, params: Self::Params) -> Box<Self::Data>;
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,12 +31,12 @@ impl Device for Cpu {
     type Params = ();
 
     #[inline]
-    fn alloc<T: Scalar>(&self, len: usize, _params: Self::Params) -> Arc<Self::Data> {
+    fn alloc<T: Scalar>(&self, len: usize, _params: Self::Params) -> Box<Self::Data> {
         let data = vec![T::zero(); len].into_boxed_slice();
         let data = Box::leak(data);
         unsafe {
             let data = bytemuck::cast_slice_mut(data);
-            Arc::from_raw(data)
+            Box::from_raw(data)
         }
     }
 }
@@ -77,7 +75,7 @@ impl Device for Gpu {
     type Params = wgpu::BufferUsages;
 
     #[inline]
-    fn alloc<T: Scalar>(&self, len: usize, params: Self::Params) -> Arc<Self::Data> {
+    fn alloc<T: Scalar>(&self, len: usize, params: Self::Params) -> Box<Self::Data> {
         let size = len * size_of::<T>();
         self.device
             .create_buffer(&wgpu::BufferDescriptor {
@@ -92,7 +90,7 @@ impl Device for Gpu {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct GpuEvent {
-    pub buffer: Arc<<Gpu as Device>::Data>,
+    pub buffer: Box<<Gpu as Device>::Data>,
     pub sender: flume::Sender<Box<<Cpu as Device>::Data>>,
 }
 
@@ -148,7 +146,7 @@ impl GpuBuilder {
         let (event, receiver) = flume::unbounded();
 
         let id = uid::Id::new();
-        let context = Gpu {
+        let device = Gpu {
             id,
             device,
             queue,
@@ -158,8 +156,8 @@ impl GpuBuilder {
         // start a thread for reading back buffers
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let id = context.id;
-            let device = context.device.clone();
+            let id = device.id;
+            let device = device.device.clone();
             std::thread::spawn(move || {
                 while let Ok(GpuEvent { buffer, sender }) = receiver.recv() {
                     #[cfg(feature = "trace")]
@@ -171,34 +169,22 @@ impl GpuBuilder {
             });
         }
 
-        Ok(context)
+        Ok(device)
     }
 
-    pub fn limits(mut self, limits: wgpu::Limits) -> Self {
+    pub fn limits(&mut self, limits: wgpu::Limits) -> &mut Self {
         self.limits = limits;
         self
     }
 
-    pub fn update_limits(mut self, f: impl FnOnce(&mut wgpu::Limits)) -> Self {
-        f(&mut self.limits);
-        self
-    }
-
-    pub fn features(mut self, features: wgpu::Features) -> Self {
+    pub fn features(&mut self, features: wgpu::Features) -> &mut Self {
         self.features = features;
-        self
-    }
-
-    pub fn update_features(mut self, f: impl FnOnce(&mut wgpu::Features)) -> Self {
-        f(&mut self.features);
         self
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_back_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Box<[u8]> {
-    assert!(buffer.usage().contains(wgpu::BufferUsages::MAP_READ));
-
     let (sender, receiver) = flume::bounded(1);
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
