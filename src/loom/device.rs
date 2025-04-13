@@ -102,7 +102,7 @@ impl Device for Gpu {
     #[cfg(not(target_arch = "wasm32"))]
     async fn alloc<T: Scalar>(&self, len: usize, params: Self::Params) -> Arc<Self::Data> {
         let (sender, receiver) = flume::bounded(1);
-        let size = len * size_of::<T>();
+        let size = (len * size_of::<T>()) as u64;
         let _ = self.event.send(GpuEvent::Alloc {
             size,
             params,
@@ -128,7 +128,7 @@ pub enum GpuEvent {
         sender: flume::Sender<Box<<Cpu as Device>::Data>>,
     },
     Alloc {
-        size: usize,
+        size: u64,
         params: <Gpu as Device>::Params,
         sender: flume::Sender<Arc<<Gpu as Device>::Data>>,
     },
@@ -206,43 +206,7 @@ impl GpuBuilder {
             let id = device.id;
             let device = device.device.clone();
             let receiver = receiver.clone();
-            std::thread::spawn(move || {
-                let mut pool = HashMap::<(u64, wgpu::BufferUsages), Vec<wgpu::Buffer>>::new();
-                while let Ok(event) = receiver.recv() {
-                    match event {
-                        GpuEvent::Back { buffer, sender } => {
-                            #[cfg(feature = "trace")]
-                            let _span = tracing::trace_span!("device").entered();
-                            let data = read_back_buffer(&device, &buffer);
-                            let _ = sender.send(data);
-                        }
-                        GpuEvent::Alloc {
-                            size,
-                            params,
-                            sender,
-                        } => {
-                            let buffer = device
-                                .create_buffer(&wgpu::BufferDescriptor {
-                                    label: None,
-                                    size: size as u64,
-                                    usage: params,
-                                    mapped_at_creation: false,
-                                })
-                                .into();
-                            let _ = sender.send(buffer);
-                        }
-                        GpuEvent::Dealloc(buffer) => {
-                            if let Some(buffer) = Arc::into_inner(buffer) {
-                                let key = (buffer.size(), buffer.usage());
-                                let mut buffers = pool.remove(&key).unwrap_or_default();
-                                buffers.push(buffer);
-                                pool.insert(key, buffers);
-                            }
-                        }
-                    }
-                }
-                log::info!("device dropped: {id}");
-            });
+            std::thread::spawn(move || handle_buffer_events(id, device, receiver));
         }
 
         Ok(device)
@@ -291,4 +255,51 @@ fn read_back_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Box<[u8]> {
     };
     buffer.unmap();
     data
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn handle_buffer_events(
+    id: uid::Id<DeviceId>,
+    device: wgpu::Device,
+    receiver: flume::Receiver<GpuEvent>,
+) {
+    let mut pool = HashMap::new();
+    while let Ok(event) = receiver.recv() {
+        match event {
+            GpuEvent::Back { buffer, sender } => {
+                #[cfg(feature = "trace")]
+                let _span = tracing::trace_span!("device").entered();
+                let data = read_back_buffer(&device, &buffer);
+                let _ = sender.send(data);
+            }
+            GpuEvent::Alloc {
+                size,
+                params,
+                sender,
+            } => {
+                let buffer = match pool
+                    .get_mut(&(size, params))
+                    .and_then(|buffers: &mut Vec<_>| buffers.pop())
+                {
+                    Some(buffer) => buffer,
+                    None => device.create_buffer(&wgpu::BufferDescriptor {
+                        label: None,
+                        size,
+                        usage: params,
+                        mapped_at_creation: false,
+                    }),
+                };
+                let _ = sender.send(buffer.into());
+            }
+            GpuEvent::Dealloc(buffer) => {
+                if let Some(buffer) = Arc::into_inner(buffer) {
+                    let key = (buffer.size(), buffer.usage());
+                    let mut buffers = pool.remove(&key).unwrap_or_default();
+                    buffers.push(buffer);
+                    pool.insert(key, buffers);
+                }
+            }
+        }
+    }
+    log::info!("device dropped: {id}");
 }
