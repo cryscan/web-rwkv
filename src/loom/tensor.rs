@@ -16,6 +16,15 @@ pub struct Tensor<D: Device, T: Scalar> {
     pub phantom: PhantomData<T>,
 }
 
+impl<D: Device, T: Scalar> Drop for Tensor<D, T> {
+    fn drop(&mut self) {
+        match Arc::strong_count(&self.data) {
+            0 | 1 => self.device.dealloc(self.data.clone()),
+            _ => (),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TensorId;
 
