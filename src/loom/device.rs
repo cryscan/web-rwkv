@@ -282,22 +282,22 @@ fn handle_buffer_events(
                     .and_then(|buffers: &mut Vec<_>| buffers.pop())
                 {
                     Some(buffer) => buffer,
-                    None => device.create_buffer(&wgpu::BufferDescriptor {
-                        label: None,
-                        size,
-                        usage: params,
-                        mapped_at_creation: false,
-                    }),
+                    None => device
+                        .create_buffer(&wgpu::BufferDescriptor {
+                            label: None,
+                            size,
+                            usage: params,
+                            mapped_at_creation: false,
+                        })
+                        .into(),
                 };
-                let _ = sender.send(buffer.into());
+                let _ = sender.send(buffer);
             }
             GpuEvent::Dealloc(buffer) => {
-                if let Some(buffer) = Arc::into_inner(buffer) {
-                    let key = (buffer.size(), buffer.usage());
-                    let mut buffers = pool.remove(&key).unwrap_or_default();
-                    buffers.push(buffer);
-                    pool.insert(key, buffers);
-                }
+                let key = (buffer.size(), buffer.usage());
+                let mut buffers = pool.remove(&key).unwrap_or_default();
+                buffers.push(buffer);
+                pool.insert(key, buffers);
             }
         }
     }
