@@ -133,6 +133,7 @@ pub enum GpuEvent {
         sender: flume::Sender<Arc<<Gpu as Device>::Data>>,
     },
     Dealloc(Arc<<Gpu as Device>::Data>),
+    Cleanup,
 }
 
 #[derive(Debug, Clone)]
@@ -263,7 +264,7 @@ fn handle_buffer_events(
     device: wgpu::Device,
     receiver: flume::Receiver<GpuEvent>,
 ) {
-    let mut pool = HashMap::new();
+    let mut cache = HashMap::new();
     while let Ok(event) = receiver.recv() {
         match event {
             GpuEvent::Back { buffer, sender } => {
@@ -277,7 +278,7 @@ fn handle_buffer_events(
                 params,
                 sender,
             } => {
-                let buffer = match pool
+                let buffer = match cache
                     .get_mut(&(size, params))
                     .and_then(|buffers: &mut Vec<_>| buffers.pop())
                 {
@@ -295,10 +296,11 @@ fn handle_buffer_events(
             }
             GpuEvent::Dealloc(buffer) => {
                 let key = (buffer.size(), buffer.usage());
-                let mut buffers = pool.remove(&key).unwrap_or_default();
+                let mut buffers = cache.remove(&key).unwrap_or_default();
                 buffers.push(buffer);
-                pool.insert(key, buffers);
+                cache.insert(key, buffers);
             }
+            GpuEvent::Cleanup => cache.clear(),
         }
     }
     log::info!("device dropped: {id}");
