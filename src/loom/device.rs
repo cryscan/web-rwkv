@@ -305,3 +305,31 @@ fn handle_buffer_events(
     }
     log::info!("device dropped: {id}");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{GpuBuildError, GpuBuilder};
+
+    #[cfg(feature = "tokio")]
+    #[tokio::test]
+    async fn test_alloc() -> anyhow::Result<()> {
+        use crate::loom::device::Device;
+
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptionsBase {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+            .await
+            .ok_or(GpuBuildError::RequestAdapterFailed)?;
+
+        let device = GpuBuilder::new(adapter).build().await?;
+        let buffer = device.alloc::<f32>(1024, wgpu::BufferUsages::STORAGE).await;
+
+        println!("{:?}", buffer);
+
+        Ok(())
+    }
+}
