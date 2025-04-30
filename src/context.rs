@@ -2,7 +2,6 @@ use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 
 use futures::Future;
 use thiserror::Error;
-use wasm_bindgen::prelude::wasm_bindgen;
 use web_rwkv_derive::{Deref, DerefMut};
 use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
@@ -28,13 +27,13 @@ pub trait InstanceExt {
 
 impl InstanceExt for Instance {
     async fn adapter(&self, power_preference: PowerPreference) -> Result<Adapter, ContextError> {
-        self.request_adapter(&RequestAdapterOptions {
-            power_preference,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        })
-        .await
-        .ok_or(ContextError::RequestAdapterFailed)
+        Ok(self
+            .request_adapter(&RequestAdapterOptions {
+                power_preference,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+            .await?)
     }
 }
 
@@ -69,7 +68,7 @@ impl Drop for Context {
         if self.event.sender_count() <= 1 {
             self.clear_buffers();
             self.queue.submit(None);
-            self.device.poll(wgpu::Maintain::Wait);
+            let _ = self.device.poll(wgpu::PollType::Wait);
         }
     }
 }
@@ -86,13 +85,12 @@ pub struct ContextBuilder {
     pub limits: Limits,
 }
 
-#[wasm_bindgen]
 #[derive(Debug, Error)]
 pub enum ContextError {
     #[error("failed to request adaptor")]
-    RequestAdapterFailed,
+    RequestAdapterError(#[from] wgpu::RequestAdapterError),
     #[error("failed to request device")]
-    RequestDeviceFailed,
+    RequestDeviceError(#[from] wgpu::RequestDeviceError),
 }
 
 impl ContextBuilder {
@@ -115,17 +113,14 @@ impl ContextBuilder {
         } = self;
 
         let (device, queue) = adapter
-            .request_device(
-                &DeviceDescriptor {
-                    label: None,
-                    required_features: features,
-                    required_limits: limits,
-                    memory_hints: MemoryHints::Performance,
-                },
-                None,
-            )
-            .await
-            .map_err(|_| ContextError::RequestDeviceFailed)?;
+            .request_device(&DeviceDescriptor {
+                label: None,
+                required_features: features,
+                required_limits: limits,
+                memory_hints: MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
+            .await?;
 
         #[cfg(not(target_arch = "wasm32"))]
         let (event, receiver) = flume::unbounded();
@@ -442,7 +437,7 @@ fn read_back_buffer(device: &Device, buffer: &Buffer) -> Box<[u8]> {
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-    device.poll(wgpu::MaintainBase::Wait);
+    let _ = device.poll(wgpu::MaintainBase::Wait);
     receiver
         .recv()
         .expect("failed to receive read back buffer")

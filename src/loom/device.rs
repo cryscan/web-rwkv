@@ -1,7 +1,6 @@
 use std::{collections::HashMap, future::Future, sync::Arc};
 
 use thiserror::Error;
-use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::num::Scalar;
 
@@ -145,13 +144,12 @@ pub struct GpuBuilder {
     pub threads: usize,
 }
 
-#[wasm_bindgen]
 #[derive(Debug, Error)]
 pub enum GpuBuildError {
     #[error("failed to request adaptor")]
-    RequestAdapterFailed,
+    RequestAdapterError(#[from] wgpu::RequestAdapterError),
     #[error("failed to request device")]
-    RequestDeviceFailed,
+    RequestDeviceError(#[from] wgpu::RequestDeviceError),
 }
 
 impl GpuBuilder {
@@ -178,17 +176,14 @@ impl GpuBuilder {
         } = self;
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: features,
-                    required_limits: limits,
-                    memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            )
-            .await
-            .map_err(|_| GpuBuildError::RequestDeviceFailed)?;
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: features,
+                required_limits: limits,
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
+            .await?;
 
         #[cfg(not(target_arch = "wasm32"))]
         let (event, receiver) = flume::unbounded();
@@ -236,7 +231,7 @@ fn read_back_buffer(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Box<[u8]> {
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-    device.poll(wgpu::MaintainBase::Wait);
+    let _ = device.poll(wgpu::MaintainBase::Wait);
     receiver
         .recv()
         .expect("failed to receive read back buffer")
@@ -308,7 +303,7 @@ fn handle_buffer_events(
 
 #[cfg(test)]
 mod tests {
-    use super::{GpuBuildError, GpuBuilder};
+    use super::GpuBuilder;
 
     #[cfg(feature = "tokio")]
     #[tokio::test]
@@ -322,8 +317,7 @@ mod tests {
                 force_fallback_adapter: false,
                 compatible_surface: None,
             })
-            .await
-            .ok_or(GpuBuildError::RequestAdapterFailed)?;
+            .await?;
 
         let device = GpuBuilder::new(adapter).build().await?;
         let buffer = device.alloc::<f32>(1024, wgpu::BufferUsages::STORAGE).await;
