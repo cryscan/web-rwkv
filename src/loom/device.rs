@@ -1,8 +1,9 @@
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use thiserror::Error;
+use wgpu::util::DeviceExt;
 
-use crate::num::Scalar;
+use crate::{future::Future, num::Scalar};
 
 pub trait Device {
     /// Type of buffer on the device.
@@ -10,25 +11,18 @@ pub trait Device {
     /// Extra parameters for buffer allocation.
     type Params;
 
-    /// Allocate buffer on the device.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn alloc<T: Scalar>(
-        &self,
-        len: usize,
-        params: Self::Params,
-    ) -> impl Future<Output = Arc<Self::Data>> + Send;
+    /// Allocate empty buffer on the device.
+    fn alloc<T: Scalar>(&self, len: usize, params: Self::Params) -> impl Future<Arc<Self::Data>>;
 
-    /// Allocate buffer on the device.
-    #[cfg(target_arch = "wasm32")]
-    fn alloc<T: Scalar>(
-        &self,
-        len: usize,
-        params: Self::Params,
-    ) -> impl Future<Output = Arc<Self::Data>>;
+    /// Allocate buffer with data.
+    fn create<T: Scalar>(&self, data: &[T], params: Self::Params) -> impl Future<Arc<Self::Data>>;
 
     /// Free the allocated data. The device would potentially recycle it for future use.
     #[inline]
     fn dealloc(&self, _data: Arc<Self::Data>) {}
+
+    /// Read back a buffer.
+    fn read<T: Scalar>(&self, source: &Self::Data) -> impl Future<Box<[T]>>;
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,10 +46,22 @@ impl Device for Cpu {
     async fn alloc<T: Scalar>(&self, len: usize, _params: Self::Params) -> Arc<Self::Data> {
         let data = vec![T::zero(); len].into_boxed_slice();
         let data = Box::leak(data);
-        unsafe {
-            let data = bytemuck::cast_slice_mut(data);
-            Arc::from_raw(data)
-        }
+        let data = bytemuck::cast_slice_mut(data);
+        unsafe { Arc::from_raw(data) }
+    }
+
+    #[inline]
+    async fn create<T: Scalar>(&self, data: &[T], _params: Self::Params) -> Arc<Self::Data> {
+        let data = Vec::leak(data.to_vec());
+        let data = bytemuck::cast_slice_mut(data);
+        unsafe { Arc::from_raw(data) }
+    }
+
+    #[inline]
+    async fn read<T: Scalar>(&self, source: &<Self as Device>::Data) -> Box<[T]> {
+        let data = Vec::leak(source.to_vec());
+        let slice = bytemuck::cast_slice_mut::<_, T>(data);
+        unsafe { Box::from_raw(slice) }
     }
 }
 
@@ -107,14 +113,26 @@ impl Device for Gpu {
     }
 
     #[inline]
+    async fn create<T: Scalar>(&self, data: &[T], params: Self::Params) -> Arc<Self::Data> {
+        #[cfg(feature = "trace")]
+        let _span = tracing::trace_span!("create").entered();
+        let data = bytemuck::cast_slice(data);
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: data,
+                usage: params,
+            })
+            .into()
+    }
+
+    #[inline]
     fn dealloc(&self, data: Arc<Self::Data>) {
         let _ = self.event.send(GpuEvent::Dealloc(data));
     }
-}
 
-impl Gpu {
     /// Reads back a buffer with [`STORAGE`](wgpu::BufferUsages::STORAGE) and [`COPY_SRC`](wgpu::BufferUsages::COPY_SRC) usages.
-    pub async fn read_back<T: Scalar>(&self, source: &<Self as Device>::Data) -> Box<[T]> {
+    async fn read<T: Scalar>(&self, source: &<Self as Device>::Data) -> Box<[T]> {
         let len = source.size() as usize / size_of::<T>();
         let size = (len * size_of::<T>()) as u64;
         let params = wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST;
@@ -125,22 +143,20 @@ impl Gpu {
         self.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = flume::bounded(1);
-        let _ = self.event.send(GpuEvent::Back { buffer, sender });
+        let _ = self.event.send(GpuEvent::Read { buffer, sender });
 
         let data = receiver
             .recv_async()
             .await
             .expect("failed to receive read back buffer");
-        unsafe {
-            let data = Box::leak(data);
-            let slice = bytemuck::cast_slice_mut::<_, T>(data);
-            Box::from_raw(slice)
-        }
+        let data = Box::leak(data);
+        let data = bytemuck::cast_slice_mut::<_, T>(data);
+        unsafe { Box::from_raw(data) }
     }
 }
 
 pub enum GpuEvent {
-    Back {
+    Read {
         buffer: Arc<<Gpu as Device>::Data>,
         sender: flume::Sender<Box<<Cpu as Device>::Data>>,
     },
@@ -269,12 +285,10 @@ async fn read_back(device: wgpu::Device, buffer: Arc<wgpu::Buffer>) -> Box<[u8]>
         let len = map.len();
         let size = std::mem::size_of::<u32>();
         let data = vec![0u32; len.div_ceil(size)].into_boxed_slice();
-        unsafe {
-            let data = Box::leak(data);
-            let data: &mut [u8] = bytemuck::cast_slice_mut(data);
-            data.copy_from_slice(&map);
-            Box::from_raw(data)
-        }
+        let data = Box::leak(data);
+        let data = bytemuck::cast_slice_mut(data);
+        data.copy_from_slice(&map);
+        unsafe { Box::from_raw(data) }
     };
     buffer.unmap();
     data
@@ -288,9 +302,9 @@ async fn handle_buffer_events(
     let mut cache = HashMap::new();
     while let Ok(event) = receiver.recv_async().await {
         match event {
-            GpuEvent::Back { buffer, sender } => {
+            GpuEvent::Read { buffer, sender } => {
                 #[cfg(feature = "trace")]
-                let _span = tracing::trace_span!("device").entered();
+                let _span = tracing::trace_span!("read").entered();
                 let device = device.clone();
                 let data = read_back(device, buffer).await;
                 let _ = sender.send(data);
@@ -300,6 +314,8 @@ async fn handle_buffer_events(
                 params,
                 sender,
             } => {
+                #[cfg(feature = "trace")]
+                let _span = tracing::trace_span!("alloc").entered();
                 let buffer = match cache
                     .get_mut(&(size, params))
                     .and_then(|buffers: &mut Vec<_>| buffers.pop())
@@ -330,6 +346,8 @@ async fn handle_buffer_events(
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use super::GpuBuilder;
 
     #[tokio::test]
@@ -346,13 +364,19 @@ mod tests {
             .await?;
 
         let device = GpuBuilder::new(adapter).build().await?;
-
         let usages = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
-        let buffer = device.alloc::<f32>(1024, usages).await;
-        println!("{:?}", buffer);
 
-        let data = device.read_back::<f32>(&buffer).await;
-        assert_eq!(data.to_vec(), vec![0.0; 1024]);
+        {
+            let buffer = device.alloc::<f32>(1024, usages).await;
+            let read = device.read::<f32>(&buffer).await;
+            assert_eq!(read.to_vec(), vec![0.0; 1024]);
+        }
+        {
+            let data = (0u16..512).map(f32::from).collect_vec();
+            let buffer = device.create(&data, usages).await;
+            let read = device.read::<f32>(&buffer).await;
+            assert_eq!(read.to_vec(), data);
+        }
 
         Ok(())
     }
