@@ -112,6 +112,33 @@ impl Device for Gpu {
     }
 }
 
+impl Gpu {
+    /// Reads back a buffer with [`STORAGE`](wgpu::BufferUsages::STORAGE) and [`COPY_SRC`](wgpu::BufferUsages::COPY_SRC) usages.
+    pub async fn read_back<T: Scalar>(&self, source: &<Self as Device>::Data) -> Box<[T]> {
+        let len = source.size() as usize / size_of::<T>();
+        let size = (len * size_of::<T>()) as u64;
+        let params = wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST;
+        let buffer = self.alloc::<T>(len, params).await;
+
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(source, 0, &buffer, 0, size);
+        self.queue.submit(Some(encoder.finish()));
+
+        let (sender, receiver) = flume::bounded(1);
+        let _ = self.event.send(GpuEvent::Back { buffer, sender });
+
+        let data = receiver
+            .recv_async()
+            .await
+            .expect("failed to receive read back buffer");
+        unsafe {
+            let data = Box::leak(data);
+            let slice = bytemuck::cast_slice_mut::<_, T>(data);
+            Box::from_raw(slice)
+        }
+    }
+}
+
 pub enum GpuEvent {
     Back {
         buffer: Arc<<Gpu as Device>::Data>,
@@ -319,9 +346,13 @@ mod tests {
             .await?;
 
         let device = GpuBuilder::new(adapter).build().await?;
-        let buffer = device.alloc::<f32>(1024, wgpu::BufferUsages::STORAGE).await;
 
+        let usages = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+        let buffer = device.alloc::<f32>(1024, usages).await;
         println!("{:?}", buffer);
+
+        let data = device.read_back::<f32>(&buffer).await;
+        assert_eq!(data.to_vec(), vec![0.0; 1024]);
 
         Ok(())
     }
