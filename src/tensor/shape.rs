@@ -442,7 +442,6 @@ mod tests {
         assert_eq!(index, 35 + 42 * 1024 + 9 * 1024 * 768);
     }
 
-    #[cfg(feature = "tokio")]
     #[tokio::test]
     async fn test_slice() -> Result<()> {
         let context = create_context().await?;

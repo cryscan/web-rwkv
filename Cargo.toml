@@ -29,11 +29,11 @@ ahash = "0.8"
 bytemuck = { version = "1.21", features = ["extern_crate_alloc"] }
 derive-getters = "0.5"
 derive_more = { version = "2.0.1", features = [
-    "from",
-    "into",
     "deref",
     "deref_mut",
     "display",
+    "from",
+    "into",
 ] }
 document-features = "0.2.8"
 embed-doc-image = "0.1.4"
@@ -59,6 +59,7 @@ tracing-tracy = { version = "0.11.4", optional = true }
 trait-variant = "0.1"
 uid = "0.1"
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 wgpu = "25.0"
 
 [dependencies.web-rwkv-derive]
@@ -68,8 +69,7 @@ version = "0.10"
 [dependencies.tokio]
 default-features = false
 features = ["macros", "rt", "sync", "time"]
-optional = true
-version = "1.43"
+version = "1.45"
 
 [dev-dependencies]
 anyhow = "1.0"
@@ -81,19 +81,17 @@ fastrand = "2.3"
 memmap2 = "0.9"
 ratatui = { version = "0.29", features = ["all-widgets"] }
 simple_logger = { version = "5.0.0", features = ["stderr"] }
-tokio = { version = "1.41", features = ["full"] }
+tokio = { version = "1.45", features = ["full"] }
 
 [features]
 default = ["native"]
 
-classic = ["tokio"]
-native = ["subgroup-ops", "tokio"]
+## Enables on native platforms.
+native = ["subgroup-ops", "tokio/rt-multi-thread"]
+## Enables only for the WASM platform.
 web = []
-
 ## Enables subgroup operations in the kernels. Accelerates the inference on some device.
 subgroup-ops = []
-## Enables tokio's multi-threaded runtime. Doesn't work on web platforms.
-tokio = ["dep:tokio"]
 ## Enables performance tracing.
 trace = ["tracing", "tracing-subscriber", "tracing-tracy"]
 ## Enables backtrace for errors.

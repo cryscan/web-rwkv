@@ -57,7 +57,7 @@ pub trait Dispatcher<J: Job> {
     fn dispatch(&self, info: Self::Info) -> Result<J, RuntimeError>;
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::type_complexity)]
 #[derive(Debug)]
 struct Submission<I: infer::Infer> {
@@ -73,16 +73,16 @@ pub enum RuntimeError {
     TensorError(#[from] crate::tensor::TensorError),
     #[error("recv error")]
     RecvError(#[from] flume::RecvError),
-    #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+    #[cfg(not(target_arch = "wasm32"))]
     #[error("join error")]
     JoinError(#[from] tokio::task::JoinError),
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 pub struct TokioRuntime<I: infer::Infer>(flume::Sender<Submission<I>>);
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::type_complexity)]
 impl<I, T, F> TokioRuntime<I>
 where
@@ -272,7 +272,7 @@ pub trait Runtime<I: infer::Infer> {
         -> LocalBoxFuture<Result<(I::Input, I::Output), RuntimeError>>;
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::type_complexity)]
 impl<I, T, F> Runtime<I> for TokioRuntime<I>
 where

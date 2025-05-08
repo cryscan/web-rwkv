@@ -709,7 +709,7 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
         let slice = buffer.slice(..);
         slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        context.device.poll(wgpu::MaintainBase::Wait);
+        let _ = context.device.poll(wgpu::MaintainBase::Wait);
         receiver
             .recv_async()
             .await
