@@ -45,23 +45,17 @@ impl Device for Cpu {
     #[inline]
     async fn alloc<T: Scalar>(&self, len: usize, _params: Self::Params) -> Arc<Self::Data> {
         let data = vec![T::zero(); len].into_boxed_slice();
-        let data = Box::leak(data);
-        let data = bytemuck::cast_slice_mut(data);
-        unsafe { Arc::from_raw(data) }
+        bytemuck::cast_slice_box(data).into()
     }
 
     #[inline]
     async fn create<T: Scalar>(&self, data: &[T], _params: Self::Params) -> Arc<Self::Data> {
-        let data = Vec::leak(data.to_vec());
-        let data = bytemuck::cast_slice_mut(data);
-        unsafe { Arc::from_raw(data) }
+        bytemuck::cast_vec(data.to_vec()).into()
     }
 
     #[inline]
     async fn read<T: Scalar>(&self, source: &<Self as Device>::Data) -> Box<[T]> {
-        let data = Vec::leak(source.to_vec());
-        let slice = bytemuck::cast_slice_mut::<_, T>(data);
-        unsafe { Box::from_raw(slice) }
+        bytemuck::cast_slice(source).to_vec().into_boxed_slice()
     }
 }
 
@@ -174,8 +168,6 @@ pub struct GpuBuilder {
     pub adapter: wgpu::Adapter,
     pub features: wgpu::Features,
     pub limits: wgpu::Limits,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub threads: usize,
 }
 
 #[derive(Debug, Error)]
@@ -195,19 +187,15 @@ impl GpuBuilder {
             adapter,
             features,
             limits: Default::default(),
-            #[cfg(not(target_arch = "wasm32"))]
-            threads: 4,
         }
     }
 
-    pub async fn build(self) -> Result<Gpu, GpuBuildError> {
+    pub async fn build(&mut self) -> Result<Gpu, GpuBuildError> {
         let Self {
             adapter,
             features,
             limits,
-            #[cfg(not(target_arch = "wasm32"))]
-            threads,
-        } = self;
+        } = self.clone();
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -229,19 +217,15 @@ impl GpuBuilder {
             event,
         };
 
-        // start threads for buffer services
-        #[cfg(not(target_arch = "wasm32"))]
-        for _ in 0..threads {
-            let id = device.id;
-            let device = device.device.clone();
-            let receiver = receiver.clone();
-            tokio::spawn(handle_buffer_events(id, device, receiver));
-        }
-        #[cfg(target_arch = "wasm32")]
         {
             let id = device.id;
             let device = device.device.clone();
             let receiver = receiver.clone();
+
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::spawn(handle_buffer_events(id, device, receiver));
+
+            #[cfg(target_arch = "wasm32")]
             wasm_bindgen_futures::spawn_local(handle_buffer_events(id, device, receiver));
         }
 
@@ -257,17 +241,19 @@ impl GpuBuilder {
         self.features = features;
         self
     }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn threads(&mut self, threads: usize) -> &mut Self {
-        self.threads = threads;
-        self
-    }
 }
 
 async fn read_back(device: wgpu::Device, buffer: Arc<wgpu::Buffer>) -> Box<[u8]> {
     let (sender, receiver) = flume::bounded(1);
-    buffer.map_async(wgpu::MapMode::Read, .., move |v| sender.send(v).unwrap());
+    buffer.clone().map_async(wgpu::MapMode::Read, .., move |v| {
+        if let Err(err) = v {
+            let _ = sender.send(Err(err));
+            return;
+        }
+        let data = buffer.get_mapped_range(..).to_vec().into_boxed_slice();
+        buffer.unmap();
+        let _ = sender.send(Ok(data));
+    });
 
     #[cfg(not(target_arch = "wasm32"))]
     tokio::task::spawn_blocking(move || device.poll(wgpu::MaintainBase::Wait));
@@ -278,20 +264,7 @@ async fn read_back(device: wgpu::Device, buffer: Arc<wgpu::Buffer>) -> Box<[u8]>
         .recv_async()
         .await
         .expect("failed to receive read back buffer")
-        .expect("failed to map buffer");
-
-    let data = {
-        let map = buffer.get_mapped_range(..);
-        let len = map.len();
-        let size = std::mem::size_of::<u32>();
-        let data = vec![0u32; len.div_ceil(size)].into_boxed_slice();
-        let data = Box::leak(data);
-        let data = bytemuck::cast_slice_mut(data);
-        data.copy_from_slice(&map);
-        unsafe { Box::from_raw(data) }
-    };
-    buffer.unmap();
-    data
+        .expect("failed to map buffer")
 }
 
 async fn handle_buffer_events(
@@ -346,14 +319,12 @@ async fn handle_buffer_events(
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools;
+    use std::sync::Arc;
 
-    use super::GpuBuilder;
+    use super::{Device, GpuBuilder};
 
     #[tokio::test]
     async fn test_alloc() -> anyhow::Result<()> {
-        use crate::loom::device::Device;
-
         let instance = wgpu::Instance::default();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptionsBase {
@@ -366,17 +337,60 @@ mod tests {
         let device = GpuBuilder::new(adapter).build().await?;
         let usages = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
 
-        {
-            let buffer = device.alloc::<f32>(1024, usages).await;
-            let read = device.read::<f32>(&buffer).await;
-            assert_eq!(read.to_vec(), vec![0.0; 1024]);
+        const LEN: usize = 1024;
+        let mut set = tokio::task::JoinSet::new();
+        for index in 0..4 {
+            let device = device.clone();
+            set.spawn(async move {
+                let len = LEN as u16;
+                let y = (index + 1) as f32;
+                let data: Vec<_> = (0..len).map(f32::from).map(|x| x * y).collect();
+                let buffer = device.create(&data, usages).await;
+                let read = device.read::<f32>(&buffer).await;
+                assert_eq!(read.to_vec(), data);
+                println!("addr: {:?}, size: {}", Arc::as_ptr(&buffer), buffer.size());
+                device.dealloc(buffer);
+            });
         }
-        {
-            let data = (0u16..512).map(f32::from).collect_vec();
-            let buffer = device.create(&data, usages).await;
+        set.join_all().await;
+        println!();
+
+        for _ in 0..12 {
+            let buffer = device.alloc::<f32>(LEN, usages).await;
             let read = device.read::<f32>(&buffer).await;
-            assert_eq!(read.to_vec(), data);
+            println!("addr: {:?}, size: {}", Arc::as_ptr(&buffer), buffer.size());
+            assert_eq!(read.len(), LEN);
+            device.dealloc(buffer);
         }
+        println!();
+
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..6 {
+            let device = device.clone();
+            set.spawn(async move {
+                let buffer = device.alloc::<f32>(LEN, usages).await;
+                let read = device.read::<f32>(&buffer).await;
+                println!("addr: {:?}, size: {}", Arc::as_ptr(&buffer), buffer.size());
+                assert_eq!(read.len(), LEN);
+                device.dealloc(buffer);
+            });
+        }
+        set.join_all().await;
+        println!();
+
+        let mut set = tokio::task::JoinSet::new();
+        for _ in 0..6 {
+            let device = device.clone();
+            set.spawn(async move {
+                let buffer = device.alloc::<f32>(LEN, usages).await;
+                let read = device.read::<f32>(&buffer).await;
+                println!("addr: {:?}, size: {}", Arc::as_ptr(&buffer), buffer.size());
+                assert_eq!(read.len(), LEN);
+                device.dealloc(buffer);
+            });
+        }
+        set.join_all().await;
+        println!();
 
         Ok(())
     }
