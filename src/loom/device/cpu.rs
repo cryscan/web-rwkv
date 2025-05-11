@@ -19,18 +19,23 @@ impl Device for Cpu {
 
     #[inline]
     async fn alloc<T: Scalar>(&self, len: usize, _params: Self::Params) -> Arc<Self::Data> {
-        let data = vec![T::zero(); len].into_boxed_slice();
-        bytemuck::cast_slice_box(data).into()
+        let data = vec![T::zero(); len];
+        let data = bytemuck::cast_slice_mut(Vec::leak(data));
+        unsafe { Arc::from_raw(data) }
     }
 
     #[inline]
     async fn create<T: Scalar>(&self, data: &[T], _params: Self::Params) -> Arc<Self::Data> {
-        bytemuck::cast_vec(data.to_vec()).into()
+        let data = data.to_vec();
+        let data = bytemuck::cast_slice_mut(Vec::leak(data));
+        unsafe { Arc::from_raw(data) }
     }
 
     #[inline]
     async fn read<T: Scalar>(&self, source: &<Self as Device>::Data) -> Box<[T]> {
-        bytemuck::cast_slice(source).to_vec().into_boxed_slice()
+        let data = source.to_vec();
+        let data = bytemuck::cast_slice_mut(Vec::leak(data));
+        unsafe { Box::from_raw(data) }
     }
 }
 

@@ -84,7 +84,8 @@ impl Device for Gpu {
             .recv_async()
             .await
             .expect("failed to receive read back buffer");
-        bytemuck::cast_slice_box(data)
+        let data = bytemuck::cast_slice_mut(Box::leak(data));
+        unsafe { Box::from_raw(data) }
     }
 }
 
