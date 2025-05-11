@@ -3,67 +3,8 @@ use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use wgpu::util::DeviceExt;
 
-use crate::{future::Future, num::Scalar};
-
-pub trait Device {
-    /// Type of buffer on the device.
-    type Data: ?Sized;
-    /// Extra parameters for buffer allocation.
-    type Params;
-
-    /// Allocate empty buffer on the device.
-    fn alloc<T: Scalar>(&self, len: usize, params: Self::Params) -> impl Future<Arc<Self::Data>>;
-
-    /// Allocate buffer with data.
-    fn create<T: Scalar>(&self, data: &[T], params: Self::Params) -> impl Future<Arc<Self::Data>>;
-
-    /// Free the allocated data. The device would potentially recycle it for future use.
-    #[inline]
-    fn dealloc(&self, _data: Arc<Self::Data>) {}
-
-    /// Read back a buffer.
-    fn read<T: Scalar>(&self, source: &Self::Data) -> impl Future<Box<[T]>>;
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DeviceId;
-
-/// A CPU device.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Cpu(uid::Id<DeviceId>);
-
-impl Default for Cpu {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Device for Cpu {
-    type Data = [u8];
-    type Params = ();
-
-    #[inline]
-    async fn alloc<T: Scalar>(&self, len: usize, _params: Self::Params) -> Arc<Self::Data> {
-        let data = vec![T::zero(); len].into_boxed_slice();
-        bytemuck::cast_slice_box(data).into()
-    }
-
-    #[inline]
-    async fn create<T: Scalar>(&self, data: &[T], _params: Self::Params) -> Arc<Self::Data> {
-        bytemuck::cast_vec(data.to_vec()).into()
-    }
-
-    #[inline]
-    async fn read<T: Scalar>(&self, source: &<Self as Device>::Data) -> Box<[T]> {
-        bytemuck::cast_slice(source).to_vec().into_boxed_slice()
-    }
-}
-
-impl Cpu {
-    pub fn new() -> Self {
-        Self(uid::Id::new())
-    }
-}
+use super::{Cpu, Device, DeviceId};
+use crate::num::Scalar;
 
 /// A WebGPU device.
 #[allow(unused)]
@@ -143,9 +84,7 @@ impl Device for Gpu {
             .recv_async()
             .await
             .expect("failed to receive read back buffer");
-        let data = Box::leak(data);
-        let data = bytemuck::cast_slice_mut::<_, T>(data);
-        unsafe { Box::from_raw(data) }
+        bytemuck::cast_slice_box(data)
     }
 }
 
