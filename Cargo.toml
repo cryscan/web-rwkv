@@ -25,7 +25,6 @@ repository.workspace = true
 version.workspace = true
 
 [dependencies]
-ahash = "0.8"
 bytemuck = { version = "1.21", features = ["extern_crate_alloc"] }
 derive-getters = "0.5"
 derive_more = { version = "2.0.1", features = [

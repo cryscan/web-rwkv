@@ -1,6 +1,5 @@
-use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use derive_getters::Getters;
-use std::collections::BTreeMap;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use thiserror::Error;
 use wasm_bindgen::{prelude::wasm_bindgen, JsError};
 
@@ -30,7 +29,7 @@ enum StrOrBytes {
 
 impl Tokenizer {
     pub fn new(vocab: &str) -> Result<Self, TokenizerError> {
-        let map: BTreeMap<u16, StrOrBytes> =
+        let map: std::collections::BTreeMap<u16, StrOrBytes> =
             serde_json::from_str(vocab).map_err(TokenizerError::FailedToParseVocabulary)?;
 
         let list: Vec<(Vec<u8>, u16)> = map
@@ -49,7 +48,7 @@ impl Tokenizer {
 
         let mut first_bytes_to_lengths = Vec::new();
         first_bytes_to_lengths.resize(u16::MAX as usize, {
-            let mut set = HashSet::new();
+            let mut set = HashSet::default();
             set.insert(1);
             set
         });
@@ -57,7 +56,7 @@ impl Tokenizer {
         let mut token_index_to_bytes = Vec::new();
         token_index_to_bytes.resize_with(u16::MAX as usize, Vec::new);
 
-        let mut bytes_to_token_index = HashMap::new();
+        let mut bytes_to_token_index = HashMap::default();
         for (token_bytes, token_index) in list {
             if token_bytes.len() >= 2 {
                 let key = u16::from_ne_bytes([token_bytes[0], token_bytes[1]]) as usize;

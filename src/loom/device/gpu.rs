@@ -1,5 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
+use rustc_hash::FxHashMap as HashMap;
 use thiserror::Error;
 use wgpu::util::DeviceExt;
 
@@ -212,7 +213,7 @@ async fn handle_buffer_events(
     device: wgpu::Device,
     receiver: flume::Receiver<GpuEvent>,
 ) {
-    let mut cache = HashMap::new();
+    let mut cache = HashMap::default();
     while let Ok(event) = receiver.recv_async().await {
         match event {
             GpuEvent::Read { buffer, sender } => {
