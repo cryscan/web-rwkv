@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::{Device, DeviceId};
-use crate::num::Scalar;
+use crate::loom::num::Scalar;
 
 /// A CPU device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,7 +19,7 @@ impl Device for Cpu {
 
     #[inline]
     async fn alloc<T: Scalar>(&self, len: usize, _params: Self::Params) -> Arc<Self::Data> {
-        let data = vec![T::zero(); len];
+        let data = vec![T::zeroed(); len];
         let data = bytemuck::cast_slice_mut(Vec::leak(data));
         unsafe { Arc::from_raw(data) }
     }

@@ -35,7 +35,6 @@
 #![doc = document_features::document_features!()]
 
 pub mod context;
-pub mod future;
 pub mod loom;
 pub mod num;
 pub mod runtime;

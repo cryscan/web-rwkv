@@ -5,7 +5,7 @@ use thiserror::Error;
 use wgpu::util::DeviceExt;
 
 use super::{Cpu, Device, DeviceId};
-use crate::num::Scalar;
+use crate::loom::num::Scalar;
 
 /// A WebGPU device.
 #[allow(unused)]
@@ -131,7 +131,7 @@ impl GpuBuilder {
         }
     }
 
-    pub async fn build(&mut self) -> Result<Gpu, GpuBuildError> {
+    pub async fn build(&self) -> Result<Gpu, GpuBuildError> {
         let Self {
             adapter,
             features,

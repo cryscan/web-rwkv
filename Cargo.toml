@@ -26,6 +26,7 @@ version.workspace = true
 
 [dependencies]
 bytemuck = { version = "1.21", features = ["extern_crate_alloc"] }
+casey = "0.4.2"
 derive-getters = "0.5"
 derive_more = { version = "2.0.1", features = [
     "deref",
