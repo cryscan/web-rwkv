@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::{borrow::Cow, marker::PhantomData, sync::Arc};
 
 use itertools::Itertools;
 use shape::ShapedIndex;
@@ -176,24 +176,26 @@ pub trait TensorScalar {
 
 pub trait TensorInitContext<T: Scalar>: Sized {
     /// Init the tensor with given shape and contents.
-    fn from_data(
-        context: &Context,
-        shape: impl Into<Shape>,
-        data: impl Into<Arc<[T]>>,
-    ) -> Result<Self, TensorError>;
+    fn from_data<'a, S, D>(context: &Context, shape: S, data: D) -> Result<Self, TensorError>
+    where
+        S: Into<Shape>,
+        D: Into<Cow<'a, [T]>>;
     /// Init the tensor with given shape.
     fn init(context: &Context, shape: impl Into<Shape>) -> Self;
 }
 
 pub trait TensorInit<T: Scalar>: Sized {
     /// Init the tensor with given shape and contents.
-    fn from_data(shape: impl Into<Shape>, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError>;
+    fn from_data<'a, S, D>(shape: S, data: D) -> Result<Self, TensorError>
+    where
+        S: Into<Shape>,
+        D: Into<Cow<'a, [T]>>;
     /// Init the tensor with given shape.
     fn init(shape: impl Into<Shape>) -> Self;
 
     /// Init an 1-D tensor from data.
-    fn from_data_1d(data: impl Into<Arc<[T]>>) -> Self {
-        let data = data.into();
+    fn from_data_1d<'a>(data: impl Into<Cow<'a, [T]>>) -> Self {
+        let data: Cow<'_, [T]> = data.into();
         let shape = [data.len(), 1, 1, 1];
         Self::from_data(shape, data).expect("tensor 1d from data")
     }
@@ -386,12 +388,17 @@ impl<D: Device, F: Float> Tensor<D, F> {
 }
 
 impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
-    fn from_data(shape: impl Into<Shape>, data: impl Into<Arc<[T]>>) -> Result<Self, TensorError> {
+    fn from_data<'a, S, D>(shape: S, data: D) -> Result<Self, TensorError>
+    where
+        S: Into<Shape>,
+        D: Into<Cow<'a, [T]>>,
+    {
         let shape = shape.into();
-        let data = data.into();
+        let data: Cow<'_, _> = data.into();
         if shape.len() != data.len() {
             Err(TensorErrorKind::Size(shape.len(), data.len()))?;
         }
+        let data = data.into_owned().into();
         Ok(Self {
             shape,
             data,
@@ -414,11 +421,11 @@ impl<T: Scalar> TensorInit<T> for TensorCpu<T> {
 }
 
 impl<T: Scalar> TensorInitContext<T> for TensorCpu<T> {
-    fn from_data(
-        _context: &Context,
-        shape: impl Into<Shape>,
-        data: impl Into<Arc<[T]>>,
-    ) -> Result<Self, TensorError> {
+    fn from_data<'a, S, D>(_context: &Context, shape: S, data: D) -> Result<Self, TensorError>
+    where
+        S: Into<Shape>,
+        D: Into<Cow<'a, [T]>>,
+    {
         TensorInit::from_data(shape, data)
     }
 
@@ -464,11 +471,11 @@ impl<T: Scalar> TensorReshape for TensorCpu<T> {
 }
 
 impl<T: Scalar, K: Kind> TensorInitContext<T> for TensorGpu<T, K> {
-    fn from_data(
-        context: &Context,
-        shape: impl Into<Shape>,
-        data: impl Into<Arc<[T]>>,
-    ) -> Result<Self, TensorError> {
+    fn from_data<'a, S, D>(context: &Context, shape: S, data: D) -> Result<Self, TensorError>
+    where
+        S: Into<Shape>,
+        D: Into<Cow<'a, [T]>>,
+    {
         let tensor: TensorCpu<T> = TensorInit::from_data(shape, data)?;
         Ok(tensor.to(context))
     }
@@ -844,7 +851,7 @@ impl<T: Scalar> TensorCpu<T> {
     pub fn map<U: Scalar>(self, f: impl FnMut(&T) -> U) -> TensorCpu<U> {
         let Self { shape, data, .. } = self;
         let data = data.iter().map(f).collect_vec();
-        TensorInit::from_data(shape, data).unwrap()
+        TensorInit::from_data(shape, &data).unwrap()
     }
 
     /// Pad each dimension to multiples with zeros.
@@ -1220,10 +1227,10 @@ impl Context {
     }
 
     #[inline]
-    pub fn tensor_from_data<T: Scalar, Tensor: TensorInitContext<T>>(
+    pub fn tensor_from_data<'a, T: Scalar, Tensor: TensorInitContext<T>>(
         &self,
         shape: impl Into<Shape>,
-        data: impl Into<Arc<[T]>>,
+        data: impl Into<Cow<'a, [T]>>,
     ) -> Result<Tensor, TensorError> {
         TensorInitContext::from_data(self, shape, data)
     }

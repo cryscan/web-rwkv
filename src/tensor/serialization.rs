@@ -1,4 +1,4 @@
-use std::{fmt, marker::PhantomData, sync::Arc};
+use std::{borrow::Cow, fmt, marker::PhantomData, sync::Arc};
 
 use serde::{
     de::{DeserializeSeed, Error, SeqAccess, Visitor},
@@ -6,24 +6,25 @@ use serde::{
 };
 
 use super::{kind::Kind, shape::Shape, TensorCpu, TensorGpu};
-use crate::{context::Context, num::Scalar, tensor::TensorInto};
+use crate::{context::Context, num::Scalar, tensor::TensorInitContext};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct TensorBlob {
+#[serde(bound(deserialize = "'de: 'a"))]
+struct TensorBlob<'a> {
     shape: Shape,
     #[serde(with = "serde_bytes")]
-    data: Vec<u8>,
+    data: Cow<'a, [u8]>,
 }
 
-impl<T: Scalar> From<TensorCpu<T>> for TensorBlob {
+impl<T: Scalar> From<TensorCpu<T>> for TensorBlob<'_> {
     fn from(value: TensorCpu<T>) -> Self {
         let TensorCpu { shape, data, .. } = value;
-        let data = bytemuck::cast_slice(&data).to_vec();
+        let data = bytemuck::cast_slice(&data).to_vec().into();
         Self { shape, data }
     }
 }
 
-impl<T: Scalar> From<TensorBlob> for TensorCpu<T> {
+impl<T: Scalar> From<TensorBlob<'_>> for TensorCpu<T> {
     fn from(value: TensorBlob) -> Self {
         let TensorBlob { shape, data } = value;
         let data: Vec<T> = bytemuck::cast_slice(&data).to_vec();
@@ -142,8 +143,9 @@ impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de>
         D: serde::Deserializer<'de>,
     {
         let context = &self.context;
-        let tensor: TensorCpu<T> = Deserialize::deserialize(deserializer)?;
-        Ok(tensor.to(context))
+        let tensor: TensorBlob<'de> = Deserialize::deserialize(deserializer)?;
+        let data = bytemuck::cast_slice(&tensor.data);
+        TensorGpu::from_data(context, tensor.shape, data).map_err(D::Error::custom)
     }
 }
 
