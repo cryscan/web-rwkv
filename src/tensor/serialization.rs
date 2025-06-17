@@ -6,7 +6,7 @@ use serde::{
 };
 
 use super::{kind::Kind, shape::Shape, TensorCpu, TensorGpu};
-use crate::{context::Context, num::Scalar, tensor::TensorInitContext};
+use crate::{context::Context, num::Scalar};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = "'de: 'a"))]
@@ -144,8 +144,7 @@ impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de>
     {
         let context = &self.context;
         let tensor: TensorBlob<'de> = Deserialize::deserialize(deserializer)?;
-        let data = bytemuck::cast_slice(&tensor.data);
-        TensorGpu::from_data(context, tensor.shape, data).map_err(D::Error::custom)
+        TensorGpu::from_data_u8(context, tensor.shape, &tensor.data).map_err(D::Error::custom)
     }
 }
 

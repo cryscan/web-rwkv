@@ -600,6 +600,30 @@ impl<T: Scalar, K: Kind> TensorResource for TensorGpu<T, K> {
 }
 
 impl<T: Scalar, K: Kind> TensorGpu<T, K> {
+    pub fn from_data_u8(
+        context: &Context,
+        shape: impl Into<Shape>,
+        contents: &[u8],
+    ) -> Result<Self, TensorError> {
+        let shape = shape.into();
+        let size = shape.len() * size_of::<T>();
+        if contents.len() != size {
+            Err(TensorErrorKind::Size(size, contents.len()))?;
+        }
+        let buffer = context.checkout_buffer_init(contents, K::buffer_usages());
+        let meta = context.checkout_shape_uniform(shape);
+        Ok(Self {
+            shape,
+            data: TensorGpuData {
+                context: context.clone(),
+                meta,
+                buffer,
+            },
+            id: uid::Id::new(),
+            phantom: PhantomData,
+        })
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn back_in_place(&self) -> TensorCpu<T> {
         use crate::context::ContextEvent;
