@@ -100,7 +100,7 @@ where
         let handle = tokio::spawn(Self::run(bundle.into(), receiver));
         tokio::spawn(async move {
             if let Err(err) = handle.await {
-                log::error!("{}", err);
+                log::error!("{err}");
             }
         });
         Self(sender)

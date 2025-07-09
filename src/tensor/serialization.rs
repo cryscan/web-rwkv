@@ -144,10 +144,9 @@ impl<'de, T: Scalar + Deserialize<'de>, K: Kind> DeserializeSeed<'de>
     {
         let context = &self.context;
         let tensor: TensorBlob<'de> = Deserialize::deserialize(deserializer)?;
-        let tensor =
-            TensorGpu::from_data_u8(context, tensor.shape, &tensor.data).map_err(D::Error::custom);
+        let tensor = TensorGpu::from_data_u8(context, tensor.shape, &tensor.data);
         context.queue.submit(None);
-        tensor
+        tensor.map_err(D::Error::custom)
     }
 }
 

@@ -168,25 +168,25 @@ impl std::fmt::Display for Activation {
 impl Macros {
     /// Define a `u32` macro `NF4_BLOCK_SIZE`.
     pub fn nf4(mut self, block_size: u32) -> Self {
-        self.insert("NF4_BLOCK_SIZE".into(), format!("{}u", block_size));
+        self.insert("NF4_BLOCK_SIZE".into(), format!("{block_size}u"));
         self
     }
 
     /// Define a `u32` macro `NF4_BLOCK_SIZE`.
     pub fn int8(mut self, block_size: u32) -> Self {
-        self.insert("INT8_BLOCK_SIZE".into(), format!("{}u", block_size));
+        self.insert("INT8_BLOCK_SIZE".into(), format!("{block_size}u"));
         self
     }
 
     /// Define a `f32` macro with a given name.
     pub fn f32(mut self, name: impl Into<String>, value: f32) -> Self {
-        self.insert(name.into(), format!("{}", value));
+        self.insert(name.into(), format!("{value}"));
         self
     }
 
     /// Define a `usize` macro with a given name.
     pub fn u32(mut self, name: impl Into<String>, value: u32) -> Self {
-        self.insert(name.into(), format!("{}u", value));
+        self.insert(name.into(), format!("{value}u"));
         self
     }
 
@@ -254,8 +254,8 @@ fn custom_tanh(x: vec4<f32>) -> vec4<f32> {
     /// Define a macro with custom display name and prefix.
     pub fn custom(mut self, value: impl std::fmt::Display, prefix: Option<&'_ str>) -> Self {
         match prefix {
-            None => self.insert(format!("{}", value), Default::default()),
-            Some(prefix) => self.insert(format!("{}_{}", prefix, value), Default::default()),
+            None => self.insert(format!("{value}"), Default::default()),
+            Some(prefix) => self.insert(format!("{prefix}_{value}"), Default::default()),
         };
         self
     }
@@ -273,7 +273,7 @@ fn custom_tanh(x: vec4<f32>) -> vec4<f32> {
     pub fn subgroup(self, min: u32, max: u32) -> Self {
         self.u32("MIN_SUBGROUP_SIZE", min)
             .u32("MAX_SUBGROUP_SIZE", max)
-            .define(format!("SUBGROUP_SIZE_{}_{}", min, max), true)
+            .define(format!("SUBGROUP_SIZE_{min}_{max}"), true)
     }
 }
 
