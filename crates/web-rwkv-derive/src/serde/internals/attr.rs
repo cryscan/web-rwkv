@@ -556,7 +556,7 @@ impl Container {
                 } else {
                     let path = meta.path.to_token_stream().to_string().replace(' ', "");
                     return Err(
-                        meta.error(format_args!("unknown serde container attribute `{}`", path))
+                        meta.error(format_args!("unknown serde container attribute `{path}`"))
                     );
                 }
                 Ok(())
@@ -974,7 +974,7 @@ impl Variant {
                 } else {
                     let path = meta.path.to_token_stream().to_string().replace(' ', "");
                     return Err(
-                        meta.error(format_args!("unknown serde variant attribute `{}`", path))
+                        meta.error(format_args!("unknown serde variant attribute `{path}`"))
                     );
                 }
                 Ok(())
@@ -1129,8 +1129,7 @@ impl Field {
                 if let Some(lifetimes) = &borrow_attribute.lifetimes {
                     for lifetime in lifetimes {
                         if !borrowable.contains(lifetime) {
-                            let msg =
-                                format!("field `{}` does not have lifetime {}", ident, lifetime);
+                            let msg = format!("field `{ident}` does not have lifetime {lifetime}");
                             cx.error_spanned_by(field, msg);
                         }
                     }
@@ -1232,8 +1231,7 @@ impl Field {
                             for lifetime in &lifetimes {
                                 if !borrowable.contains(lifetime) {
                                     let msg = format!(
-                                        "field `{}` does not have lifetime {}",
-                                        ident, lifetime,
+                                        "field `{ident}` does not have lifetime {lifetime}",
                                     );
                                     cx.error_spanned_by(field, msg);
                                 }
@@ -1256,9 +1254,7 @@ impl Field {
                     flatten.set_true(&meta.path);
                 } else {
                     let path = meta.path.to_token_stream().to_string().replace(' ', "");
-                    return Err(
-                        meta.error(format_args!("unknown serde field attribute `{}`", path))
-                    );
+                    return Err(meta.error(format_args!("unknown serde field attribute `{path}`")));
                 }
                 Ok(())
             }) {
@@ -1451,8 +1447,7 @@ where
                 }
             } else {
                 return Err(meta.error(format_args!(
-                    "malformed {0} attribute, expected `{0}(serialize = ..., deserialize = ...)`",
-                    attr_name,
+                    "malformed {attr_name} attribute, expected `{attr_name}(serialize = ..., deserialize = ...)`",
                 )));
             }
             Ok(())
@@ -1517,7 +1512,7 @@ fn get_lit_str2(
         if !suffix.is_empty() {
             cx.error_spanned_by(
                 lit,
-                format!("unexpected suffix `{}` on string literal", suffix),
+                format!("unexpected suffix `{suffix}` on string literal"),
             );
         }
         Ok(Some(lit.clone()))
@@ -1525,8 +1520,7 @@ fn get_lit_str2(
         cx.error_spanned_by(
             expr,
             format!(
-                "expected serde {} attribute to be a string: `{} = \"...\"`",
-                attr_name, meta_item_name
+                "expected serde {attr_name} attribute to be a string: `{meta_item_name} = \"...\"`"
             ),
         );
         Ok(None)
@@ -1637,10 +1631,7 @@ fn parse_lit_into_lifetimes(
         while !input.is_empty() {
             let lifetime: Lifetime = input.parse()?;
             if !set.insert(lifetime.clone()) {
-                cx.error_spanned_by(
-                    &string,
-                    format!("duplicate borrowed lifetime `{}`", lifetime),
-                );
+                cx.error_spanned_by(&string, format!("duplicate borrowed lifetime `{lifetime}`"));
             }
             if input.is_empty() {
                 break;
@@ -1813,7 +1804,7 @@ fn borrowable_lifetimes(
     let mut lifetimes = BTreeSet::new();
     collect_lifetimes(&field.ty, &mut lifetimes);
     if lifetimes.is_empty() {
-        let msg = format!("field `{}` has no lifetimes to borrow", name);
+        let msg = format!("field `{name}` has no lifetimes to borrow");
         cx.error_spanned_by(field, msg);
         Err(())
     } else {

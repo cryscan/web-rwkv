@@ -155,7 +155,7 @@ impl ContextBuilder {
                     let data = read_back_buffer(&device, &buffer);
                     let _ = sender.send(data);
                 }
-                log::info!("context dropped: {}", id);
+                log::info!("context dropped: {id}");
             });
         }
 
