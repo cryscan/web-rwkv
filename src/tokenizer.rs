@@ -11,13 +11,13 @@ pub enum TokenizerError {
     #[error("no matching token found")]
     NoMatchingTokenFound,
     #[error("out of range token: {0}")]
-    OutOfRangeToken(u16),
+    OutOfRangeToken(u32),
 }
 
 #[derive(Debug, Clone, Getters)]
 pub struct Tokenizer {
     first_bytes_to_lengths: Vec<Box<[u16]>>,
-    bytes_to_token_index: HashMap<Vec<u8>, u16>,
+    bytes_to_token_index: HashMap<Vec<u8>, u32>,
     token_index_to_bytes: Vec<Vec<u8>>,
 }
 
@@ -30,10 +30,10 @@ enum StrOrBytes {
 
 impl Tokenizer {
     pub fn new(vocab: &str) -> Result<Self, TokenizerError> {
-        let map: BTreeMap<u16, StrOrBytes> =
+        let map: BTreeMap<u32, StrOrBytes> = 
             serde_json::from_str(vocab).map_err(TokenizerError::FailedToParseVocabulary)?;
-
-        let list: Vec<(Vec<u8>, u16)> = map
+        
+        let list: Vec<(Vec<u8>, u32)> = map
             .into_iter()
             .map(|(token, pattern)| {
                 let pattern = match pattern {
@@ -55,7 +55,9 @@ impl Tokenizer {
         });
 
         let mut token_index_to_bytes = Vec::new();
-        token_index_to_bytes.resize_with(u16::MAX as usize, Vec::new);
+        // Find the max token index to determine the size of the vector.
+        let max_token_index = list.iter().map(|(_, index)| *index).max().unwrap_or(0) as usize;
+        token_index_to_bytes.resize_with(max_token_index + 1, Vec::new);
 
         let mut bytes_to_token_index = HashMap::new();
         for (token_bytes, token_index) in list {
@@ -89,13 +91,13 @@ impl Tokenizer {
         })
     }
 
-    pub fn encode(&self, input: &[u8]) -> Result<Vec<u16>, TokenizerError> {
+    pub fn encode(&self, input: &[u8]) -> Result<Vec<u32>, TokenizerError> {
         let mut output = Vec::new();
         self.encode_into(input, &mut output)?;
         Ok(output)
     }
 
-    pub fn decode(&self, tokens: &[u16]) -> Result<Vec<u8>, TokenizerError> {
+    pub fn decode(&self, tokens: &[u32]) -> Result<Vec<u8>, TokenizerError> {
         let mut output = Vec::with_capacity(tokens.len());
         self.decode_into(tokens, &mut output)?;
         Ok(output)
@@ -106,7 +108,7 @@ impl Tokenizer {
     pub fn encode_into(
         &self,
         mut input: &[u8],
-        output: &mut Vec<u16>,
+        output: &mut Vec<u32>,
     ) -> Result<(), TokenizerError> {
         'next_token: while !input.is_empty() {
             let lengths = if input.len() >= 2 {
@@ -135,7 +137,7 @@ impl Tokenizer {
         Ok(())
     }
 
-    pub fn decode_into(&self, tokens: &[u16], output: &mut Vec<u8>) -> Result<(), TokenizerError> {
+    pub fn decode_into(&self, tokens: &[u32], output: &mut Vec<u8>) -> Result<(), TokenizerError> {
         for &token in tokens {
             let bytes = self
                 .token_index_to_bytes
@@ -159,11 +161,11 @@ impl JsTokenizer {
         Ok(Self(Tokenizer::new(vocab)?))
     }
 
-    pub fn encode(&self, input: &[u8]) -> Result<Vec<u16>, JsError> {
+    pub fn encode(&self, input: &[u8]) -> Result<Vec<u32>, JsError> {
         Ok(self.0.encode(input)?)
     }
 
-    pub fn decode(&self, tokens: &[u16]) -> Result<Vec<u8>, JsError> {
+    pub fn decode(&self, tokens: &[u32]) -> Result<Vec<u8>, JsError> {
         Ok(self.0.decode(tokens)?)
     }
 }

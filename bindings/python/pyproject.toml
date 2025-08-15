@@ -1,0 +1,65 @@
+[build-system]
+requires = ["maturin>=1.0.0"]
+build-backend = "maturin"
+
+[project]
+name = "webrwkv-py"
+version = "0.1.0"
+description = "Python bindings for WebRWKV inference engine"
+readme = "README.md"
+authors = [
+    {name = "WebRWKV Contributors", email = "cryscan@umich.edu"}
+]
+license = {text = "MIT OR Apache-2.0"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = [
+    "rwkv",
+    "language-model",
+    "inference",
+    "webgpu",
+    "ai",
+    "machine-learning",
+    "deep-learning",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "typing-extensions>=3.7.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=0.900",
+]
+examples = [
+    "numpy>=1.20.0",
+    "typing-extensions>=3.7.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/cryscan/web-rwkv"
+Documentation = "https://github.com/cryscan/web-rwkv/tree/main/bindings/python"
+Repository = "https://github.com/cryscan/web-rwkv"
+"Bug Tracker" = "https://github.com/cryscan/web-rwkv/issues"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "webrwkv_py"

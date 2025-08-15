@@ -5,11 +5,11 @@ use std::{io::Write, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
-#[cfg(not(debug_assertions))]
+#[cfg(not(debug_assertions)]
 use dialoguer::{theme::ColorfulTheme, Select};
 use half::f16;
 use instant::{Duration, Instant};
-#[cfg(not(debug_assertions))]
+#[cfg(not(debug_assertions)]
 use itertools::Itertools;
 use memmap2::Mmap;
 use safetensors::SafeTensors;
@@ -31,18 +31,18 @@ use web_rwkv::{
     tokenizer::Tokenizer,
 };
 
-fn sample(probs: &[f32], _top_p: f32) -> u16 {
+fn sample(probs: &[f32], _top_p: f32) -> u32 {
     probs
         .iter()
         .enumerate()
         .max_by(|(_, x), (_, y)| x.total_cmp(y))
         .unwrap()
-        .0 as u16
+        .0 as u32
 }
 
 async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
     let instance = wgpu::Instance::default();
-    #[cfg(not(debug_assertions))]
+    #[cfg(not(debug_assertions)]
     let adapter = if _auto {
         instance
             .adapter(wgpu::PowerPreference::HighPerformance)

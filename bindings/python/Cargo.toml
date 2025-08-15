@@ -1,0 +1,26 @@
+[package]
+name = "webrwkv_py"
+edition = "2021"
+version = "0.1.0"
+
+[workspace]
+
+[lib]
+name = "webrwkv_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+# The main web-rwkv library
+web-rwkv = { path = "../../" }
+
+# PyO3 for Python bindings
+pyo3 = { version = "0.22.1", features = ["extension-module", "full"] }
+
+# Other dependencies we need for the binding code
+anyhow = "1.0.86"
+half = "2.4.1"
+tokio = { version = "1.37.0", features = ["full"] }
+memmap2 = "0.9.4"
+safetensors = "0.5"
+wgpu = "24.0.5"
+serde = { version = "1.0.203", features = ["derive"] }

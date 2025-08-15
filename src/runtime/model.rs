@@ -75,7 +75,7 @@ pub trait AsAny {
     fn as_any(&self) -> &dyn Any;
 }
 
-pub trait State {
+pub trait State: Send + Sync {
     /// Batch number of this state.
     fn num_batch(&self) -> usize;
     /// Shape of the initialized one-batch CPU state.

@@ -155,7 +155,7 @@ struct Sampler {
 }
 
 impl Sampler {
-    pub fn sample(&self, probs: &[f32]) -> u16 {
+    pub fn sample(&self, probs: &[f32]) -> u32 {
         let sorted: Vec<_> = probs
             .iter()
             .copied()
@@ -188,7 +188,7 @@ impl Sampler {
             .find_or_first(|&(_, cum)| rand <= cum)
             .map(|(id, _)| id)
             .unwrap_or_default();
-        token as u16
+        token as u32
     }
 }
 
