@@ -185,10 +185,130 @@ impl ThreadRuntime {
         // 方法1: 重新创建运行时以重置状态
         self.runtime = self.tokio_runtime.block_on(self.bundle.create_runtime());
         
-        // 方法2: 通过 bundle 的 state 来重置（如果需要更精确的控制）
-        // 这里可以添加额外的 state 清理逻辑
+        // 方法2: 直接重置 GPU state 数据为 0
+        self.reset_gpu_state_to_zero()?;
         
         Ok(())
+    }
+
+    /// 直接重置 GPU state 数据为 0
+    fn reset_gpu_state_to_zero(&self) -> PyResult<()> {
+        let state = self.bundle.get_state();
+        
+        // 获取初始化的零值数据
+        let zero_data = state.init();
+        
+        // 将零值数据写入到 GPU state 的所有 batch
+        let num_batch = state.num_batch();
+        for batch in 0..num_batch {
+            state.load(zero_data.clone(), batch)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        }
+        
+        Ok(())
+    }
+
+    /// 读取 GPU state 数据到 CPU 进行比较
+    fn read_gpu_state_data(&self, batch: usize) -> PyResult<Vec<f32>> {
+        let state = self.bundle.get_state();
+        
+        // 读取指定 batch 的 GPU state 数据
+        let gpu_tensor = state.read(batch)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        
+        // 将 GPU 数据读回到 CPU
+        let cpu_data = self.tokio_runtime.block_on(gpu_tensor.back());
+        
+        // 转换为 Vec<f32>
+        Ok(cpu_data.data().to_vec())
+    }
+
+    /// 检查 GPU state 是否包含非零值（真正的验证）
+    fn check_gpu_state_has_nonzero_values(&self, batch: usize) -> PyResult<bool> {
+        let state_data = self.read_gpu_state_data(batch)?;
+        
+        // 检查是否有非零值（允许小的浮点误差）
+        let epsilon = 1e-10;
+        let has_nonzero = state_data.iter().any(|&x| x.abs() > epsilon);
+        
+        Ok(has_nonzero)
+    }
+
+    /// 比较两个 batch 的 state 数据
+    fn compare_state_batches(&self, batch1: usize, batch2: usize) -> PyResult<String> {
+        let data1 = self.read_gpu_state_data(batch1)?;
+        let data2 = self.read_gpu_state_data(batch2)?;
+        
+        if data1.len() != data2.len() {
+            return Ok("❌ 两个 batch 的数据长度不同".to_string());
+        }
+        
+        let epsilon = 1e-10;
+        let mut differences = 0;
+        let mut max_diff = 0.0;
+        
+        for (i, (val1, val2)) in data1.iter().zip(data2.iter()).enumerate() {
+            let diff = (val1 - val2).abs();
+            if diff > epsilon {
+                differences += 1;
+                if diff > max_diff {
+                    max_diff = diff;
+                }
+            }
+        }
+        
+        let conclusion = if differences == 0 { 
+            "✅ 两个 batch 数据完全一致".to_string()
+        } else { 
+            format!("⚠️ 发现 {} 个不同元素", differences)
+        };
+        
+        let result = format!(
+            "State 数据比较结果:\n  Batch {} 数据长度: {}\n  Batch {} 数据长度: {}\n  不同元素数量: {}\n  最大差异: {:.6}\n  结论: {}",
+            batch1, data1.len(),
+            batch2, data2.len(),
+            differences,
+            max_diff,
+            conclusion
+        );
+        
+        Ok(result)
+    }
+
+    /// 验证 state 重置是否成功（通过读取实际 GPU 数据）
+    fn verify_reset_by_gpu_data(&self) -> PyResult<String> {
+        let state = self.bundle.get_state();
+        let num_batch = state.num_batch();
+        
+        let mut results = Vec::new();
+        
+        // 读取所有 batch 的数据
+        for batch in 0..num_batch {
+            let has_nonzero = self.check_gpu_state_has_nonzero_values(batch)?;
+            results.push((batch, has_nonzero));
+        }
+        
+        // 分析结果
+        let all_zero = results.iter().all(|(_, has_nonzero)| !has_nonzero);
+        let non_zero_batches: Vec<usize> = results.iter()
+            .filter_map(|(batch, has_nonzero)| if *has_nonzero { Some(*batch) } else { None })
+            .collect();
+        
+        let conclusion = if all_zero { 
+            "✅ GPU state 已完全重置为零".to_string()
+        } else { 
+            format!("❌ 发现 {} 个非零 batch", non_zero_batches.len())
+        };
+        
+        let result = format!(
+            "GPU State 数据验证结果:\n  总批次数: {}\n  所有 batch 是否为零: {}\n  非零 batch: {:?}\n  结论: {}",
+            num_batch,
+            all_zero,
+            non_zero_batches,
+            conclusion
+        );
+        
+        Ok(result)
     }
 
     /// 获取当前 state 信息用于调试
@@ -252,13 +372,35 @@ impl ThreadRuntime {
 
     /// 检查 state 是否包含非零值（用于验证重置是否成功）
     fn check_state_has_nonzero_values(&self) -> PyResult<bool> {
-        let state = self.bundle.get_state();
-        let init_data = state.init();
+        // 现在使用真正的 GPU 数据读取
+        self.check_gpu_state_has_nonzero_values(0)
+    }
+
+    /// 通过推理结果验证 state 是否被重置（更可靠的方法）
+    fn verify_reset_by_inference(&mut self) -> PyResult<String> {
+        // 进行第一次推理
+        let first_logits = self.predict(vec![1, 2, 3])?;
+        let first_sample = first_logits[..5].to_vec();
         
-        // 检查是否有非零值
-        let has_nonzero = init_data.data().iter().any(|&x| x != 0.0);
+        // 重置 state
+        self.reset()?;
         
-        Ok(has_nonzero)
+        // 进行相同的推理
+        let second_logits = self.predict(vec![1, 2, 3])?;
+        let second_sample = second_logits[..5].to_vec();
+        
+        // 比较结果
+        let is_same = first_sample == second_sample;
+        
+        let result = format!(
+            "通过推理验证重置结果:\n  第一次推理前5个值: {:?}\n  重置后推理前5个值: {:?}\n  结果是否相同: {}\n  结论: {}",
+            first_sample,
+            second_sample,
+            is_same,
+            if is_same { "✅ State 重置成功，推理结果一致" } else { "❌ State 重置可能不完整，推理结果不一致" }
+        );
+        
+        Ok(result)
     }
 
     /// 获取 state 的内存使用情况估计
@@ -281,28 +423,32 @@ impl ThreadRuntime {
 
     /// 深度验证 state 重置（通过比较重置前后的状态）
     fn deep_verify_reset(&mut self) -> PyResult<String> {
-        // 获取重置前的状态信息
-        let before_stats = self.get_state_statistics()?;
-        let before_has_nonzero = self.check_state_has_nonzero_values()?;
+        // 获取重置前的 GPU state 数据
+        let before_has_nonzero = self.check_gpu_state_has_nonzero_values(0)?;
         
         // 进行一些预测来改变状态
         let _ = self.predict(vec![999, 888, 777]);
         let _ = self.predict_next(666);
         
-        // 重置状态
-        let _ = self.reset();
+        // 检查预测后是否有非零值
+        let after_pred_has_nonzero = self.check_gpu_state_has_nonzero_values(0)?;
         
-        // 获取重置后的状态信息
-        let after_stats = self.get_state_statistics()?;
-        let after_has_nonzero = self.check_state_has_nonzero_values()?;
+        // 重置状态
+        self.reset()?;
+        
+        // 获取重置后的 GPU state 数据
+        let after_reset_has_nonzero = self.check_gpu_state_has_nonzero_values(0)?;
+        
+        // 使用新的 GPU 数据验证
+        let gpu_verification = self.verify_reset_by_gpu_data()?;
         
         let result = format!(
-            "深度验证结果:\n\n重置前:\n{}\n重置前有非零值: {}\n\n重置后:\n{}\n重置后有非零值: {}\n\n验证结论: {}",
-            before_stats,
+            "深度验证结果:\n\n重置前:\n  GPU state 有非零值: {}\n\n预测后:\n  GPU state 有非零值: {}\n\n重置后:\n  GPU state 有非零值: {}\n\nGPU 数据验证:\n{}\n\n验证结论: {}",
             before_has_nonzero,
-            after_stats,
-            after_has_nonzero,
-            if !after_has_nonzero { "✅ 重置成功，state 已清零" } else { "❌ 重置可能不完整，仍有非零值" }
+            after_pred_has_nonzero,
+            after_reset_has_nonzero,
+            gpu_verification,
+            if !after_reset_has_nonzero { "✅ 重置成功，GPU state 已清零" } else { "❌ 重置可能不完整，GPU state 仍有非零值" }
         );
         
         Ok(result)
