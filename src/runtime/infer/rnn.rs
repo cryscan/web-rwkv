@@ -363,10 +363,10 @@ mod tests {
     fn test_run_iter() -> Result<()> {
         let run = RnnInput {
             batches: [
-                (vec![0; 139], RnnOption::Last),
-                (vec![1; 1], RnnOption::Last),
-                (vec![2; 0], RnnOption::Full),
-                (vec![3; 65], RnnOption::Full),
+                (vec![0u32; 139], RnnOption::Last),
+                (vec![1u32; 1], RnnOption::Last),
+                (vec![2u32; 0], RnnOption::Full),
+                (vec![3u32; 65], RnnOption::Full),
             ]
             .map(|(tokens, option)| RnnInputBatch::new(tokens, option))
             .to_vec(),
@@ -447,10 +447,10 @@ mod tests {
     fn test_advance() -> Result<()> {
         let mut run = RnnInput {
             batches: [
-                (vec![0; 139], RnnOption::Last),
-                (vec![1; 1], RnnOption::Last),
-                (vec![2; 0], RnnOption::Full),
-                (vec![3; 65], RnnOption::Full),
+                (vec![0u32; 139], RnnOption::Last),
+                (vec![1u32; 1], RnnOption::Last),
+                (vec![2u32; 0], RnnOption::Full),
+                (vec![3u32; 65], RnnOption::Full),
             ]
             .map(|(tokens, option)| RnnInputBatch::new(tokens, option))
             .to_vec(),
@@ -475,10 +475,10 @@ mod tests {
         // simulate adding one token to batch 1 after advancing.
         let run = RnnInput {
             batches: [
-                (vec![0; 61], RnnOption::Last),
-                (vec![1; 1], RnnOption::Last),
-                (vec![2; 0], RnnOption::Full),
-                (vec![3; 3], RnnOption::Full),
+                (vec![0u32; 61], RnnOption::Last),
+                (vec![1u32; 1], RnnOption::Last),
+                (vec![2u32; 0], RnnOption::Full),
+                (vec![3u32; 3], RnnOption::Full),
             ]
             .map(|(tokens, option)| RnnInputBatch::new(tokens, option))
             .to_vec(),
@@ -505,10 +505,10 @@ mod tests {
     fn test_redirect() -> Result<()> {
         let run = RnnInput {
             batches: [
-                (vec![0; 61], RnnOption::Last),
-                (vec![1; 0], RnnOption::Last),
-                (vec![2; 0], RnnOption::Full),
-                (vec![3; 3], RnnOption::Full),
+                (vec![0u32; 61], RnnOption::Last),
+                (vec![1u32; 0], RnnOption::Last),
+                (vec![2u32; 0], RnnOption::Full),
+                (vec![3u32; 3], RnnOption::Full),
             ]
             .map(|(tokens, option)| RnnInputBatch::new(tokens, option))
             .to_vec(),
@@ -522,14 +522,14 @@ mod tests {
 
         let run = RnnInput {
             batches: [
-                (vec![0; 11], RnnOption::Last),
-                (vec![1; 8], RnnOption::Last),
-                (vec![2; 9], RnnOption::Last),
-                (vec![3; 4], RnnOption::Last),
-                (vec![0; 11], RnnOption::Last),
-                (vec![1; 8], RnnOption::Last),
-                (vec![2; 9], RnnOption::Last),
-                (vec![3; 4], RnnOption::Last),
+                (vec![0u32; 11], RnnOption::Last),
+                (vec![1u32; 8], RnnOption::Last),
+                (vec![2u32; 9], RnnOption::Last),
+                (vec![3u32; 4], RnnOption::Last),
+                (vec![0u32; 11], RnnOption::Last),
+                (vec![1u32; 8], RnnOption::Last),
+                (vec![2u32; 9], RnnOption::Last),
+                (vec![3u32; 4], RnnOption::Last),
             ]
             .map(|(tokens, option)| RnnInputBatch::new(tokens, option))
             .to_vec(),

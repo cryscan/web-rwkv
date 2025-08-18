@@ -265,7 +265,7 @@ impl<M, I, J> SimpleRuntime<M, I, J> {
 #[allow(clippy::type_complexity)]
 pub trait Runtime<I: infer::Infer> {
     #[cfg(not(target_arch = "wasm32"))]
-    fn infer(&self, input: I::Input) -> BoxFuture<Result<(I::Input, I::Output), RuntimeError>>;
+    fn infer(&self, input: I::Input) -> BoxFuture<'_, Result<(I::Input, I::Output), RuntimeError>>;
 
     #[cfg(target_arch = "wasm32")]
     fn infer(&self, input: I::Input)
@@ -282,7 +282,7 @@ where
     for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
 {
     #[cfg(not(target_arch = "wasm32"))]
-    fn infer(&self, input: I::Input) -> BoxFuture<Result<(I::Input, I::Output), RuntimeError>> {
+    fn infer(&self, input: I::Input) -> BoxFuture<'_, Result<(I::Input, I::Output), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }
@@ -298,7 +298,7 @@ where
     F: Iterator<Item = T> + Send + 'static,
     for<'a> &'a I::Input: IntoIterator<Item = T, IntoIter = F>,
 {
-    fn infer(&self, input: I::Input) -> BoxFuture<Result<(I::Input, I::Output), RuntimeError>> {
+    fn infer(&self, input: I::Input) -> BoxFuture<'_, Result<(I::Input, I::Output), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }

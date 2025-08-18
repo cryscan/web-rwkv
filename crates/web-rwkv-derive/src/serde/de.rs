@@ -2615,9 +2615,9 @@ impl ToTokens for DeTypeGenerics<'_> {
 fn split_with_de_lifetime(
     params: &Parameters,
 ) -> (
-    DeImplGenerics,
-    DeTypeGenerics,
-    syn::TypeGenerics,
+    DeImplGenerics<'_>,
+    DeTypeGenerics<'_>,
+    syn::TypeGenerics<'_>,
     Option<&syn::WhereClause>,
 ) {
     let de_impl_generics = DeImplGenerics(params);

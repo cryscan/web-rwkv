@@ -184,13 +184,13 @@ impl super::model::State for State {
         TensorCpu::from_data(shape, data).unwrap()
     }
 
-    fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
+    fn att(&self, layer: usize) -> Result<TensorGpuView<'_, f32>, TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         let end = head_size + 1;
         self.data[layer].view(.., 0..end, .., ..)
     }
 
-    fn ffn(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError> {
+    fn ffn(&self, layer: usize) -> Result<TensorGpuView<'_, f32>, TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         let start = head_size + 1;
         self.data[layer].view(.., start, .., ..)
@@ -206,7 +206,7 @@ impl super::model::State for State {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>> {
+    fn back(&self, batch: usize) -> BoxFuture<'_, Result<TensorCpu<f32>, TensorError>> {
         Box::pin(self.back(batch))
     }
 

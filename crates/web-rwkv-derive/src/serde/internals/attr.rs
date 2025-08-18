@@ -695,7 +695,7 @@ impl Container {
         self.serde_path.as_ref()
     }
 
-    pub fn serde_path(&self) -> Cow<syn::Path> {
+    pub fn serde_path(&self) -> Cow<'_, syn::Path> {
         self.custom_serde_path()
             .map_or_else(|| Cow::Owned(parse_quote!(_serde)), Cow::Borrowed)
     }

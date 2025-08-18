@@ -20,7 +20,7 @@ pub trait Infer: Send + Sync + 'static {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Token {
-    Token(u16),
+    Token(u32),
     Embed(TensorCpu<f16>),
 }
 
@@ -30,8 +30,8 @@ impl Default for Token {
     }
 }
 
-impl From<u16> for Token {
-    fn from(value: u16) -> Self {
+impl From<u32> for Token {
+    fn from(value: u32) -> Self {
         Self::Token(value)
     }
 }
