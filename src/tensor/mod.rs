@@ -248,9 +248,9 @@ pub trait TensorResource {
     /// Retrieve the key identifying a resource.
     fn resource_key(&self) -> ResourceKey;
     /// Binding for metadata of the tensor (shape, stride, etc.).
-    fn meta_binding(&self) -> BindingResource;
+    fn meta_binding(&self) -> BindingResource<'_>;
     /// Binding for actual data of the tensor.
-    fn binding(&self) -> BindingResource;
+    fn binding(&self) -> BindingResource<'_>;
 }
 
 /// A tensor on either CPU or GPU.
@@ -581,7 +581,7 @@ impl<T: Scalar, K: Kind> TensorResource for TensorGpu<T, K> {
     }
 
     #[inline]
-    fn meta_binding(&self) -> BindingResource {
+    fn meta_binding(&self) -> BindingResource<'_> {
         BindingResource::Buffer(BufferBinding {
             buffer: &self.meta,
             offset: 0,
@@ -590,7 +590,7 @@ impl<T: Scalar, K: Kind> TensorResource for TensorGpu<T, K> {
     }
 
     #[inline]
-    fn binding(&self) -> BindingResource {
+    fn binding(&self) -> BindingResource<'_> {
         BindingResource::Buffer(BufferBinding {
             buffer: &self.buffer,
             offset: 0,
@@ -1082,7 +1082,7 @@ impl<T: Scalar> TensorResource for TensorGpuView<'_, T> {
     }
 
     #[inline]
-    fn meta_binding(&self) -> BindingResource {
+    fn meta_binding(&self) -> BindingResource<'_> {
         BindingResource::Buffer(BufferBinding {
             buffer: &self.meta,
             offset: 0,
@@ -1091,7 +1091,7 @@ impl<T: Scalar> TensorResource for TensorGpuView<'_, T> {
     }
 
     #[inline]
-    fn binding(&self) -> BindingResource {
+    fn binding(&self) -> BindingResource<'_> {
         self.tensor.binding()
     }
 }

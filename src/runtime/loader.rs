@@ -45,7 +45,7 @@ pub trait Reader {
     fn names(&self) -> Vec<&str>;
     fn contains(&self, name: &str) -> bool;
     fn shape(&self, name: &str) -> Result<Vec<usize>, SafeTensorError>;
-    fn tensor(&self, name: &str) -> Result<ReaderTensor, SafeTensorError>;
+    fn tensor(&self, name: &str) -> Result<ReaderTensor<'_>, SafeTensorError>;
 }
 
 impl Reader for SafeTensors<'_> {
@@ -65,7 +65,7 @@ impl Reader for SafeTensors<'_> {
     }
 
     #[inline]
-    fn tensor(&self, name: &str) -> Result<ReaderTensor, SafeTensorError> {
+    fn tensor(&self, name: &str) -> Result<ReaderTensor<'_>, SafeTensorError> {
         let tensor = SafeTensors::tensor(self, name)?;
         let shape = tensor.shape().to_vec();
         let data = tensor.data().into();

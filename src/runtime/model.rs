@@ -83,14 +83,14 @@ pub trait State {
     /// Initialize a one-batch state on CPU.
     fn init(&self) -> TensorCpu<f32>;
     /// The part of the state that is used in an `att` layer.
-    fn att(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError>;
+    fn att(&self, layer: usize) -> Result<TensorGpuView<'_, f32>, TensorError>;
     /// The part of the state that is used in an `ffn` layer.
-    fn ffn(&self, layer: usize) -> Result<TensorGpuView<f32>, TensorError>;
+    fn ffn(&self, layer: usize) -> Result<TensorGpuView<'_, f32>, TensorError>;
     /// Load a batch of the state from CPU to GPU.
     fn load(&self, tensor: TensorCpu<f32>, batch: usize) -> Result<(), TensorError>;
     /// Read back a batch of the state from GPU to CPU.
     #[cfg(not(target_arch = "wasm32"))]
-    fn back(&self, batch: usize) -> BoxFuture<Result<TensorCpu<f32>, TensorError>>;
+    fn back(&self, batch: usize) -> BoxFuture<'_, Result<TensorCpu<f32>, TensorError>>;
     /// Read back a batch of the state from GPU to CPU.
     #[cfg(target_arch = "wasm32")]
     fn back(&self, batch: usize) -> LocalBoxFuture<Result<TensorCpu<f32>, TensorError>>;
