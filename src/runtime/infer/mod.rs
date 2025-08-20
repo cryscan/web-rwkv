@@ -36,6 +36,12 @@ impl From<u32> for Token {
     }
 }
 
+impl From<u16> for Token {
+    fn from(value: u16) -> Self {
+        Self::Token(value as u32)
+    }
+}
+
 impl From<Vec<f16>> for Token {
     fn from(value: Vec<f16>) -> Self {
         Self::Embed(TensorCpu::from_data_1d(value))

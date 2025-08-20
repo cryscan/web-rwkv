@@ -56,7 +56,7 @@ impl Reader for SafeTensors<'_> {
 
     #[inline]
     fn contains(&self, name: &str) -> bool {
-        self.names().contains(&&name.to_string())
+        self.names().contains(&name)
     }
 
     #[inline]

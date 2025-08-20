@@ -46,13 +46,13 @@ MAX_DEPTH-2
 
 ";
 
-fn sample(probs: &[f32], _top_p: f32) -> u16 {
+fn sample(probs: &[f32], _top_p: f32) -> u32 {
     probs
         .iter()
         .enumerate()
         .max_by(|(_, x), (_, y)| x.total_cmp(y))
         .unwrap()
-        .0 as u16
+        .0 as u32
 }
 
 async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {

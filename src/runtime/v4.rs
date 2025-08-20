@@ -864,7 +864,7 @@ impl<R: Reader> ModelBuilder<R> {
         };
 
         context.queue.submit(None);
-        context.device.poll(wgpu::MaintainBase::Wait);
+        _ = context.device.poll(wgpu::PollType::Wait);
 
         let load_matrix = |name: String, quant: Quant| loader.load_matrix(name, quant);
         let load_matrix_discount = |name: String, quant: Quant, discount: f32| {
@@ -918,7 +918,7 @@ impl<R: Reader> ModelBuilder<R> {
             };
 
             context.queue.submit(None);
-            context.device.poll(wgpu::MaintainBase::Wait);
+            _ = context.device.poll(wgpu::PollType::Wait);
 
             layers.push(Layer {
                 att_layer_norm,
@@ -929,7 +929,7 @@ impl<R: Reader> ModelBuilder<R> {
         }
 
         context.queue.submit(None);
-        context.device.poll(wgpu::MaintainBase::Wait);
+        _ = context.device.poll(wgpu::PollType::Wait);
 
         let tensor = ModelTensor {
             embed,

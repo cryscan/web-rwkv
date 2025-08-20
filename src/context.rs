@@ -34,7 +34,7 @@ impl InstanceExt for Instance {
             compatible_surface: None,
         })
         .await
-        .ok_or(ContextError::RequestAdapterFailed)
+        .or(Err(ContextError::RequestAdapterFailed))
     }
 }
 
@@ -69,7 +69,7 @@ impl Drop for Context {
         if self.event.sender_count() <= 1 {
             self.clear_buffers();
             self.queue.submit(None);
-            self.device.poll(wgpu::Maintain::Wait);
+            _ = self.device.poll(wgpu::PollType::Wait);
         }
     }
 }
@@ -115,15 +115,13 @@ impl ContextBuilder {
         } = self;
 
         let (device, queue) = adapter
-            .request_device(
-                &DeviceDescriptor {
-                    label: None,
-                    required_features: features,
-                    required_limits: limits,
-                    memory_hints: MemoryHints::Performance,
-                },
-                None,
-            )
+            .request_device(&DeviceDescriptor {
+                label: None,
+                required_features: features,
+                required_limits: limits,
+                memory_hints: MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
             .await
             .map_err(|_| ContextError::RequestDeviceFailed)?;
 
@@ -442,7 +440,7 @@ fn read_back_buffer(device: &Device, buffer: &Buffer) -> Box<[u8]> {
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-    device.poll(wgpu::MaintainBase::Wait);
+    _ = device.poll(wgpu::PollType::Wait);
     receiver
         .recv()
         .expect("failed to receive read back buffer")

@@ -9,7 +9,7 @@ keywords = ["deep-learning", "language", "model", "rwkv"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/cryscan/web-rwkv"
 rust-version = "1.83.0"
-version = "0.10.13"
+version = "0.10.14"
 
 [package]
 authors.workspace = true
@@ -26,7 +26,7 @@ version.workspace = true
 
 [dependencies]
 ahash = "0.8"
-bytemuck = { version = "1.21", features = ["extern_crate_alloc"] }
+bytemuck = { version = "1.23", features = ["extern_crate_alloc"] }
 derive-getters = "0.5"
 document-features = "0.2.8"
 embed-doc-image = "0.1.4"
@@ -38,8 +38,8 @@ instant = { version = "0.1", features = ["inaccurate", "wasm-bindgen"] }
 itertools = "0.14"
 log = "0.4"
 regex = "1.11"
-rustc-hash = "2.1.0"
-safetensors = "0.5"
+rustc-hash = "2.1"
+safetensors = "0.6"
 serde = { version = "1.0.210", features = ["derive", "rc"] }
 serde_bytes = "0.11.14"
 serde_json = "1.0"
@@ -52,7 +52,7 @@ tracing-tracy = { version = "0.11.4", optional = true }
 trait-variant = "0.1"
 uid = "0.1"
 wasm-bindgen = "0.2"
-wgpu = "24.0"
+wgpu = "26.0"
 
 [dependencies.web-rwkv-derive]
 path = "crates/web-rwkv-derive"
@@ -62,13 +62,13 @@ version = "0.10"
 default-features = false
 features = ["macros", "rt", "sync", "time"]
 optional = true
-version = "1.43"
+version = "1.47"
 
 [dev-dependencies]
 anyhow = "1.0"
 cbor4ii = { version = "1.0.0", features = ["half-f16", "serde1"] }
 clap = { version = "4.5", features = ["derive"] }
-crossterm = "0.28"
+crossterm = "0.29"
 dialoguer = "0.11.0"
 fastrand = "2.3"
 memmap2 = "0.9"
