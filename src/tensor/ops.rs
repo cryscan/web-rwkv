@@ -2867,7 +2867,7 @@ mod tests {
             let output_host: Vec<f32> = Vec::from(output_host);
 
             // profiler.end_frame().unwrap();
-            // context.device.poll(wgpu::MaintainBase::Wait);
+            // _ = context.device.poll(wgpu::PollType::Wait);
 
             // if let Some(results) = profiler.process_finished_frame() {
             //     wgpu_profiler::chrometrace::write_chrometrace(

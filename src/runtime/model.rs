@@ -93,7 +93,7 @@ pub trait State {
     fn back(&self, batch: usize) -> BoxFuture<'_, Result<TensorCpu<f32>, TensorError>>;
     /// Read back a batch of the state from GPU to CPU.
     #[cfg(target_arch = "wasm32")]
-    fn back(&self, batch: usize) -> LocalBoxFuture<Result<TensorCpu<f32>, TensorError>>;
+    fn back(&self, batch: usize) -> LocalBoxFuture<'_, Result<TensorCpu<f32>, TensorError>>;
     /// Write into the state from a GPU tensor.
     fn write(&self, tensor: TensorGpu<f32, ReadWrite>, batch: usize) -> Result<(), TensorError>;
     /// Read the state out into a GPU tensor.

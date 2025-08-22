@@ -195,7 +195,7 @@ impl super::model::State for State {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn back(&self, batch: usize) -> LocalBoxFuture<Result<TensorCpu<f32>, TensorError>> {
+    fn back(&self, batch: usize) -> LocalBoxFuture<'_, Result<TensorCpu<f32>, TensorError>> {
         Box::pin(self.back(batch))
     }
 

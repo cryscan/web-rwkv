@@ -268,8 +268,10 @@ pub trait Runtime<I: infer::Infer> {
     fn infer(&self, input: I::Input) -> BoxFuture<'_, Result<(I::Input, I::Output), RuntimeError>>;
 
     #[cfg(target_arch = "wasm32")]
-    fn infer(&self, input: I::Input)
-        -> LocalBoxFuture<Result<(I::Input, I::Output), RuntimeError>>;
+    fn infer(
+        &self,
+        input: I::Input,
+    ) -> LocalBoxFuture<'_, Result<(I::Input, I::Output), RuntimeError>>;
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "tokio"))]
@@ -317,7 +319,7 @@ where
     fn infer(
         &self,
         input: I::Input,
-    ) -> LocalBoxFuture<Result<(I::Input, I::Output), RuntimeError>> {
+    ) -> LocalBoxFuture<'_, Result<(I::Input, I::Output), RuntimeError>> {
         Box::pin(self.infer(input))
     }
 }
