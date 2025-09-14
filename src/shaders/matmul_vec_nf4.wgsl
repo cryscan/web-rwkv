@@ -108,9 +108,15 @@ fn matmul(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
         let x = input[bb + i];
 
 #ifdef SPARSE_INPUT
+#ifdef IN_FP16
         if all(unpack4x16float(x.xy) == vec4<f32>(0.0)) && all(unpack4x16float(x.zw) == vec4<f32>(0.0)) {
             continue;
         }
+#else
+        if all(x[0] == vec4<f32>(0.0)) && all(x[1] == vec4<f32>(0.0)) {
+            continue;
+        }
+#endif
 #endif
 
         // read 4 rows from the matrix, each with 4x2 unpacked floats, forming 2 4x4 sub-blocks
