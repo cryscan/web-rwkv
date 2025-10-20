@@ -257,7 +257,6 @@ fn deserialize_map(
                 }
                 Some(path) => {
                     let (wrapper, wrapper_ty) = wrap_deserialize_field_with(params, field.ty, path);
-                    
                     let seed = &params.seed;
                     let context = &params.context;
                     quote!({

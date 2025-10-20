@@ -523,7 +523,7 @@ impl<F: Float> super::model::Bundle for Bundle<F> {
 }
 
 fn turbo(num_token: usize) -> bool {
-    num_token % super::infer::rnn::MIN_TOKEN_CHUNK_SIZE == 0
+    num_token.is_multiple_of(super::infer::rnn::MIN_TOKEN_CHUNK_SIZE)
 }
 
 fn hook_op<F: Float>(
@@ -877,7 +877,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostFfn(index))?,
     ]);
 
-    if (index + 1) % rescale == 0 {
+    if (index + 1).is_multiple_of(rescale) {
         ops.push(TensorOp::affine(&buffer.x, 0.5, 0.0)?);
     }
 

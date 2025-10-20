@@ -1,6 +1,6 @@
 //! This crate provides Serde's derive macro for `DeserializeSeed`.
 
-#![cfg_attr(not(check_cfg), allow(unexpected_cfgs))]
+#![allow(unexpected_cfgs)]
 // Ignored clippy lints
 #![allow(
     // clippy false positive: https://github.com/rust-lang/rust-clippy/issues/7054
@@ -49,7 +49,6 @@
     clippy::use_self,
     clippy::wildcard_imports
 )]
-#![cfg_attr(all(test, exhaustive), feature(non_exhaustive_omitted_patterns_lint))]
 #![allow(unknown_lints, mismatched_lifetime_syntaxes)]
 #![allow(dead_code)]
 
