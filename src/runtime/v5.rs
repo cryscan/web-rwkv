@@ -523,7 +523,7 @@ impl<F: Float> super::model::Bundle for Bundle<F> {
 }
 
 fn turbo(num_token: usize) -> bool {
-    num_token % super::infer::rnn::MIN_TOKEN_CHUNK_SIZE == 0
+    num_token.is_multiple_of(super::infer::rnn::MIN_TOKEN_CHUNK_SIZE)
 }
 
 fn hook_op<F: Float>(
@@ -877,7 +877,7 @@ fn dispatch_layer<F: Float>(
         hook_op(Hook::PostFfn(index))?,
     ]);
 
-    if (index + 1) % rescale == 0 {
+    if (index + 1).is_multiple_of(rescale) {
         ops.push(TensorOp::affine(&buffer.x, 0.5, 0.0)?);
     }
 
@@ -956,8 +956,11 @@ impl<R: Reader> ModelBuilder<R> {
             w: Matrix::Fp16(loader.load_matrix_f16("head.weight")?),
         };
 
-        context.queue.submit(None);
-        _ = context.device.poll(wgpu::PollType::Wait);
+        let submission_index = Some(context.queue.submit(None));
+        _ = context.device.poll(wgpu::PollType::Wait {
+            submission_index,
+            timeout: None,
+        });
 
         let load_matrix = |name: String, quant: Quant| loader.load_matrix(name, quant);
         let load_matrix_discount = |name: String, quant: Quant, discount: f32| {
@@ -1033,8 +1036,11 @@ impl<R: Reader> ModelBuilder<R> {
                 w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount)?,
             };
 
-            context.queue.submit(None);
-            _ = context.device.poll(wgpu::PollType::Wait);
+            let submission_index = Some(context.queue.submit(None));
+            _ = context.device.poll(wgpu::PollType::Wait {
+                submission_index,
+                timeout: None,
+            });
 
             layers.push(Layer {
                 att_layer_norm,
@@ -1044,8 +1050,11 @@ impl<R: Reader> ModelBuilder<R> {
             })
         }
 
-        context.queue.submit(None);
-        _ = context.device.poll(wgpu::PollType::Wait);
+        let submission_index = Some(context.queue.submit(None));
+        _ = context.device.poll(wgpu::PollType::Wait {
+            submission_index,
+            timeout: None,
+        });
 
         let tensor = ModelTensor {
             embed,

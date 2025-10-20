@@ -42,7 +42,7 @@ static RENAME_RULES: &[(&str, RenameRule)] = &[
 ];
 
 impl RenameRule {
-    pub fn from_str(rename_all_str: &str) -> Result<Self, ParseError<'_>> {
+    pub fn from_str(rename_all_str: &str) -> Result<Self, ParseError> {
         for (name, rule) in RENAME_RULES {
             if rename_all_str == *name {
                 return Ok(*rule);
@@ -121,7 +121,7 @@ pub struct ParseError<'a> {
     unknown: &'a str,
 }
 
-impl Display for ParseError<'_> {
+impl<'a> Display for ParseError<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("unknown rename rule `rename_all = ")?;
         Debug::fmt(self.unknown, f)?;

@@ -27,7 +27,15 @@ impl<T: Scalar> From<TensorCpu<T>> for TensorBlob<'_> {
 impl<T: Scalar> From<TensorBlob<'_>> for TensorCpu<T> {
     fn from(value: TensorBlob) -> Self {
         let TensorBlob { shape, data } = value;
-        let data: Vec<T> = bytemuck::cast_slice(&data).to_vec();
+        let data = data.to_vec().into_boxed_slice();
+        // let data: Vec<T> = bytemuck::cast_slice(&data).to_vec();
+        let data = Box::leak(data);
+        let data: Box<[T]> = unsafe {
+            let ptr = data.as_ptr() as *const T;
+            let len = data.len() / size_of::<T>();
+            let slice = core::slice::from_raw_parts(ptr, len);
+            Box::from(slice)
+        };
         let data = data.into();
         Self {
             shape,
