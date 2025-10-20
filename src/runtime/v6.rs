@@ -1029,8 +1029,11 @@ impl<R: Reader> ModelBuilder<R> {
             w: Matrix::Fp16(loader.load_matrix_f16_padded("head.weight")?),
         };
 
-        context.queue.submit(None);
-        _ = context.device.poll(wgpu::PollType::Wait);
+        let submission_index = Some(context.queue.submit(None));
+        _ = context.device.poll(wgpu::PollType::Wait {
+            submission_index,
+            timeout: None,
+        });
 
         let load_matrix = |name: String, quant: Quant| loader.load_matrix(name, quant);
         let load_matrix_discount = |name: String, quant: Quant, discount: f32| {
@@ -1129,8 +1132,11 @@ impl<R: Reader> ModelBuilder<R> {
                 w_v: load_matrix_discount(format!("{ffn}.value.weight"), quant, discount)?,
             };
 
-            context.queue.submit(None);
-            _ = context.device.poll(wgpu::PollType::Wait);
+            let submission_index = Some(context.queue.submit(None));
+            _ = context.device.poll(wgpu::PollType::Wait {
+                submission_index,
+                timeout: None,
+            });
 
             layers.push(Layer {
                 att_layer_norm,
@@ -1140,8 +1146,11 @@ impl<R: Reader> ModelBuilder<R> {
             })
         }
 
-        context.queue.submit(None);
-        _ = context.device.poll(wgpu::PollType::Wait);
+        let submission_index = Some(context.queue.submit(None));
+        _ = context.device.poll(wgpu::PollType::Wait {
+            submission_index,
+            timeout: None,
+        });
 
         let tensor = ModelTensor {
             embed,

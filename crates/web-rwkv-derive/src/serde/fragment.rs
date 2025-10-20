@@ -10,6 +10,18 @@ pub enum Fragment {
     Block(TokenStream),
 }
 
+macro_rules! quote_expr {
+    ($($tt:tt)*) => {
+        $crate::serde::fragment::Fragment::Expr(quote!($($tt)*))
+    }
+}
+
+macro_rules! quote_block {
+    ($($tt:tt)*) => {
+        $crate::serde::fragment::Fragment::Block(quote!($($tt)*))
+    }
+}
+
 /// Interpolate a fragment in place of an expression. This involves surrounding
 /// Block fragments in curly braces.
 pub struct Expr(pub Fragment);

@@ -17,5 +17,11 @@ proc-macro2 = "1"
 quote = "1"
 syn = "2"
 
+[dependencies.serde]
+workspace = true
+
+[build-dependencies]
+cargo_metadata = "0.23"
+
 [lib]
 proc-macro = true

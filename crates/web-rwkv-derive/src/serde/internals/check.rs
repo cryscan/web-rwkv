@@ -38,7 +38,7 @@ fn check_default_on_tuple(cx: &Ctxt, cont: &Container) {
                     if let Some(first) = first_default_index {
                         cx.error_spanned_by(
                             field.ty,
-                            format!("field must have #[serde(default)] because previous field {first} has #[serde(default)]"),
+                            format!("field must have #[serde(default)] because previous field {} has #[serde(default)]", first),
                         );
                     }
                     continue;
@@ -311,7 +311,7 @@ fn check_internal_tag_field_name_conflict(cx: &Ctxt, cont: &Container) {
     let diagnose_conflict = || {
         cx.error_spanned_by(
             cont.original,
-            format!("variant field name `{tag}` conflicts with internal tag"),
+            format!("variant field name `{}` conflicts with internal tag", tag),
         );
     };
 
@@ -329,13 +329,13 @@ fn check_internal_tag_field_name_conflict(cx: &Ctxt, cont: &Container) {
                     let name = field.attrs.name();
                     let ser_name = name.serialize_name();
 
-                    if check_ser && ser_name == tag {
+                    if check_ser && ser_name.value == tag {
                         diagnose_conflict();
                         return;
                     }
 
                     for de_name in field.attrs.aliases() {
-                        if check_de && de_name == tag {
+                        if check_de && de_name.value == tag {
                             diagnose_conflict();
                             return;
                         }
@@ -358,7 +358,10 @@ fn check_adjacent_tag_conflict(cx: &Ctxt, cont: &Container) {
     if type_tag == content_tag {
         cx.error_spanned_by(
             cont.original,
-            format!("enum tags `{type_tag}` for type and content conflict with each other"),
+            format!(
+                "enum tags `{}` for type and content conflict with each other",
+                type_tag
+            ),
         );
     }
 }
@@ -444,7 +447,7 @@ fn check_transparent(cx: &Ctxt, cont: &mut Container, derive: Derive) {
 
 fn member_message(member: &Member) -> String {
     match member {
-        Member::Named(ident) => format!("`{ident}`"),
+        Member::Named(ident) => format!("`{}`", ident),
         Member::Unnamed(i) => format!("#{}", i.index),
     }
 }

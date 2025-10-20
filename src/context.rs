@@ -8,9 +8,9 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt},
     Adapter, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer, BufferDescriptor, BufferUsages,
-    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, Features, Instance,
-    Limits, MemoryHints, PipelineLayoutDescriptor, PowerPreference, Queue, RequestAdapterOptions,
-    ShaderModuleDescriptor,
+    ComputePipeline, ComputePipelineDescriptor, Device, DeviceDescriptor, ExperimentalFeatures,
+    Features, Instance, Limits, MemoryHints, PipelineLayoutDescriptor, PowerPreference, Queue,
+    RequestAdapterOptions, ShaderModuleDescriptor, Trace,
 };
 
 use crate::tensor::{
@@ -69,7 +69,10 @@ impl Drop for Context {
         if self.event.sender_count() <= 1 {
             self.clear_buffers();
             self.queue.submit(None);
-            _ = self.device.poll(wgpu::PollType::Wait);
+            _ = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
         }
     }
 }
@@ -120,7 +123,8 @@ impl ContextBuilder {
                 required_features: features,
                 required_limits: limits,
                 memory_hints: MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
+                trace: Trace::Off,
+                experimental_features: ExperimentalFeatures::disabled(),
             })
             .await
             .map_err(|_| ContextError::RequestDeviceFailed)?;
@@ -440,7 +444,10 @@ fn read_back_buffer(device: &Device, buffer: &Buffer) -> Box<[u8]> {
     let slice = buffer.slice(..);
     slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-    _ = device.poll(wgpu::PollType::Wait);
+    _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
     receiver
         .recv()
         .expect("failed to receive read back buffer")

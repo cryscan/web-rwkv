@@ -1,3 +1,4 @@
+use crate::serde::internals::name::{MultiName, Name};
 use crate::serde::internals::symbol::*;
 use crate::serde::internals::{ungroup, Ctxt};
 use proc_macro2::{Spacing, Span, TokenStream, TokenTree};
@@ -8,6 +9,7 @@ use std::iter::FromIterator;
 use syn::meta::ParseNestedMeta;
 use syn::parse::ParseStream;
 use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
 use syn::{parse_quote, token, Ident, Lifetime, Token};
 
 // This module handles parsing of `#[serde(...)]` attributes. The entrypoints
@@ -20,7 +22,7 @@ use syn::{parse_quote, token, Ident, Lifetime, Token};
 
 pub use crate::serde::internals::case::RenameRule;
 
-struct Attr<'c, T> {
+pub(crate) struct Attr<'c, T> {
     cx: &'c Ctxt,
     name: Symbol,
     tokens: TokenStream,
@@ -61,7 +63,7 @@ impl<'c, T> Attr<'c, T> {
         }
     }
 
-    fn get(self) -> Option<T> {
+    pub(crate) fn get(self) -> Option<T> {
         self.value
     }
 
@@ -89,7 +91,7 @@ impl<'c> BoolAttr<'c> {
     }
 }
 
-struct VecAttr<'c, T> {
+pub(crate) struct VecAttr<'c, T> {
     cx: &'c Ctxt,
     name: Symbol,
     first_dup_tokens: TokenStream,
@@ -124,69 +126,19 @@ impl<'c, T> VecAttr<'c, T> {
         }
     }
 
-    fn get(self) -> Vec<T> {
+    pub(crate) fn get(self) -> Vec<T> {
         self.values
     }
 }
 
-pub struct Name {
-    serialize: String,
-    serialize_renamed: bool,
-    deserialize: String,
-    deserialize_renamed: bool,
-    deserialize_aliases: BTreeSet<String>,
-}
-
-fn unraw(ident: &Ident) -> String {
-    ident.to_string().trim_start_matches("r#").to_owned()
-}
-
-impl Name {
-    fn from_attrs(
-        source_name: String,
-        ser_name: Attr<String>,
-        de_name: Attr<String>,
-        de_aliases: Option<VecAttr<String>>,
-    ) -> Name {
-        let mut alias_set = BTreeSet::new();
-        if let Some(de_aliases) = de_aliases {
-            for alias_name in de_aliases.get() {
-                alias_set.insert(alias_name);
-            }
-        }
-
-        let ser_name = ser_name.get();
-        let ser_renamed = ser_name.is_some();
-        let de_name = de_name.get();
-        let de_renamed = de_name.is_some();
-        Name {
-            serialize: ser_name.unwrap_or_else(|| source_name.clone()),
-            serialize_renamed: ser_renamed,
-            deserialize: de_name.unwrap_or(source_name),
-            deserialize_renamed: de_renamed,
-            deserialize_aliases: alias_set,
-        }
-    }
-
-    /// Return the container name for the container when serializing.
-    pub fn serialize_name(&self) -> &str {
-        &self.serialize
-    }
-
-    /// Return the container name for the container when deserializing.
-    pub fn deserialize_name(&self) -> &str {
-        &self.deserialize
-    }
-
-    fn deserialize_aliases(&self) -> &BTreeSet<String> {
-        &self.deserialize_aliases
-    }
+fn unraw(ident: &Ident) -> Ident {
+    Ident::new(ident.to_string().trim_start_matches("r#"), ident.span())
 }
 
 #[derive(Copy, Clone)]
 pub struct RenameAllRules {
-    serialize: RenameRule,
-    deserialize: RenameRule,
+    pub serialize: RenameRule,
+    pub deserialize: RenameRule,
 }
 
 impl RenameAllRules {
@@ -204,7 +156,7 @@ impl RenameAllRules {
 pub struct Container {
     seed: syn::Path,
     context: syn::Path,
-    name: Name,
+    name: MultiName,
     transparent: bool,
     deny_unknown_fields: bool,
     default: Default,
@@ -275,6 +227,7 @@ pub enum Identifier {
 }
 
 impl Identifier {
+    #[cfg(feature = "deserialize_in_place")]
     pub fn is_some(self) -> bool {
         match self {
             Identifier::No => false,
@@ -340,8 +293,8 @@ impl Container {
                     // #[serde(rename = "foo")]
                     // #[serde(rename(serialize = "foo", deserialize = "bar"))]
                     let (ser, de) = get_renames(cx, RENAME, &meta)?;
-                    ser_name.set_opt(&meta.path, ser.as_ref().map(syn::LitStr::value));
-                    de_name.set_opt(&meta.path, de.as_ref().map(syn::LitStr::value));
+                    ser_name.set_opt(&meta.path, ser.as_ref().map(Name::from));
+                    de_name.set_opt(&meta.path, de.as_ref().map(Name::from));
                 } else if meta.path == RENAME_ALL {
                     // #[serde(rename_all = "foo")]
                     // #[serde(rename_all(serialize = "foo", deserialize = "bar"))]
@@ -556,7 +509,7 @@ impl Container {
                 } else {
                     let path = meta.path.to_token_stream().to_string().replace(' ', "");
                     return Err(
-                        meta.error(format_args!("unknown serde container attribute `{path}`"))
+                        meta.error(format_args!("unknown serde container attribute `{}`", path))
                     );
                 }
                 Ok(())
@@ -587,7 +540,7 @@ impl Container {
         Container {
             seed,
             context,
-            name: Name::from_attrs(unraw(&item.ident), ser_name, de_name, None),
+            name: MultiName::from_attrs(Name::from(&unraw(&item.ident)), ser_name, de_name, None),
             transparent: transparent.get(),
             deny_unknown_fields: deny_unknown_fields.get(),
             default: default.get().unwrap_or(Default::None),
@@ -623,7 +576,7 @@ impl Container {
         &self.context
     }
 
-    pub fn name(&self) -> &Name {
+    pub fn name(&self) -> &MultiName {
         &self.name
     }
 
@@ -818,7 +771,7 @@ fn decide_identifier(
 
 /// Represents variant attribute information
 pub struct Variant {
-    name: Name,
+    name: MultiName,
     rename_all_rules: RenameAllRules,
     ser_bound: Option<Vec<syn::WherePredicate>>,
     de_bound: Option<Vec<syn::WherePredicate>>,
@@ -854,7 +807,7 @@ impl Variant {
         let mut untagged = BoolAttr::none(cx, UNTAGGED);
 
         for attr in &variant.attrs {
-            if attr.path() != SERDE_SEED {
+            if attr.path() != SERDE {
                 continue;
             }
 
@@ -869,15 +822,15 @@ impl Variant {
                     // #[serde(rename = "foo")]
                     // #[serde(rename(serialize = "foo", deserialize = "bar"))]
                     let (ser, de) = get_multiple_renames(cx, &meta)?;
-                    ser_name.set_opt(&meta.path, ser.as_ref().map(syn::LitStr::value));
+                    ser_name.set_opt(&meta.path, ser.as_ref().map(Name::from));
                     for de_value in de {
-                        de_name.set_if_none(de_value.value());
-                        de_aliases.insert(&meta.path, de_value.value());
+                        de_name.set_if_none(Name::from(&de_value));
+                        de_aliases.insert(&meta.path, Name::from(&de_value));
                     }
                 } else if meta.path == ALIAS {
                     // #[serde(alias = "foo")]
                     if let Some(s) = get_lit_str(cx, ALIAS, &meta)? {
-                        de_aliases.insert(&meta.path, s.value());
+                        de_aliases.insert(&meta.path, Name::from(&s));
                     }
                 } else if meta.path == RENAME_ALL {
                     // #[serde(rename_all = "foo")]
@@ -926,13 +879,13 @@ impl Variant {
                         ser_path
                             .path
                             .segments
-                            .push(Ident::new("serialize", Span::call_site()).into());
+                            .push(Ident::new("serialize", ser_path.span()).into());
                         serialize_with.set(&meta.path, ser_path);
                         let mut de_path = path;
                         de_path
                             .path
                             .segments
-                            .push(Ident::new("deserialize", Span::call_site()).into());
+                            .push(Ident::new("deserialize", de_path.span()).into());
                         deserialize_with.set(&meta.path, de_path);
                     }
                 } else if meta.path == SERIALIZE_WITH {
@@ -974,7 +927,7 @@ impl Variant {
                 } else {
                     let path = meta.path.to_token_stream().to_string().replace(' ', "");
                     return Err(
-                        meta.error(format_args!("unknown serde variant attribute `{path}`"))
+                        meta.error(format_args!("unknown serde variant attribute `{}`", path))
                     );
                 }
                 Ok(())
@@ -984,7 +937,12 @@ impl Variant {
         }
 
         Variant {
-            name: Name::from_attrs(unraw(&variant.ident), ser_name, de_name, Some(de_aliases)),
+            name: MultiName::from_attrs(
+                Name::from(&unraw(&variant.ident)),
+                ser_name,
+                de_name,
+                Some(de_aliases),
+            ),
             rename_all_rules: RenameAllRules {
                 serialize: rename_all_ser_rule.get().unwrap_or(RenameRule::None),
                 deserialize: rename_all_de_rule.get().unwrap_or(RenameRule::None),
@@ -1001,20 +959,23 @@ impl Variant {
         }
     }
 
-    pub fn name(&self) -> &Name {
+    pub fn name(&self) -> &MultiName {
         &self.name
     }
 
-    pub fn aliases(&self) -> &BTreeSet<String> {
+    pub fn aliases(&self) -> &BTreeSet<Name> {
         self.name.deserialize_aliases()
     }
 
     pub fn rename_by_rules(&mut self, rules: RenameAllRules) {
         if !self.name.serialize_renamed {
-            self.name.serialize = rules.serialize.apply_to_variant(&self.name.serialize);
+            self.name.serialize.value =
+                rules.serialize.apply_to_variant(&self.name.serialize.value);
         }
         if !self.name.deserialize_renamed {
-            self.name.deserialize = rules.deserialize.apply_to_variant(&self.name.deserialize);
+            self.name.deserialize.value = rules
+                .deserialize
+                .apply_to_variant(&self.name.deserialize.value);
         }
         self.name
             .deserialize_aliases
@@ -1060,7 +1021,7 @@ impl Variant {
 
 /// Represents field attribute information
 pub struct Field {
-    name: Name,
+    name: MultiName,
     skip_serializing: bool,
     skip_deserializing: bool,
     skip_serializing_if: Option<syn::ExprPath>,
@@ -1076,7 +1037,6 @@ pub struct Field {
 }
 
 /// Represents the default to use for a field when deserializing.
-#[allow(clippy::enum_variant_names)]
 pub enum Default {
     /// Field must always be specified because it does not have a default.
     None,
@@ -1103,6 +1063,7 @@ impl Field {
         field: &syn::Field,
         attrs: Option<&Variant>,
         container_default: &Default,
+        private: &Ident,
     ) -> Self {
         let mut ser_name = Attr::none(cx, RENAME);
         let mut de_name = Attr::none(cx, RENAME);
@@ -1120,8 +1081,11 @@ impl Field {
         let mut flatten = BoolAttr::none(cx, FLATTEN);
 
         let ident = match &field.ident {
-            Some(ident) => unraw(ident),
-            None => index.to_string(),
+            Some(ident) => Name::from(&unraw(ident)),
+            None => Name {
+                value: index.to_string(),
+                span: Span::call_site(),
+            },
         };
 
         if let Some(borrow_attribute) = attrs.and_then(|variant| variant.borrow.as_ref()) {
@@ -1129,7 +1093,8 @@ impl Field {
                 if let Some(lifetimes) = &borrow_attribute.lifetimes {
                     for lifetime in lifetimes {
                         if !borrowable.contains(lifetime) {
-                            let msg = format!("field `{ident}` does not have lifetime {lifetime}");
+                            let msg =
+                                format!("field `{}` does not have lifetime {}", ident, lifetime);
                             cx.error_spanned_by(field, msg);
                         }
                     }
@@ -1141,7 +1106,7 @@ impl Field {
         }
 
         for attr in &field.attrs {
-            if attr.path() != SERDE_SEED {
+            if attr.path() != SERDE {
                 continue;
             }
 
@@ -1156,15 +1121,15 @@ impl Field {
                     // #[serde(rename = "foo")]
                     // #[serde(rename(serialize = "foo", deserialize = "bar"))]
                     let (ser, de) = get_multiple_renames(cx, &meta)?;
-                    ser_name.set_opt(&meta.path, ser.as_ref().map(syn::LitStr::value));
+                    ser_name.set_opt(&meta.path, ser.as_ref().map(Name::from));
                     for de_value in de {
-                        de_name.set_if_none(de_value.value());
-                        de_aliases.insert(&meta.path, de_value.value());
+                        de_name.set_if_none(Name::from(&de_value));
+                        de_aliases.insert(&meta.path, Name::from(&de_value));
                     }
                 } else if meta.path == ALIAS {
                     // #[serde(alias = "foo")]
                     if let Some(s) = get_lit_str(cx, ALIAS, &meta)? {
-                        de_aliases.insert(&meta.path, s.value());
+                        de_aliases.insert(&meta.path, Name::from(&s));
                     }
                 } else if meta.path == DEFAULT {
                     if meta.input.peek(Token![=]) {
@@ -1208,13 +1173,13 @@ impl Field {
                         ser_path
                             .path
                             .segments
-                            .push(Ident::new("serialize", Span::call_site()).into());
+                            .push(Ident::new("serialize", ser_path.span()).into());
                         serialize_with.set(&meta.path, ser_path);
                         let mut de_path = path;
                         de_path
                             .path
                             .segments
-                            .push(Ident::new("deserialize", Span::call_site()).into());
+                            .push(Ident::new("deserialize", de_path.span()).into());
                         deserialize_with.set(&meta.path, de_path);
                     }
                 } else if meta.path == BOUND {
@@ -1231,7 +1196,8 @@ impl Field {
                             for lifetime in &lifetimes {
                                 if !borrowable.contains(lifetime) {
                                     let msg = format!(
-                                        "field `{ident}` does not have lifetime {lifetime}",
+                                        "field `{}` does not have lifetime {}",
+                                        ident, lifetime,
                                     );
                                     cx.error_spanned_by(field, msg);
                                 }
@@ -1254,7 +1220,9 @@ impl Field {
                     flatten.set_true(&meta.path);
                 } else {
                     let path = meta.path.to_token_stream().to_string().replace(' ', "");
-                    return Err(meta.error(format_args!("unknown serde field attribute `{path}`")));
+                    return Err(
+                        meta.error(format_args!("unknown serde field attribute `{}`", path))
+                    );
                 }
                 Ok(())
             }) {
@@ -1289,7 +1257,7 @@ impl Field {
                 };
                 let span = Span::call_site();
                 path.segments.push(Ident::new("_serde", span).into());
-                path.segments.push(Ident::new("__private", span).into());
+                path.segments.push(private.clone().into());
                 path.segments.push(Ident::new("de", span).into());
                 path.segments
                     .push(Ident::new("borrow_cow_str", span).into());
@@ -1306,7 +1274,7 @@ impl Field {
                 };
                 let span = Span::call_site();
                 path.segments.push(Ident::new("_serde", span).into());
-                path.segments.push(Ident::new("__private", span).into());
+                path.segments.push(private.clone().into());
                 path.segments.push(Ident::new("de", span).into());
                 path.segments
                     .push(Ident::new("borrow_cow_bytes", span).into());
@@ -1324,7 +1292,7 @@ impl Field {
         }
 
         Field {
-            name: Name::from_attrs(ident, ser_name, de_name, Some(de_aliases)),
+            name: MultiName::from_attrs(ident, ser_name, de_name, Some(de_aliases)),
             skip_serializing: skip_serializing.get(),
             skip_deserializing: skip_deserializing.get(),
             skip_serializing_if: skip_serializing_if.get(),
@@ -1340,20 +1308,22 @@ impl Field {
         }
     }
 
-    pub fn name(&self) -> &Name {
+    pub fn name(&self) -> &MultiName {
         &self.name
     }
 
-    pub fn aliases(&self) -> &BTreeSet<String> {
+    pub fn aliases(&self) -> &BTreeSet<Name> {
         self.name.deserialize_aliases()
     }
 
     pub fn rename_by_rules(&mut self, rules: RenameAllRules) {
         if !self.name.serialize_renamed {
-            self.name.serialize = rules.serialize.apply_to_field(&self.name.serialize);
+            self.name.serialize.value = rules.serialize.apply_to_field(&self.name.serialize.value);
         }
         if !self.name.deserialize_renamed {
-            self.name.deserialize = rules.deserialize.apply_to_field(&self.name.deserialize);
+            self.name.deserialize.value = rules
+                .deserialize
+                .apply_to_field(&self.name.deserialize.value);
         }
         self.name
             .deserialize_aliases
@@ -1447,7 +1417,8 @@ where
                 }
             } else {
                 return Err(meta.error(format_args!(
-                    "malformed {attr_name} attribute, expected `{attr_name}(serialize = ..., deserialize = ...)`",
+                    "malformed {0} attribute, expected `{0}(serialize = ..., deserialize = ...)`",
+                    attr_name,
                 )));
             }
             Ok(())
@@ -1512,7 +1483,7 @@ fn get_lit_str2(
         if !suffix.is_empty() {
             cx.error_spanned_by(
                 lit,
-                format!("unexpected suffix `{suffix}` on string literal"),
+                format!("unexpected suffix `{}` on string literal", suffix),
             );
         }
         Ok(Some(lit.clone()))
@@ -1520,7 +1491,8 @@ fn get_lit_str2(
         cx.error_spanned_by(
             expr,
             format!(
-                "expected serde {attr_name} attribute to be a string: `{meta_item_name} = \"...\"`"
+                "expected serde {} attribute to be a string: `{} = \"...\"`",
+                attr_name, meta_item_name
             ),
         );
         Ok(None)
@@ -1631,7 +1603,10 @@ fn parse_lit_into_lifetimes(
         while !input.is_empty() {
             let lifetime: Lifetime = input.parse()?;
             if !set.insert(lifetime.clone()) {
-                cx.error_spanned_by(&string, format!("duplicate borrowed lifetime `{lifetime}`"));
+                cx.error_spanned_by(
+                    &string,
+                    format!("duplicate borrowed lifetime `{}`", lifetime),
+                );
             }
             if input.is_empty() {
                 break;
@@ -1798,13 +1773,13 @@ fn is_primitive_path(path: &syn::Path, primitive: &str) -> bool {
 // attribute on the field so there must be at least one borrowable lifetime.
 fn borrowable_lifetimes(
     cx: &Ctxt,
-    name: &str,
+    name: &Name,
     field: &syn::Field,
 ) -> Result<BTreeSet<syn::Lifetime>, ()> {
     let mut lifetimes = BTreeSet::new();
     collect_lifetimes(&field.ty, &mut lifetimes);
     if lifetimes.is_empty() {
-        let msg = format!("field `{name}` has no lifetimes to borrow");
+        let msg = format!("field `{}` has no lifetimes to borrow", name);
         cx.error_spanned_by(field, msg);
         Err(())
     } else {
@@ -1814,7 +1789,7 @@ fn borrowable_lifetimes(
 
 fn collect_lifetimes(ty: &syn::Type, out: &mut BTreeSet<syn::Lifetime>) {
     match ty {
-        #![cfg_attr(all(test), deny(non_exhaustive_omitted_patterns))]
+        #![cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
         syn::Type::Slice(ty) => {
             collect_lifetimes(&ty.elem, out);
         }
@@ -1852,8 +1827,8 @@ fn collect_lifetimes(ty: &syn::Type, out: &mut BTreeSet<syn::Lifetime>) {
                             }
                             syn::GenericArgument::Const(_)
                             | syn::GenericArgument::AssocConst(_)
-                            | syn::GenericArgument::Constraint(_) => {}
-                            _ => {}
+                            | syn::GenericArgument::Constraint(_)
+                            | _ => {}
                         }
                     }
                 }
