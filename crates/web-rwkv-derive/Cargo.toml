@@ -23,5 +23,9 @@ workspace = true
 [build-dependencies]
 cargo_metadata = "0.23"
 
+[features]
+default = []
+deserialize_in_place = []
+
 [lib]
 proc-macro = true
