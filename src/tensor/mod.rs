@@ -733,14 +733,17 @@ impl<T: Scalar, K: Kind> TensorGpu<T, K> {
 
         let mut encoder = context.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&self.buffer, 0, &buffer, 0, size);
-        context.queue.submit(Some(encoder.finish()));
+        let submission_index = Some(context.queue.submit(Some(encoder.finish())));
 
         let (sender, receiver) = flume::unbounded();
 
         let slice = buffer.slice(..);
         slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-        _ = context.device.poll(wgpu::PollType::Wait);
+        _ = context.device.poll(wgpu::PollType::Wait {
+            submission_index,
+            timeout: None,
+        });
         receiver
             .recv_async()
             .await
