@@ -323,7 +323,7 @@ impl Context {
                 .create_pipeline_layout(&PipelineLayoutDescriptor {
                     label: Some(&key.name),
                     bind_group_layouts: &[&layout],
-                    push_constant_ranges: &[],
+                    immediate_size: 0,
                 });
 
             let pipeline = self
@@ -427,12 +427,12 @@ impl Context {
 
     #[cfg(feature = "subgroup-ops")]
     pub fn min_subgroup_size(&self) -> u32 {
-        self.adapter.limits().min_subgroup_size
+        self.adapter.get_info().subgroup_min_size
     }
 
     #[cfg(feature = "subgroup-ops")]
     pub fn max_subgroup_size(&self) -> u32 {
-        self.adapter.limits().max_subgroup_size
+        self.adapter.get_info().subgroup_max_size
     }
 }
 

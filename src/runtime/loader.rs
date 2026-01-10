@@ -328,8 +328,7 @@ impl<R: Reader> Loader<R> {
             let Some(blend) = lora
                 .blend
                 .iter()
-                .filter(|blend| blend.pattern.is_match(name))
-                .next_back()
+                .rfind(|blend| blend.pattern.is_match(name))
             else {
                 continue;
             };
@@ -357,8 +356,7 @@ impl<R: Reader> Loader<R> {
             let Some(blend) = lora
                 .blend
                 .iter()
-                .filter(|blend| blend.pattern.is_match(name))
-                .next_back()
+                .rfind(|blend| blend.pattern.is_match(name))
             else {
                 continue;
             };

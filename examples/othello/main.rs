@@ -64,7 +64,7 @@ async fn create_context(info: &ModelInfo, _auto: bool) -> Result<Context> {
             .await?
     } else {
         let backends = wgpu::Backends::all();
-        let adapters = instance.enumerate_adapters(backends);
+        let adapters = instance.enumerate_adapters(backends).await;
         let names = adapters
             .iter()
             .map(|adapter| adapter.get_info())
