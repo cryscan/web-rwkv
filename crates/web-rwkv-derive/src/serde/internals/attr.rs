@@ -1789,7 +1789,7 @@ fn borrowable_lifetimes(
 
 fn collect_lifetimes(ty: &syn::Type, out: &mut BTreeSet<syn::Lifetime>) {
     match ty {
-        #![cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
+        #![cfg_attr(all(test), deny(non_exhaustive_omitted_patterns))]
         syn::Type::Slice(ty) => {
             collect_lifetimes(&ty.elem, out);
         }

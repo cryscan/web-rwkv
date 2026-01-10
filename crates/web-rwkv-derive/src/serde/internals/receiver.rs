@@ -106,7 +106,7 @@ impl ReplaceReceiver<'_> {
 
     fn visit_type_mut_impl(&mut self, ty: &mut Type) {
         match ty {
-            #![cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
+            #![cfg_attr(all(test), deny(non_exhaustive_omitted_patterns))]
             Type::Array(ty) => {
                 self.visit_type_mut(&mut ty.elem);
                 self.visit_expr_mut(&mut ty.len);
@@ -177,7 +177,7 @@ impl ReplaceReceiver<'_> {
             PathArguments::AngleBracketed(arguments) => {
                 for arg in &mut arguments.args {
                     match arg {
-                        #![cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
+                        #![cfg_attr(all(test), deny(non_exhaustive_omitted_patterns))]
                         GenericArgument::Type(arg) => self.visit_type_mut(arg),
                         GenericArgument::AssocType(arg) => self.visit_type_mut(&mut arg.ty),
                         GenericArgument::Lifetime(_)
@@ -206,7 +206,7 @@ impl ReplaceReceiver<'_> {
 
     fn visit_type_param_bound_mut(&mut self, bound: &mut TypeParamBound) {
         match bound {
-            #![cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
+            #![cfg_attr(all(test), deny(non_exhaustive_omitted_patterns))]
             TypeParamBound::Trait(bound) => self.visit_path_mut(&mut bound.path),
             TypeParamBound::Lifetime(_)
             | TypeParamBound::PreciseCapture(_)
@@ -229,7 +229,7 @@ impl ReplaceReceiver<'_> {
         if let Some(where_clause) = &mut generics.where_clause {
             for predicate in &mut where_clause.predicates {
                 match predicate {
-                    #![cfg_attr(all(test, exhaustive), deny(non_exhaustive_omitted_patterns))]
+                    #![cfg_attr(all(test), deny(non_exhaustive_omitted_patterns))]
                     WherePredicate::Type(predicate) => {
                         self.visit_type_mut(&mut predicate.bounded_ty);
                         for bound in &mut predicate.bounds {
