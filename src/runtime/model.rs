@@ -197,7 +197,7 @@ impl ContextAutoLimits for ContextBuilder {
         self.limits.max_storage_buffer_binding_size = ModelInfo::STORAGE_BUFFER_BINDING_SIZE
             .max(info.max_non_head_buffer_size())
             .max(info.head_buffer_size())
-            as u32;
+            as u64;
         self
     }
 }

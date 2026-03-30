@@ -85,15 +85,13 @@ impl<T: Scalar> TensorFromReader<T> for TensorCpu<T> {
         }
         let shape = Shape::from_slice_rev(&shape)?;
         match data {
-            Cow::Borrowed(data) => {
-                match bytemuck::try_cast_slice(data) {
-                    Ok(data) => Self::from_data(shape, data),
-                    Err(_) => {
-                        let data = bytemuck::pod_collect_to_vec::<u8, T>(data);
-                        Self::from_data(shape, Cow::Owned(data))
-                    }
+            Cow::Borrowed(data) => match bytemuck::try_cast_slice(data) {
+                Ok(data) => Self::from_data(shape, data),
+                Err(_) => {
+                    let data = bytemuck::pod_collect_to_vec::<u8, T>(data);
+                    Self::from_data(shape, Cow::Owned(data))
                 }
-            }
+            },
             Cow::Owned(data) => {
                 let data = bytemuck::cast_slice(&data);
                 let data = Cow::Owned(data.to_vec());

@@ -322,7 +322,7 @@ impl Context {
                 .device
                 .create_pipeline_layout(&PipelineLayoutDescriptor {
                     label: Some(&key.name),
-                    bind_group_layouts: &[&layout],
+                    bind_group_layouts: &[Some(&layout)],
                     immediate_size: 0,
                 });
 
