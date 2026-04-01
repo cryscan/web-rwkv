@@ -165,7 +165,7 @@ async fn main() -> Result<()> {
             let f = move || serde::<v4::Model>(cli.output, &context, model);
             let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v4::Bundle::<f16>::new(model, 1);
-            Box::new(TokioRuntime::new(bundle).await)
+            Box::new(TokioRuntime::<Rnn>::new(bundle).await)
         }
         ModelVersion::V5 => {
             let context = context.clone();
@@ -173,7 +173,7 @@ async fn main() -> Result<()> {
             let f = move || serde::<v5::Model>(cli.output, &context, model);
             let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v5::Bundle::<f16>::new(model, 1);
-            Box::new(TokioRuntime::new(bundle).await)
+            Box::new(TokioRuntime::<Rnn>::new(bundle).await)
         }
         ModelVersion::V6 => {
             let context = context.clone();
@@ -181,7 +181,7 @@ async fn main() -> Result<()> {
             let f = move || serde::<v6::Model>(cli.output, &context, model);
             let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v6::Bundle::<f16>::new(model, 1);
-            Box::new(TokioRuntime::new(bundle).await)
+            Box::new(TokioRuntime::<Rnn>::new(bundle).await)
         }
         ModelVersion::V7 => {
             let context = context.clone();
@@ -189,7 +189,7 @@ async fn main() -> Result<()> {
             let f = move || serde::<v7::Model>(cli.output, &context, model);
             let model = tokio::task::spawn_blocking(f).await??;
             let bundle = v7::Bundle::<f16>::new(model, 1);
-            Box::new(TokioRuntime::new(bundle).await)
+            Box::new(TokioRuntime::<Rnn>::new(bundle).await)
         }
     };
 

@@ -166,7 +166,7 @@ for layer in 0..info.num_layer {
 }
 
 let bundle = v6::Bundle::<f16>::new_with_hooks(model, 1, hooks);
-let runtime = TokioRuntime::new(bundle).await;
+let runtime = TokioRuntime::<Rnn>::new(bundle).await;
 
 let (input, output) = runtime.infer(input).await?;
 // now the data is available in `buffer`, we can read it back

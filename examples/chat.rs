@@ -245,28 +245,28 @@ async fn main() -> Result<()> {
             let model = builder.build_v4().await?;
             let bundle = v4::Bundle::<f16>::new(model, 1);
             let state = bundle.state();
-            let runtime = TokioRuntime::new(bundle).await;
+            let runtime = TokioRuntime::<Rnn>::new(bundle).await;
             (Box::new(runtime), Box::new(state))
         }
         ModelVersion::V5 => {
             let model = builder.build_v5().await?;
             let bundle = v5::Bundle::<f16>::new(model, 1);
             let state = bundle.state();
-            let runtime = TokioRuntime::new(bundle).await;
+            let runtime = TokioRuntime::<Rnn>::new(bundle).await;
             (Box::new(runtime), Box::new(state))
         }
         ModelVersion::V6 => {
             let model = builder.build_v6().await?;
             let bundle = v6::Bundle::<f16>::new(model, 1);
             let state = bundle.state();
-            let runtime = TokioRuntime::new(bundle).await;
+            let runtime = TokioRuntime::<Rnn>::new(bundle).await;
             (Box::new(runtime), Box::new(state))
         }
         ModelVersion::V7 => {
             let model = builder.build_v7().await?;
             let bundle = v7::Bundle::<f16>::new(model, 1);
             let state = bundle.state();
-            let runtime = TokioRuntime::new(bundle).await;
+            let runtime = TokioRuntime::<Rnn>::new(bundle).await;
             (Box::new(runtime), Box::new(state))
         }
     };

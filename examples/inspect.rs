@@ -196,7 +196,7 @@ async fn main() -> Result<()> {
             let model = builder.build_v7().await?;
             let hooks = make_hooks(&info, frames.clone())?;
             let bundle = v7::Bundle::<f16>::new_with_hooks(model, 1, hooks);
-            Box::new(TokioRuntime::new(bundle).await)
+            Box::new(TokioRuntime::<Rnn>::new(bundle).await)
         }
         _ => unimplemented!(),
     };
