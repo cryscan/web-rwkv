@@ -1,0 +1,122 @@
+name: wasm-npm
+
+# Builds the browser wasm-bindgen bindings (crates/web-rwkv-wasm) into an ESM npm
+# package and, on an explicit manual dispatch, publishes it to npm.
+#
+# - Build runs on PRs and pushes to main that touch the crate -> this is the verification.
+# - Publish runs only via a manual `workflow_dispatch` with publish=true, using the
+#   NPM_TOKEN secret (see the publish job for how to automate it on release instead).
+#
+# The npm scope is parameterized (workflow_dispatch input / DEFAULT_SCOPE) so the
+# SAME artifacts can ship under whichever scope owns the npm token; it defaults to
+# `@cryscan/web-rwkv-wasm`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/web-rwkv-wasm/**"
+      - "src/**"
+      - "Cargo.toml"
+      - ".github/workflows/wasm-npm.yml"
+  pull_request:
+    paths:
+      - "crates/web-rwkv-wasm/**"
+      - "src/**"
+      - "Cargo.toml"
+      - ".github/workflows/wasm-npm.yml"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "npm scope (without @), e.g. cryscan"
+        required: false
+        default: "cryscan"
+      package_name:
+        description: "Optional full package name override (e.g. @cryscan/web-rwkv). Overrides scope."
+        required: false
+        default: ""
+      publish:
+        description: "Publish to npm (otherwise build only)"
+        type: boolean
+        required: false
+        default: false
+
+env:
+  CRATE_DIR: crates/web-rwkv-wasm
+  DEFAULT_SCOPE: cryscan
+
+jobs:
+  build:
+    name: Build wasm package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable + wasm32)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - name: Resolve npm scope
+        id: scope
+        shell: bash
+        run: echo "scope=${{ github.event.inputs.scope || env.DEFAULT_SCOPE }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (wasm-pack, target web)
+        run: wasm-pack build "$CRATE_DIR" --release --target web --out-dir pkg --scope "${{ steps.scope.outputs.scope }}"
+
+      - name: Apply package name override
+        if: ${{ github.event.inputs.package_name != '' }}
+        shell: bash
+        run: |
+          node -e "const f='$CRATE_DIR/pkg/package.json';const p=require('./'+f);p.name='${{ github.event.inputs.package_name }}';require('fs').writeFileSync(f,JSON.stringify(p,null,2))"
+
+      - name: Show generated package.json
+        run: cat "$CRATE_DIR/pkg/package.json"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-rwkv-wasm-pkg
+          path: ${{ env.CRATE_DIR }}/pkg
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    # Publish only on an explicit manual dispatch with publish=true (requires the
+    # NPM_TOKEN secret). To automate publishing on release instead, add
+    # `release: { types: [published] }` to `on:` above and `github.event_name ==
+    # 'release'` to this condition.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true' }}
+    permissions:
+      contents: read
+      id-token: write # enables npm provenance when --provenance is used
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-rwkv-wasm-pkg
+          path: pkg
+
+      - name: Publish
+        working-directory: pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
