@@ -1,0 +1,44 @@
+[package]
+name = "web-rwkv-wasm"
+description = "WebGPU RWKV inference for the browser — wasm-bindgen bindings for the web-rwkv crate, packaged for npm."
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# wasm-pack downloads its own `wasm-opt` (binaryen), so this works in CI without a
+# system install. `-Os` trims the (large) module for faster download; inference compute
+# runs on the GPU, so CPU-side wasm speed is not the bottleneck. If a future binaryen
+# version miscompiles the wgpu module, set this to `false` and note why.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-Os']
+
+[dependencies]
+web-rwkv = { path = "../..", version = "0.10", default-features = false, features = ["web"] }
+
+anyhow = "1"
+base64 = "0.22"
+bytemuck = { version = "1.25", features = ["extern_crate_alloc"] }
+cbor4ii = { version = "1.2", features = ["half-f16", "serde1"] }
+fastrand = { version = "2.3", features = ["js"] }
+# Pulled in transitively (e.g. via ahash); wasm32 needs the JS backend.
+getrandom = { version = "0.2", features = ["js"] }
+half = { version = "2.7", features = ["bytemuck"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+itertools = "0.14"
+js-sys = "0.3"
+qp-trie = "0.8"
+safetensors = "0.6"
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Blob", "console"] }

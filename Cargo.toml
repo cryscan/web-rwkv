@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/web-rwkv-derive", "crates/web-rwkv-wasm"]
+
 [workspace.package]
 authors = ["Zhenyuan Zhang <cryscan@umich.edu>"]
 categories = ["science", "text-processing"]
