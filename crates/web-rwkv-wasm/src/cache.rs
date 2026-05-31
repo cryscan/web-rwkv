@@ -73,6 +73,10 @@ trait AsTokenSlice {
 impl AsTokenSlice for [u32] {
     fn as_token_slice(&self) -> &TokenSlice {
         let ptr = self as *const [u32] as *const TokenSlice;
+        // SAFETY: `TokenSlice` is `#[repr(transparent)]` over `[u32]`, so it has an
+        // identical layout (including the slice length metadata in the fat pointer).
+        // The cast preserves the pointer and length, and the resulting reference
+        // borrows `self` for the same lifetime, so no aliasing or dangling occurs.
         unsafe { &*ptr }
     }
 }
