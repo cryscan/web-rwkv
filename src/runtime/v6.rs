@@ -199,7 +199,7 @@ impl super::model::State for State {
     fn load(&self, tensor: TensorCpu<f32>, batch: usize) -> Result<(), TensorError> {
         let head_size = self.info.num_emb / self.info.num_head;
         tensor.check_shape([self.info.num_emb, head_size + 2, self.info.num_layer, 1])?;
-        for (data, source) in self.data.iter().zip(tensor.split(2)?.into_iter()) {
+        for (data, source) in self.data.iter().zip(tensor.split(2)?) {
             data.load_batch(&source, batch)?;
         }
         Ok(())
