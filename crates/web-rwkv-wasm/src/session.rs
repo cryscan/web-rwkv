@@ -96,7 +96,9 @@ impl Session {
         let adapter = instance
             .adapter(PowerPreference::HighPerformance)
             .await
-            .expect("failed to request adapter");
+            .map_err(|e| {
+                anyhow::anyhow!("failed to request adapter (WebGPU may be unavailable): {e}")
+            })?;
         let info = Loader::info(&model)?;
 
         let context = ContextBuilder::new(adapter)
@@ -181,7 +183,9 @@ impl Session {
         let adapter = instance
             .adapter(PowerPreference::HighPerformance)
             .await
-            .expect("failed to request adapter");
+            .map_err(|e| {
+                anyhow::anyhow!("failed to request adapter (WebGPU may be unavailable): {e}")
+            })?;
 
         let Prefab { info } = cbor4ii::serde::from_slice::<Prefab>(data)?;
 
@@ -334,7 +338,13 @@ impl SessionExport {
     }
 
     pub async fn softmax(&self, input: &[f32], output: &mut [f32]) -> Result<(), JsError> {
-        assert_eq!(input.len(), output.len());
+        if input.len() != output.len() {
+            return Err(err(format!(
+                "softmax: input length ({}) must match output buffer length ({})",
+                input.len(),
+                output.len()
+            )));
+        }
         let input = self
             .0
             .context
@@ -359,7 +369,13 @@ impl SessionExport {
 
     pub async fn back(&self, state: &mut [f32]) -> Result<(), JsError> {
         let data = self.0.back().await.map_err(err)?;
-        assert_eq!(data.len(), state.len());
+        if data.len() != state.len() {
+            return Err(err(format!(
+                "back: state buffer length ({}) must match model state length ({})",
+                state.len(),
+                data.len()
+            )));
+        }
         state.copy_from_slice(&data);
         Ok(())
     }
@@ -381,17 +397,35 @@ impl SessionExport {
 
         let cutoff = match checkout.item {
             Some(item) => {
-                assert_eq!(item.state.len(), state.len());
+                if item.state.len() != state.len() {
+                    return Err(err(format!(
+                        "checkout: state buffer length ({}) must match cached state length ({})",
+                        state.len(),
+                        item.state.len()
+                    )));
+                }
                 state.copy_from_slice(&item.state);
 
-                assert_eq!(item.output.len(), output.len());
+                if item.output.len() != output.len() {
+                    return Err(err(format!(
+                        "checkout: output buffer length ({}) must match cached output length ({})",
+                        output.len(),
+                        item.output.len()
+                    )));
+                }
                 output.copy_from_slice(&item.output);
 
                 checkout.prefix.len()
             }
             None => {
                 let data = self.0.state.init().to_vec();
-                assert_eq!(data.len(), state.len());
+                if data.len() != state.len() {
+                    return Err(err(format!(
+                        "checkout: state buffer length ({}) must match model state length ({})",
+                        state.len(),
+                        data.len()
+                    )));
+                }
                 state.copy_from_slice(&data);
 
                 let data = vec![0.0; output.len()];

@@ -96,7 +96,13 @@ impl StateVisual {
                 let data = heads.get(&key).unwrap();
                 let bins = stats.get(&key).unwrap();
 
-                assert_eq!(data.len(), head_size * head_size);
+                if data.len() != head_size * head_size {
+                    return Err(err(format!(
+                        "state visual: head data length ({}) must match head_size^2 ({})",
+                        data.len(),
+                        head_size * head_size
+                    )));
+                }
                 let h = head_size as u32;
                 const SCALE: u32 = 4;
 
@@ -118,7 +124,7 @@ impl StateVisual {
                 let mut bytes: Vec<u8> = Vec::new();
                 image
                     .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-                    .expect("failed to write image to bytes");
+                    .map_err(err)?;
                 line.push(STANDARD.encode(bytes));
             }
             images.push(line);
