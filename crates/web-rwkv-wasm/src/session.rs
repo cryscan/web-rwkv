@@ -297,8 +297,15 @@ impl Session {
     }
 }
 
-fn err(err: impl ToString) -> JsError {
-    JsError::new(&err.to_string())
+/// Convert an error into a [`JsError`] for the JS boundary.
+///
+/// Formats with `{:?}` so an [`anyhow::Error`]'s full cause chain is preserved
+/// (e.g. the inner `TensorError` shape mismatch), instead of only the top-level
+/// message — `RuntimeError`'s `Display` is just `"tensor error"`, which on its own
+/// is useless for debugging from JS. Accepts anything convertible into
+/// `anyhow::Error`; build ad-hoc messages with `anyhow::anyhow!(...)`.
+fn err(err: impl Into<anyhow::Error>) -> JsError {
+    JsError::new(&format!("{:?}", err.into()))
 }
 
 #[wasm_bindgen(js_name = Session)]
@@ -339,7 +346,7 @@ impl SessionExport {
 
     pub async fn softmax(&self, input: &[f32], output: &mut [f32]) -> Result<(), JsError> {
         if input.len() != output.len() {
-            return Err(err(format!(
+            return Err(err(anyhow::anyhow!(
                 "softmax: input length ({}) must match output buffer length ({})",
                 input.len(),
                 output.len()
@@ -370,7 +377,7 @@ impl SessionExport {
     pub async fn back(&self, state: &mut [f32]) -> Result<(), JsError> {
         let data = self.0.back().await.map_err(err)?;
         if data.len() != state.len() {
-            return Err(err(format!(
+            return Err(err(anyhow::anyhow!(
                 "back: state buffer length ({}) must match model state length ({})",
                 state.len(),
                 data.len()
@@ -398,7 +405,7 @@ impl SessionExport {
         let cutoff = match checkout.item {
             Some(item) => {
                 if item.state.len() != state.len() {
-                    return Err(err(format!(
+                    return Err(err(anyhow::anyhow!(
                         "checkout: state buffer length ({}) must match cached state length ({})",
                         state.len(),
                         item.state.len()
@@ -407,7 +414,7 @@ impl SessionExport {
                 state.copy_from_slice(&item.state);
 
                 if item.output.len() != output.len() {
-                    return Err(err(format!(
+                    return Err(err(anyhow::anyhow!(
                         "checkout: output buffer length ({}) must match cached output length ({})",
                         output.len(),
                         item.output.len()
@@ -420,7 +427,7 @@ impl SessionExport {
             None => {
                 let data = self.0.state.init().to_vec();
                 if data.len() != state.len() {
-                    return Err(err(format!(
+                    return Err(err(anyhow::anyhow!(
                         "checkout: state buffer length ({}) must match model state length ({})",
                         state.len(),
                         data.len()
