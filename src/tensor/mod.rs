@@ -905,6 +905,23 @@ impl<T: Scalar> TensorCpu<T> {
         TensorInit::from_data(shape, data).unwrap()
     }
 
+    /// Transpose the inner two axes (`x` and `y`), preserving the outer two.
+    ///
+    /// For a 2D matrix held in web-rwkv's internal `[in, out]` layout this swaps
+    /// it to `[out, in]` (and back). It is how a raw HuggingFace low-rank adapter,
+    /// which is stored transposed relative to web-rwkv's canonical `(out, in)`
+    /// on-disk layout, is reoriented at load time.
+    pub fn transpose(self) -> Self {
+        let shape = Shape::new(self.shape[1], self.shape[0], self.shape[2], self.shape[3]);
+        let mut data = vec![T::zero(); shape.len()];
+        for index in self.shape.cartesian_product() {
+            let value = self[index];
+            let transposed = ShapedIndex::new(index[1], index[0], index[2], index[3]);
+            data[shape.linear_index(transposed)] = value;
+        }
+        TensorInit::from_data(shape, data).unwrap()
+    }
+
     /// Repeat the tensor along a given axis.
     pub fn repeat(self, axis: usize, repeat: usize) -> Self {
         let mut shape = self.shape;
@@ -1345,6 +1362,27 @@ mod tests {
         x[1].check_shape([5, 1, 1, 1])?;
         assert_eq!(x[0].to_vec(), vec![0.0, 1.0, 2.0, 3.0, 4.0]);
         assert_eq!(x[1].to_vec(), vec![5.0, 6.0, 7.0, 8.0, 9.0]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_transpose() -> Result<()> {
+        // Internal `[x = 3, y = 2]` (x is the fastest axis), i.e. the 2x3 matrix
+        // rows `[0, 1, 2]` and `[3, 4, 5]`.
+        let x = TensorCpu::from_data(
+            Shape::new(3, 2, 1, 1),
+            vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0],
+        )?;
+
+        let t = x.clone().transpose();
+        t.check_shape([2, 3, 1, 1])?;
+        // element `(i, j)` moves to `(j, i)`.
+        assert_eq!(t.to_vec(), vec![0.0, 3.0, 1.0, 4.0, 2.0, 5.0]);
+
+        // transposing twice is the identity.
+        assert_eq!(x.clone().transpose().transpose().to_vec(), x.to_vec());
+        assert_eq!(x.clone().transpose().transpose().shape(), x.shape());
 
         Ok(())
     }
