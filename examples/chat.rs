@@ -3,7 +3,7 @@
 
 use std::{io::Write, path::PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Args, Parser};
 #[cfg(not(debug_assertions))]
 use dialoguer::{theme::ColorfulTheme, Select};
@@ -201,12 +201,21 @@ async fn main() -> Result<()> {
         .init()?;
     let cli = Cli::parse();
 
+    // Check the extension of model path
+    if let Some(ext) = cli.model.extension() {
+        if ext == "pth" {
+            return Err(anyhow!(
+                "The expected model format is safetensors, rather than pth"
+            ));
+        }
+    }
+
     let tokenizer = load_tokenizer().await?;
 
     let file = File::open(cli.model).await?;
     let data = unsafe { Mmap::map(&file)? };
 
-    let model = SafeTensors::deserialize(&data)?;
+    let model = SafeTensors::deserialize(&data)?; // Error: header too large
     let info = Loader::info(&model)?;
     log::info!("{:#?}", info);
 
