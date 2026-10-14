@@ -27,15 +27,8 @@ impl<T: Scalar> From<TensorCpu<T>> for TensorBlob<'_> {
 impl<T: Scalar> From<TensorBlob<'_>> for TensorCpu<T> {
     fn from(value: TensorBlob) -> Self {
         let TensorBlob { shape, data } = value;
-        let data = data.to_vec().into_boxed_slice();
-        // let data: Vec<T> = bytemuck::cast_slice(&data).to_vec();
-        let data = Box::leak(data);
-        let data: Box<[T]> = unsafe {
-            let ptr = data.as_ptr() as *const T;
-            let len = data.len() / size_of::<T>();
-            let slice = core::slice::from_raw_parts(ptr, len);
-            Box::from(slice)
-        };
+        // the byte buffer may not be aligned for `T`, so copy into a properly aligned allocation
+        let data: Vec<T> = bytemuck::pod_collect_to_vec(&data);
         let data = data.into();
         Self {
             shape,
@@ -305,5 +298,24 @@ where
             marker: PhantomData,
         };
         deserializer.deserialize_option(visitor)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use half::f16;
+
+    use crate::tensor::{TensorCpu, TensorInit};
+
+    #[test]
+    fn tensor_cpu_round_trip() {
+        let data: Vec<f16> = (0..24).map(|x| f16::from_f32(x as f32)).collect();
+        let tensor = TensorCpu::from_data([4, 6, 1, 1], data.clone()).unwrap();
+
+        let bytes = cbor4ii::serde::to_vec(vec![], &tensor).unwrap();
+        let output: TensorCpu<f16> = cbor4ii::serde::from_slice(&bytes).unwrap();
+
+        assert_eq!(output.shape, tensor.shape);
+        assert_eq!(&output.data()[..], &data[..]);
     }
 }
