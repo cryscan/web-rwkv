@@ -19,7 +19,7 @@ use web_rwkv::{
     num::Float,
     runtime::{
         infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
-        loader::{Loader, Lora},
+        loader::{Loader, Lora, LoraBlend},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         v7, Runtime, TokioRuntime,
     },
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
     let builder = match &lora {
         Some(data) => {
             let data = SafeTensors::deserialize(data)?;
-            let blend = Default::default();
+            let blend = LoraBlend::full(1.0);
             let lora = Lora { data, blend };
             builder.lora(lora)
         }
