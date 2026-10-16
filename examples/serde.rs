@@ -21,7 +21,7 @@ use web_rwkv::{
     context::{Context, ContextBuilder, InstanceExt},
     runtime::{
         infer::{Rnn, RnnInput, RnnInputBatch, RnnOption},
-        loader::{Loader, Lora},
+        loader::{Loader, Lora, LoraBlend},
         model::{ContextAutoLimits, ModelBuilder, ModelInfo, ModelVersion, Quant},
         softmax::softmax_one,
         v4, v5, v6, v7, Runtime, TokioRuntime,
@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
     let builder = match &lora {
         Some(data) => {
             let data = SafeTensors::deserialize(data)?;
-            let blend = Default::default();
+            let blend = LoraBlend::full(1.0);
             let lora = Lora { data, blend };
             builder.lora(lora)
         }
